@@ -7,6 +7,7 @@ import string
 import time
 from typing import Any
 
+import json_repair
 import litellm
 from litellm import acompletion
 from loguru import logger
@@ -285,7 +286,6 @@ class LiteLLMProvider:
 
         tool_calls = []
         for tc in raw_tool_calls:
-            import json_repair
             args = tc.function.arguments
             if isinstance(args, str):
                 args = json_repair.loads(args)
