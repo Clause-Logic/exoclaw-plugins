@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Callable, Coroutine
 from loguru import logger
 
 if TYPE_CHECKING:
-    from nanobot.providers.base import LLMProvider
+    from nanobot.providers.protocol import LLMProvider
 
 _HEARTBEAT_TOOL = [
     {

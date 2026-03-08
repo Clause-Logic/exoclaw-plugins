@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from nanobot.agent.conversation import Conversation
 from nanobot.agent.tools.protocol import Tool
 from nanobot.bus.protocol import Bus
 from nanobot.channels.manager import ChannelManager
@@ -52,6 +53,7 @@ class Nanobot:
         provider: LLMProvider,
         channels: list[Channel] | None = None,
         tools: list[Tool] | None = None,
+        conversation: Conversation | None = None,
         bus: Bus | None = None,
         workspace: str | Path = "~/.nanobot/workspace",
         model: str | None = None,
@@ -69,6 +71,7 @@ class Nanobot:
         self.provider = provider
         self.channels = channels or []
         self.tools = tools or []
+        self.conversation = conversation
         self.bus = bus  # None = use default MessageBus
         self.workspace = Path(workspace).expanduser()
         self.model = model
@@ -85,18 +88,25 @@ class Nanobot:
 
     def _build(self):
         """Instantiate all internal components. Called once at run time."""
+        from nanobot.agent.conversation import DefaultConversation
         from nanobot.agent.loop import AgentLoop
         from nanobot.config.schema import ChannelsConfig
         from nanobot.cron.service import CronService
         from nanobot.heartbeat.service import HeartbeatService
-        from nanobot.session.manager import SessionManager
 
         if self.bus is not None:
             bus = self.bus
         else:
             from nanobot.bus.queue import MessageBus
             bus = MessageBus()
-        session_manager = SessionManager(self.workspace)
+
+        model = self.model or self.provider.get_default_model()
+        conversation = self.conversation or DefaultConversation(
+            workspace=self.workspace,
+            provider=self.provider,
+            model=model,
+            memory_window=self.memory_window,
+        )
 
         cron = None
         if self.enable_cron:
@@ -115,15 +125,14 @@ class Nanobot:
             bus=bus,
             provider=self.provider,
             workspace=self.workspace,
-            model=self.model,
+            model=model,
             temperature=self.temperature,
             max_tokens=self.max_tokens,
             max_iterations=self.max_iterations,
-            memory_window=self.memory_window,
             reasoning_effort=self.reasoning_effort,
             tools=self.tools,
+            conversation=conversation,
             cron_service=cron,
-            session_manager=session_manager,
             channels_config=channels_cfg,
         )
 
@@ -138,8 +147,8 @@ class Nanobot:
                 workspace=self.workspace,
                 provider=self.provider,
                 model=agent.model,
-                on_execute=self._make_heartbeat_execute(agent, channel_manager, session_manager),
-                on_notify=self._make_heartbeat_notify(bus, channel_manager, session_manager),
+                on_execute=self._make_heartbeat_execute(agent, channel_manager, conversation),
+                on_notify=self._make_heartbeat_notify(bus, channel_manager, conversation),
                 interval_s=self.heartbeat_interval_s,
                 enabled=True,
             )
@@ -189,9 +198,9 @@ class Nanobot:
         return on_cron_job
 
     @staticmethod
-    def _make_heartbeat_execute(agent, channel_manager, session_manager):
+    def _make_heartbeat_execute(agent, channel_manager, conversation):
         async def on_execute(tasks: str) -> str:
-            channel, chat_id = _pick_target(channel_manager, session_manager)
+            channel, chat_id = _pick_target(channel_manager, conversation)
 
             async def _silent(*_a, **_kw):
                 pass
@@ -207,11 +216,11 @@ class Nanobot:
         return on_execute
 
     @staticmethod
-    def _make_heartbeat_notify(bus, channel_manager, session_manager):
+    def _make_heartbeat_notify(bus, channel_manager, conversation):
         async def on_notify(response: str) -> None:
             from nanobot.bus.events import OutboundMessage
 
-            channel, chat_id = _pick_target(channel_manager, session_manager)
+            channel, chat_id = _pick_target(channel_manager, conversation)
             if channel == "cli":
                 return
             await bus.publish_outbound(OutboundMessage(
@@ -252,10 +261,10 @@ class Nanobot:
             await channel_manager.stop_all()
 
 
-def _pick_target(channel_manager: ChannelManager, session_manager) -> tuple[str, str]:
+def _pick_target(channel_manager: ChannelManager, conversation) -> tuple[str, str]:
     """Pick the best routable channel/chat for proactive delivery."""
     enabled = set(channel_manager.enabled_channels)
-    for item in session_manager.list_sessions():
+    for item in conversation.list_sessions():
         key = item.get("key") or ""
         if ":" not in key:
             continue

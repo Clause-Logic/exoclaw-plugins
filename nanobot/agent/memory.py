@@ -11,7 +11,7 @@ from loguru import logger
 from nanobot.utils.helpers import ensure_dir
 
 if TYPE_CHECKING:
-    from nanobot.providers.base import LLMProvider
+    from nanobot.providers.protocol import LLMProvider
     from nanobot.session.manager import Session
 
 
