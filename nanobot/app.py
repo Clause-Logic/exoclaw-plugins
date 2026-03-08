@@ -1,30 +1,22 @@
 """
 Nanobot — the composition root.
 
-Usage (Python API):
+Usage:
 
     import asyncio
     from nanobot import Nanobot
-    from nanobot_telegram import TelegramChannel
 
     app = Nanobot(
         provider=MyProvider(),
-        channels=[TelegramChannel(...)],
-        workspace="~/.nanobot/workspace",
+        conversation=MyConversation(),
+        channels=[MyChannel(...)],
     )
     asyncio.run(app.run())
-
-Usage (CLI):
-
-    nanobot run bot.py
-
-where bot.py contains a module-level Nanobot instance named `app`.
 """
 
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -42,43 +34,35 @@ if TYPE_CHECKING:
 class Nanobot:
     """
     Wires together all nanobot components and runs the event loop.
-
-    The only required arguments are a provider and a list of channels.
-    Everything else has a sensible default.
     """
 
     def __init__(
         self,
         *,
         provider: LLMProvider,
+        conversation: Conversation,
         channels: list[Channel] | None = None,
         tools: list[Tool] | None = None,
-        conversation: Conversation | None = None,
         bus: Bus | None = None,
-        workspace: str | Path = "~/.nanobot/workspace",
         model: str | None = None,
         temperature: float = 0.1,
         max_tokens: int = 8192,
         max_iterations: int = 40,
-        memory_window: int = 100,
         reasoning_effort: str | None = None,
     ):
         self.provider = provider
+        self.conversation = conversation
         self.channels = channels or []
         self.tools = tools or []
-        self.conversation = conversation
-        self.bus = bus  # None = use default MessageBus
-        self.workspace = Path(workspace).expanduser()
+        self.bus = bus
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.max_iterations = max_iterations
-        self.memory_window = memory_window
         self.reasoning_effort = reasoning_effort
 
     def _build(self):
         """Instantiate all internal components. Called once at run time."""
-        from nanobot.agent.conversation import DefaultConversation
         from nanobot.agent.loop import AgentLoop
 
         if self.bus is not None:
@@ -88,24 +72,17 @@ class Nanobot:
             bus = MessageBus()
 
         model = self.model or self.provider.get_default_model()
-        conversation = self.conversation or DefaultConversation(
-            workspace=self.workspace,
-            provider=self.provider,
-            model=model,
-            memory_window=self.memory_window,
-        )
 
         agent = AgentLoop(
             bus=bus,
             provider=self.provider,
-            workspace=self.workspace,
+            conversation=self.conversation,
             model=model,
             temperature=self.temperature,
             max_tokens=self.max_tokens,
             max_iterations=self.max_iterations,
             reasoning_effort=self.reasoning_effort,
             tools=self.tools,
-            conversation=conversation,
         )
 
         channel_manager = ChannelManager(self.channels, bus)
@@ -114,14 +91,9 @@ class Nanobot:
 
     async def run(self) -> None:
         """Start all components and run until interrupted."""
-        from nanobot.utils.helpers import sync_workspace_templates
-
-        self.workspace.mkdir(parents=True, exist_ok=True)
-        sync_workspace_templates(self.workspace)
-
         bus, agent, channel_manager = self._build()
 
-        logger.info("Nanobot starting (workspace={})", self.workspace)
+        logger.info("Nanobot starting")
 
         try:
             await asyncio.gather(

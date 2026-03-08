@@ -5,12 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from loguru import logger
 
-from nanobot.agent.conversation import Conversation, DefaultConversation
+from nanobot.agent.conversation import Conversation
 from nanobot.agent.tools.protocol import Tool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.bus.events import InboundMessage, OutboundMessage
@@ -34,18 +33,16 @@ class AgentLoop:
         self,
         bus: Bus,
         provider: LLMProvider,
-        workspace: Path,
+        conversation: Conversation,
         model: str | None = None,
         max_iterations: int = 40,
         temperature: float = 0.1,
         max_tokens: int = 4096,
         reasoning_effort: str | None = None,
         tools: list[Tool] | None = None,
-        conversation: Conversation | None = None,
     ):
         self.bus = bus
         self.provider = provider
-        self.workspace = workspace
         self.model = model or provider.get_default_model()
         self.max_iterations = max_iterations
         self.temperature = temperature
@@ -53,11 +50,7 @@ class AgentLoop:
         self.reasoning_effort = reasoning_effort
         self._extra_tools = tools or []
 
-        self.conversation: Conversation = conversation or DefaultConversation(
-            workspace=workspace,
-            provider=provider,
-            model=self.model,
-        )
+        self.conversation = conversation
 
         self.tools = ToolRegistry()
         for tool in self._extra_tools:

@@ -10,7 +10,6 @@ from loguru import logger
 from nanobot.bus.events import OutboundMessage
 from nanobot.bus.protocol import Bus
 from nanobot.channels.protocol import Channel
-from nanobot.config.schema import Config
 
 
 class ChannelManager:

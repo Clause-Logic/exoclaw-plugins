@@ -1,7 +1,6 @@
-"""Chat channels — protocol, manager, and explicit loader."""
+"""Chat channels — protocol and manager."""
 
-from nanobot.channels.discovery import load_channels
 from nanobot.channels.manager import ChannelManager
 from nanobot.channels.protocol import Channel
 
-__all__ = ["Channel", "ChannelManager", "load_channels"]
+__all__ = ["Channel", "ChannelManager"]

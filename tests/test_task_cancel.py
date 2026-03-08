@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -16,11 +16,8 @@ def _make_loop():
     bus = MessageBus()
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
-    workspace = MagicMock()
-    workspace.__truediv__ = MagicMock(return_value=MagicMock())
 
-    with patch("nanobot.agent.loop.DefaultConversation"):
-        loop = AgentLoop(bus=bus, provider=provider, workspace=workspace)
+    loop = AgentLoop(bus=bus, provider=provider, conversation=MagicMock())
     return loop, bus
 
 
