@@ -23,7 +23,7 @@ from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
-from nanobot.bus.queue import MessageBus
+from nanobot.bus.protocol import Bus
 from nanobot.providers.base import LLMProvider
 from nanobot.session.manager import Session, SessionManager
 
@@ -48,7 +48,7 @@ class AgentLoop:
 
     def __init__(
         self,
-        bus: MessageBus,
+        bus: Bus,
         provider: LLMProvider,
         workspace: Path,
         model: str | None = None,

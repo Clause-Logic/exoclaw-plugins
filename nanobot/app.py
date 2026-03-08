@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from nanobot.bus.protocol import Bus
 from nanobot.channels.manager import ChannelManager
 from nanobot.channels.protocol import Channel
 
@@ -49,6 +50,7 @@ class Nanobot:
         *,
         provider: LLMProvider,
         channels: list[Channel] | None = None,
+        bus: Bus | None = None,
         workspace: str | Path = "~/.nanobot/workspace",
         model: str | None = None,
         temperature: float = 0.1,
@@ -64,6 +66,7 @@ class Nanobot:
     ):
         self.provider = provider
         self.channels = channels or []
+        self.bus = bus  # None = use default MessageBus
         self.workspace = Path(workspace).expanduser()
         self.model = model
         self.temperature = temperature
@@ -80,13 +83,16 @@ class Nanobot:
     def _build(self):
         """Instantiate all internal components. Called once at run time."""
         from nanobot.agent.loop import AgentLoop
-        from nanobot.bus.queue import MessageBus
         from nanobot.config.schema import ChannelsConfig
         from nanobot.cron.service import CronService
         from nanobot.heartbeat.service import HeartbeatService
         from nanobot.session.manager import SessionManager
 
-        bus = MessageBus()
+        if self.bus is not None:
+            bus = self.bus
+        else:
+            from nanobot.bus.queue import MessageBus
+            bus = MessageBus()
         session_manager = SessionManager(self.workspace)
 
         cron = None
