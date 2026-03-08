@@ -62,8 +62,6 @@ class Nanobot:
         max_iterations: int = 40,
         memory_window: int = 100,
         reasoning_effort: str | None = None,
-        send_progress: bool = True,
-        send_tool_hints: bool = False,
     ):
         self.provider = provider
         self.channels = channels or []
@@ -77,14 +75,11 @@ class Nanobot:
         self.max_iterations = max_iterations
         self.memory_window = memory_window
         self.reasoning_effort = reasoning_effort
-        self.send_progress = send_progress
-        self.send_tool_hints = send_tool_hints
 
     def _build(self):
         """Instantiate all internal components. Called once at run time."""
         from nanobot.agent.conversation import DefaultConversation
         from nanobot.agent.loop import AgentLoop
-        from nanobot.config.schema import ChannelsConfig
 
         if self.bus is not None:
             bus = self.bus
@@ -100,13 +95,6 @@ class Nanobot:
             memory_window=self.memory_window,
         )
 
-        # Temporary shim: AgentLoop still reads send_progress/send_tool_hints
-        # from ChannelsConfig. Will be refactored away with AgentLoop.
-        channels_cfg = ChannelsConfig(
-            send_progress=self.send_progress,
-            send_tool_hints=self.send_tool_hints,
-        )
-
         agent = AgentLoop(
             bus=bus,
             provider=self.provider,
@@ -118,7 +106,6 @@ class Nanobot:
             reasoning_effort=self.reasoning_effort,
             tools=self.tools,
             conversation=conversation,
-            channels_config=channels_cfg,
         )
 
         channel_manager = ChannelManager(self.channels, bus)
@@ -144,6 +131,5 @@ class Nanobot:
         except (KeyboardInterrupt, asyncio.CancelledError):
             logger.info("Shutting down...")
         finally:
-            await agent.close_mcp()
             agent.stop()
             await channel_manager.stop_all()
