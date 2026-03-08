@@ -289,183 +289,102 @@ def _load_runtime_config(config: str | None = None, workspace: str | None = None
 
 
 @app.command()
+def run(
+    target: str = typer.Argument(..., help="Python file to run, e.g. bot.py or bot:app"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
+):
+    """
+    Run a Nanobot application.
+
+    The target file should expose a Nanobot instance named 'app':
+
+        # bot.py
+        from nanobot import Nanobot
+        app = Nanobot(provider=..., channels=[...])
+
+    Or an async entry point named 'main':
+
+        async def main():
+            await Nanobot(...).run()
+    """
+    import importlib.util
+    import sys
+
+    if verbose:
+        import logging
+        logging.basicConfig(level=logging.DEBUG)
+
+    # Support both "bot.py" and "bot:attr" forms
+    attr = "app"
+    if ":" in target:
+        file_part, attr = target.rsplit(":", 1)
+    else:
+        file_part = target
+
+    path = Path(file_part).resolve()
+    if not path.exists():
+        console.print(f"[red]Error:[/red] file not found: {path}")
+        raise typer.Exit(1)
+
+    spec = importlib.util.spec_from_file_location("_nanobot_user_app", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(path.parent))
+    spec.loader.exec_module(module)
+
+    obj = getattr(module, attr, None)
+    if obj is None:
+        console.print(f"[red]Error:[/red] '{attr}' not found in {path}")
+        raise typer.Exit(1)
+
+    from nanobot.app import Nanobot as _Nanobot
+
+    if isinstance(obj, _Nanobot):
+        asyncio.run(obj.run())
+    elif asyncio.iscoroutinefunction(obj):
+        asyncio.run(obj())
+    else:
+        console.print(f"[red]Error:[/red] '{attr}' must be a Nanobot instance or async function")
+        raise typer.Exit(1)
+
+
+@app.command()
 def gateway(
     port: int = typer.Option(18790, "--port", "-p", help="Gateway port"),
     workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
     config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
 ):
-    """Start the nanobot gateway."""
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.bus.queue import MessageBus
-    from nanobot.channels.manager import ChannelManager
-    from nanobot.config.paths import get_cron_dir
-    from nanobot.cron.service import CronService
-    from nanobot.cron.types import CronJob
-    from nanobot.heartbeat.service import HeartbeatService
-    from nanobot.session.manager import SessionManager
+    """[Deprecated] Start nanobot via config file. Use 'nanobot run bot.py' instead."""
+    console.print("[yellow]Warning: 'gateway' is deprecated. Use 'nanobot run bot.py' instead.[/yellow]")
 
     if verbose:
         import logging
         logging.basicConfig(level=logging.DEBUG)
 
     config = _load_runtime_config(config, workspace)
-
-    console.print(f"{__logo__} Starting nanobot gateway on port {port}...")
-    sync_workspace_templates(config.workspace_path)
-    bus = MessageBus()
     provider = _make_provider(config)
-    session_manager = SessionManager(config.workspace_path)
+    d = config.agents.defaults
 
-    # Create cron service first (callback set after agent creation)
-    cron_store_path = get_cron_dir() / "jobs.json"
-    cron = CronService(cron_store_path)
+    from nanobot.app import Nanobot
 
-    # Create agent with cron service
-    agent = AgentLoop(
-        bus=bus,
+    nanobot = Nanobot(
         provider=provider,
+        channels=[],  # populate via config.channels.load when channel packages are installed
         workspace=config.workspace_path,
-        model=config.agents.defaults.model,
-        temperature=config.agents.defaults.temperature,
-        max_tokens=config.agents.defaults.max_tokens,
-        max_iterations=config.agents.defaults.max_tool_iterations,
-        memory_window=config.agents.defaults.memory_window,
-        reasoning_effort=config.agents.defaults.reasoning_effort,
-        brave_api_key=config.tools.web.search.api_key or None,
-        web_proxy=config.tools.web.proxy or None,
-        exec_config=config.tools.exec,
-        cron_service=cron,
-        restrict_to_workspace=config.tools.restrict_to_workspace,
-        session_manager=session_manager,
-        mcp_servers=config.tools.mcp_servers,
-        channels_config=config.channels,
+        model=d.model,
+        temperature=d.temperature,
+        max_tokens=d.max_tokens,
+        max_iterations=d.max_tool_iterations,
+        memory_window=d.memory_window,
+        reasoning_effort=d.reasoning_effort,
+        send_progress=config.channels.send_progress,
+        send_tool_hints=config.channels.send_tool_hints,
+        enable_heartbeat=config.gateway.heartbeat.enabled,
+        heartbeat_interval_s=config.gateway.heartbeat.interval_s,
     )
 
-    # Set cron callback (needs agent)
-    async def on_cron_job(job: CronJob) -> str | None:
-        """Execute a cron job through the agent."""
-        from nanobot.agent.tools.cron import CronTool
-        from nanobot.agent.tools.message import MessageTool
-        reminder_note = (
-            "[Scheduled Task] Timer finished.\n\n"
-            f"Task '{job.name}' has been triggered.\n"
-            f"Scheduled instruction: {job.payload.message}"
-        )
-
-        # Prevent the agent from scheduling new cron jobs during execution
-        cron_tool = agent.tools.get("cron")
-        cron_token = None
-        if isinstance(cron_tool, CronTool):
-            cron_token = cron_tool.set_cron_context(True)
-        try:
-            response = await agent.process_direct(
-                reminder_note,
-                session_key=f"cron:{job.id}",
-                channel=job.payload.channel or "cli",
-                chat_id=job.payload.to or "direct",
-            )
-        finally:
-            if isinstance(cron_tool, CronTool) and cron_token is not None:
-                cron_tool.reset_cron_context(cron_token)
-
-        message_tool = agent.tools.get("message")
-        if isinstance(message_tool, MessageTool) and message_tool._sent_in_turn:
-            return response
-
-        if job.payload.deliver and job.payload.to and response:
-            from nanobot.bus.events import OutboundMessage
-            await bus.publish_outbound(OutboundMessage(
-                channel=job.payload.channel or "cli",
-                chat_id=job.payload.to,
-                content=response
-            ))
-        return response
-    cron.on_job = on_cron_job
-
-    # Create channel manager
-    channels = ChannelManager(config, bus)
-
-    def _pick_heartbeat_target() -> tuple[str, str]:
-        """Pick a routable channel/chat target for heartbeat-triggered messages."""
-        enabled = set(channels.enabled_channels)
-        # Prefer the most recently updated non-internal session on an enabled channel.
-        for item in session_manager.list_sessions():
-            key = item.get("key") or ""
-            if ":" not in key:
-                continue
-            channel, chat_id = key.split(":", 1)
-            if channel in {"cli", "system"}:
-                continue
-            if channel in enabled and chat_id:
-                return channel, chat_id
-        # Fallback keeps prior behavior but remains explicit.
-        return "cli", "direct"
-
-    # Create heartbeat service
-    async def on_heartbeat_execute(tasks: str) -> str:
-        """Phase 2: execute heartbeat tasks through the full agent loop."""
-        channel, chat_id = _pick_heartbeat_target()
-
-        async def _silent(*_args, **_kwargs):
-            pass
-
-        return await agent.process_direct(
-            tasks,
-            session_key="heartbeat",
-            channel=channel,
-            chat_id=chat_id,
-            on_progress=_silent,
-        )
-
-    async def on_heartbeat_notify(response: str) -> None:
-        """Deliver a heartbeat response to the user's channel."""
-        from nanobot.bus.events import OutboundMessage
-        channel, chat_id = _pick_heartbeat_target()
-        if channel == "cli":
-            return  # No external channel available to deliver to
-        await bus.publish_outbound(OutboundMessage(channel=channel, chat_id=chat_id, content=response))
-
-    hb_cfg = config.gateway.heartbeat
-    heartbeat = HeartbeatService(
-        workspace=config.workspace_path,
-        provider=provider,
-        model=agent.model,
-        on_execute=on_heartbeat_execute,
-        on_notify=on_heartbeat_notify,
-        interval_s=hb_cfg.interval_s,
-        enabled=hb_cfg.enabled,
-    )
-
-    if channels.enabled_channels:
-        console.print(f"[green]✓[/green] Channels enabled: {', '.join(channels.enabled_channels)}")
-    else:
-        console.print("[yellow]Warning: No channels enabled[/yellow]")
-
-    cron_status = cron.status()
-    if cron_status["jobs"] > 0:
-        console.print(f"[green]✓[/green] Cron: {cron_status['jobs']} scheduled jobs")
-
-    console.print(f"[green]✓[/green] Heartbeat: every {hb_cfg.interval_s}s")
-
-    async def run():
-        try:
-            await cron.start()
-            await heartbeat.start()
-            await asyncio.gather(
-                agent.run(),
-                channels.start_all(),
-            )
-        except KeyboardInterrupt:
-            console.print("\nShutting down...")
-        finally:
-            await agent.close_mcp()
-            heartbeat.stop()
-            cron.stop()
-            agent.stop()
-            await channels.stop_all()
-
-    asyncio.run(run())
+    console.print(f"{__logo__} Starting nanobot (workspace={config.workspace_path})...")
+    asyncio.run(nanobot.run())
 
 
 

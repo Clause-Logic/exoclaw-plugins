@@ -1,0 +1,13 @@
+"""Bus protocol — the only bus surface external code should depend on."""
+
+from typing import Protocol, runtime_checkable
+
+from nanobot.bus.events import InboundMessage, OutboundMessage
+
+
+@runtime_checkable
+class Bus(Protocol):
+    async def publish_inbound(self, msg: InboundMessage) -> None: ...
+    async def consume_inbound(self) -> InboundMessage: ...
+    async def publish_outbound(self, msg: OutboundMessage) -> None: ...
+    async def consume_outbound(self) -> OutboundMessage: ...

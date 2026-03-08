@@ -6,7 +6,7 @@ from typing import Any
 from loguru import logger
 
 from nanobot.bus.events import InboundMessage, OutboundMessage
-from nanobot.bus.queue import MessageBus
+from nanobot.bus.protocol import Bus
 
 
 class BaseChannel(ABC):
@@ -19,7 +19,7 @@ class BaseChannel(ABC):
 
     name: str = "base"
 
-    def __init__(self, config: Any, bus: MessageBus):
+    def __init__(self, config: Any, bus: Bus):
         """
         Initialize the channel.
 
