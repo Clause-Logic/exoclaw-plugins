@@ -12,19 +12,14 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from loguru import logger
 
 from nanobot.agent.conversation import Conversation, DefaultConversation
-from nanobot.agent.subagent import SubagentManager
-from nanobot.agent.tools.cron import CronTool
-from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.protocol import Tool
 from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.protocol import Bus
 from nanobot.providers.protocol import LLMProvider
 
 if TYPE_CHECKING:
     from nanobot.config.schema import ChannelsConfig
-    from nanobot.cron.service import CronService
 
 
 class AgentLoop:
@@ -51,7 +46,6 @@ class AgentLoop:
         reasoning_effort: str | None = None,
         tools: list[Tool] | None = None,
         conversation: Conversation | None = None,
-        cron_service: "CronService | None" = None,
         mcp_servers: dict | None = None,
         channels_config: "ChannelsConfig | None" = None,
     ):
@@ -64,7 +58,6 @@ class AgentLoop:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.reasoning_effort = reasoning_effort
-        self.cron_service = cron_service
         self._extra_tools = tools or []
 
         self.conversation: Conversation = conversation or DefaultConversation(
@@ -74,17 +67,8 @@ class AgentLoop:
         )
 
         self.tools = ToolRegistry()
-        self.subagents = SubagentManager(
-            provider=provider,
-            workspace=workspace,
-            bus=bus,
-            model=self.model,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            reasoning_effort=reasoning_effort,
-            tools=self._extra_tools,
-        )
-
+        for tool in self._extra_tools:
+            self.tools.register(tool)
         self._running = False
         self._mcp_servers = mcp_servers or {}
         self._mcp_stack: AsyncExitStack | None = None
@@ -92,16 +76,6 @@ class AgentLoop:
         self._mcp_connecting = False
         self._active_tasks: dict[str, list[asyncio.Task]] = {}  # session_key -> tasks
         self._processing_lock = asyncio.Lock()
-        self._register_default_tools()
-
-    def _register_default_tools(self) -> None:
-        """Register user-provided tools, then the framework system tools."""
-        for tool in self._extra_tools:
-            self.tools.register(tool)
-        self.tools.register(MessageTool(send_callback=self.bus.publish_outbound))
-        self.tools.register(SpawnTool(manager=self.subagents))
-        if self.cron_service:
-            self.tools.register(CronTool(self.cron_service))
 
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
@@ -125,12 +99,11 @@ class AgentLoop:
         finally:
             self._mcp_connecting = False
 
-    def _set_tool_context(self, channel: str, chat_id: str, message_id: str | None = None) -> None:
-        """Update context for all tools that need routing info."""
-        for name in ("message", "spawn", "cron"):
-            if tool := self.tools.get(name):
-                if hasattr(tool, "set_context"):
-                    tool.set_context(channel, chat_id, *([message_id] if name == "message" else []))
+    def _notify_tools_inbound(self, msg: InboundMessage) -> None:
+        """Let tools that care about inbound messages update their state."""
+        for tool in self.tools._tools.values():
+            if hasattr(tool, "on_inbound"):
+                tool.on_inbound(msg)
 
     @staticmethod
     def _strip_think(text: str | None) -> str | None:
@@ -262,7 +235,10 @@ class AgentLoop:
                 await t
             except (asyncio.CancelledError, Exception):
                 pass
-        sub_cancelled = await self.subagents.cancel_by_session(msg.session_key)
+        sub_cancelled = 0
+        for tool in self.tools._tools.values():
+            if hasattr(tool, "cancel_by_session"):
+                sub_cancelled += await tool.cancel_by_session(msg.session_key)
         total = cancelled + sub_cancelled
         content = f"⏹ Stopped {total} task(s)." if total else "No active task to stop."
         await self.bus.publish_outbound(OutboundMessage(
@@ -318,7 +294,6 @@ class AgentLoop:
                                 else ("cli", msg.chat_id))
             logger.info("Processing system message from {}", msg.sender_id)
             sid = f"{channel}:{chat_id}"
-            self._set_tool_context(channel, chat_id, msg.metadata.get("message_id"))
             initial = await self.conversation.build_prompt(sid, msg.content, channel=channel, chat_id=chat_id)
             final_content, _, all_msgs = await self._run_agent_loop(initial)
             await self.conversation.record(sid, all_msgs[len(initial) - 1:])
@@ -345,10 +320,7 @@ class AgentLoop:
                 content="🐈 nanobot commands:\n/new — Start a new conversation\n/stop — Stop the current task\n/help — Show available commands",
             )
 
-        self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"))
-        if message_tool := self.tools.get("message"):
-            if isinstance(message_tool, MessageTool):
-                message_tool.start_turn()
+        self._notify_tools_inbound(msg)
 
         initial = await self.conversation.build_prompt(
             sid, msg.content,
@@ -374,7 +346,7 @@ class AgentLoop:
         # new_msgs = user message + everything the loop added
         await self.conversation.record(sid, all_msgs[len(initial) - 1:])
 
-        if (mt := self.tools.get("message")) and isinstance(mt, MessageTool) and mt._sent_in_turn:
+        if any(getattr(t, "sent_in_turn", False) for t in self.tools._tools.values()):
             return None
 
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content

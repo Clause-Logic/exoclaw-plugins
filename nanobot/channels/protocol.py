@@ -1,8 +1,11 @@
 """Channel protocol — the only thing ChannelManager depends on."""
 
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from nanobot.bus.events import OutboundMessage
+
+if TYPE_CHECKING:
+    from nanobot.bus.protocol import Bus
 
 
 @runtime_checkable
@@ -16,7 +19,7 @@ class Channel(Protocol):
 
     name: str
 
-    async def start(self) -> None:
+    async def start(self, bus: "Bus") -> None:
         """Connect to the platform and begin receiving messages."""
         ...
 

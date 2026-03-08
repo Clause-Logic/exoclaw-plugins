@@ -33,7 +33,7 @@ class ChannelManager:
 
     async def _start_channel(self, name: str, channel: Channel) -> None:
         try:
-            await channel.start()
+            await channel.start(self.bus)
         except Exception as e:
             logger.error("Failed to start channel {}: {}", name, e)
 
