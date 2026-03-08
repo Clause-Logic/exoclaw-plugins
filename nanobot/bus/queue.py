@@ -33,12 +33,3 @@ class MessageBus:
         """Consume the next outbound message (blocks until available)."""
         return await self.outbound.get()
 
-    @property
-    def inbound_size(self) -> int:
-        """Number of pending inbound messages."""
-        return self.inbound.qsize()
-
-    @property
-    def outbound_size(self) -> int:
-        """Number of pending outbound messages."""
-        return self.outbound.qsize()

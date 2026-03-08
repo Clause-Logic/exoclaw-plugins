@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
-
 from loguru import logger
 
 from nanobot.bus.events import OutboundMessage
@@ -98,12 +96,3 @@ class ChannelManager:
     def get_channel(self, name: str) -> Channel | None:
         return self.channels.get(name)
 
-    def get_status(self) -> dict[str, Any]:
-        return {
-            name: {"enabled": True, "running": getattr(ch, "is_running", True)}
-            for name, ch in self.channels.items()
-        }
-
-    @property
-    def enabled_channels(self) -> list[str]:
-        return list(self.channels.keys())
