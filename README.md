@@ -12,6 +12,24 @@ One runtime dependency: `loguru`.
 
 ---
 
+## Origin
+
+exoclaw is a fork of [nanobot](https://github.com/NanobotAI/nanobot) with one goal: reduce the maintenance surface area by aligning on a defined set of extension points.
+
+The original nanobot ships with batteries — a built-in LLM provider, memory system, cron scheduler, heartbeat service, MCP integration, Telegram/Discord channels, and more. That's convenient to start, but every baked-in feature is a PR waiting to happen. A Telegram API change breaks a cron bug fix release. An MCP SDK upgrade pulls in dependency conflicts for users who don't use MCP. The framework and its features are entangled.
+
+exoclaw cuts the knot. The core defines five protocols and runs a loop. That's it. Everything else — conversation storage, channel integrations, tools, providers — lives in separate packages that you opt into. The core never changes because it has nothing to change.
+
+**Why this benefits you, not just the maintainer:**
+
+- **No surprise breakage.** A bug in someone else's Telegram integration can't break your log monitor. Each plugin fails independently.
+- **No dependency drag.** You don't pull in MCP, croniter, and readability-lxml if you don't use them. Your dependency tree contains exactly what you chose.
+- **Auditable trust.** The core is ~1,200 lines, mypy strict, 95% test coverage. You can read and understand it in an afternoon. When you trust exoclaw, you know exactly what you're trusting.
+- **Composable upgrades.** Swap your conversation backend from files to Redis without touching the loop. Update your provider package when a new model ships without risking anything else.
+- **Scoped blast radius.** When something breaks, it breaks in the package that owns it — not in the framework everyone shares.
+
+---
+
 ## How it works
 
 exoclaw is five protocols and a loop.
