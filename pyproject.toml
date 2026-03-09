@@ -3,6 +3,16 @@ members = ["packages/*"]
 
 [tool.uv.sources]
 exoclaw = { path = "../nanobot", editable = true }
+exoclaw-conversation = { workspace = true }
+exoclaw-provider-litellm = { workspace = true }
+exoclaw-channel-cli = { workspace = true }
+exoclaw-channel-heartbeat = { workspace = true }
+exoclaw-tools-workspace = { workspace = true }
+exoclaw-tools-cron = { workspace = true }
+exoclaw-tools-message = { workspace = true }
+exoclaw-tools-spawn = { workspace = true }
+exoclaw-tools-mcp = { workspace = true }
+exoclaw-subagent = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -17,6 +27,7 @@ dev = [
 asyncio_mode = "auto"
 testpaths = ["packages"]
 timeout = 10
+addopts = "--import-mode=importlib"
 
 [tool.mypy]
 python_version = "3.11"

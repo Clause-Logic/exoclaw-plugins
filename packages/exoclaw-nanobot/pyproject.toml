@@ -1,0 +1,25 @@
+[project]
+name = "exoclaw-nanobot"
+version = "0.1.0"
+description = "Full-stack exoclaw bundle — config, provider registry, and one-line wiring"
+requires-python = ">=3.11"
+dependencies = [
+    "exoclaw>=0.1.0",
+    "exoclaw-conversation",
+    "exoclaw-provider-litellm",
+    "exoclaw-channel-cli",
+    "exoclaw-channel-heartbeat",
+    "exoclaw-tools-workspace",
+    "exoclaw-tools-cron",
+    "exoclaw-tools-message",
+    "exoclaw-tools-spawn",
+    "exoclaw-tools-mcp",
+    "exoclaw-subagent",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "loguru>=0.7.3,<1.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
