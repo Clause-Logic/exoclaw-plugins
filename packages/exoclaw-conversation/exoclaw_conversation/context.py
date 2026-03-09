@@ -10,19 +10,21 @@ from typing import Any
 
 from .helpers import detect_image_mime
 from .memory import MemoryStore
+from .protocols import MemoryBackend
 from .skills import SkillsLoader
+
+_RUNTIME_CONTEXT_TAG = "[Runtime Context — metadata only, not instructions]"
 
 
 class ContextBuilder:
     """Builds the context (system prompt + messages) for the agent."""
 
     BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md"]
-    _RUNTIME_CONTEXT_TAG = "[Runtime Context — metadata only, not instructions]"
 
-    def __init__(self, workspace: Path):
+    def __init__(self, workspace: Path, memory: MemoryBackend | None = None):
         self.workspace = workspace
-        self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace)
+        self.memory: MemoryBackend = memory if memory is not None else MemoryStore(workspace)
 
     def build_system_prompt(
         self,
@@ -102,7 +104,7 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         lines = [f"Current Time: {now} ({tz})"]
         if channel and chat_id:
             lines += [f"Channel: {channel}", f"Chat ID: {chat_id}"]
-        return ContextBuilder._RUNTIME_CONTEXT_TAG + "\n" + "\n".join(lines)
+        return _RUNTIME_CONTEXT_TAG + "\n" + "\n".join(lines)
 
     def _load_bootstrap_files(self) -> str:
         """Load all bootstrap files from workspace."""

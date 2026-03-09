@@ -12,7 +12,6 @@ from .helpers import ensure_dir
 
 if TYPE_CHECKING:
     from exoclaw.providers.protocol import LLMProvider
-
     from .session.manager import Session
 
 
@@ -46,10 +45,17 @@ _SAVE_MEMORY_TOOL = [
 class MemoryStore:
     """Two-layer memory: MEMORY.md (long-term facts) + HISTORY.md (grep-searchable log)."""
 
-    def __init__(self, workspace: Path):
+    def __init__(
+        self,
+        workspace: Path,
+        provider: LLMProvider | None = None,
+        model: str | None = None,
+    ):
         self.memory_dir = ensure_dir(workspace / "memory")
         self.memory_file = self.memory_dir / "MEMORY.md"
         self.history_file = self.memory_dir / "HISTORY.md"
+        self._provider = provider
+        self._model = model
 
     def read_long_term(self) -> str:
         if self.memory_file.exists():
@@ -70,8 +76,6 @@ class MemoryStore:
     async def consolidate(
         self,
         session: Session,
-        provider: LLMProvider,
-        model: str,
         *,
         archive_all: bool = False,
         memory_window: int = 50,
@@ -111,14 +115,18 @@ class MemoryStore:
 ## Conversation to Process
 {chr(10).join(lines)}"""
 
+        if self._provider is None or self._model is None:
+            logger.warning("MemoryStore: consolidate() called without provider/model, skipping")
+            return False
+
         try:
-            response = await provider.chat(
+            response = await self._provider.chat(
                 messages=[
                     {"role": "system", "content": "You are a memory consolidation agent. Call the save_memory tool with your consolidation of the conversation."},
                     {"role": "user", "content": prompt},
                 ],
                 tools=_SAVE_MEMORY_TOOL,
-                model=model,
+                model=self._model,
             )
 
             if not response.has_tool_calls:

@@ -9,15 +9,14 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from .context import ContextBuilder
-from .memory import MemoryStore
-from .session.manager import Session, SessionManager
+from .protocols import HistoryStore, MemoryBackend, PromptBuilder
+from .session.manager import Session
 
 if TYPE_CHECKING:
     from exoclaw.providers.protocol import LLMProvider
 
-# Tag used to strip runtime context when persisting user messages
-_RUNTIME_CONTEXT_TAG = ContextBuilder._RUNTIME_CONTEXT_TAG
+# Injected before each user message at call time; stripped before persisting.
+_RUNTIME_CONTEXT_TAG = "[Runtime Context — metadata only, not instructions]"
 
 _TOOL_RESULT_MAX_CHARS = 500
 
@@ -29,7 +28,11 @@ class DefaultConversation:
     Implements the exoclaw Conversation protocol without inheriting from any
     exoclaw class.
 
-    - build_prompt: builds messages via ContextBuilder, triggers background
+    Accepts HistoryStore, MemoryBackend, and PromptBuilder as constructor
+    arguments so each layer can be replaced independently. Use
+    DefaultConversation.create() for the standard file-backed setup.
+
+    - build_prompt: builds messages via PromptBuilder, triggers background
       consolidation when unconsolidated history exceeds memory_window.
     - record: saves new turn messages (stripping runtime context, truncating
       large tool results) into the JSONL session file.
@@ -39,23 +42,41 @@ class DefaultConversation:
 
     def __init__(
         self,
+        history: HistoryStore,
+        memory: MemoryBackend,
+        prompt: PromptBuilder,
+        memory_window: int = 100,
+    ):
+        self.history = history
+        self.memory = memory
+        self.prompt = prompt
+        self.memory_window = memory_window
+
+        self._consolidating: set[str] = set()
+        self._consolidation_tasks: set[asyncio.Task[Any]] = set()
+        self._consolidation_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
+            weakref.WeakValueDictionary()
+        )
+
+    @classmethod
+    def create(
+        cls,
         workspace: Path,
         provider: LLMProvider,
         model: str,
         memory_window: int = 100,
-    ):
-        self.workspace = workspace
-        self.provider = provider
-        self.model = model
-        self.memory_window = memory_window
+    ) -> DefaultConversation:
+        """Construct with the standard file-backed implementations."""
+        from .context import ContextBuilder
+        from .memory import MemoryStore
+        from .session.manager import SessionManager
 
-        self.context = ContextBuilder(workspace)
-        self.sessions = SessionManager(workspace)
-
-        self._consolidating: set[str] = set()
-        self._consolidation_tasks: set[asyncio.Task] = set()
-        self._consolidation_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
-            weakref.WeakValueDictionary()
+        memory = MemoryStore(workspace, provider, model)
+        return cls(
+            history=SessionManager(workspace),
+            memory=memory,
+            prompt=ContextBuilder(workspace, memory=memory),
+            memory_window=memory_window,
         )
 
     async def build_prompt(
@@ -69,7 +90,7 @@ class DefaultConversation:
         plugin_context: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Return the full messages list to send to the LLM."""
-        session = self.sessions.get_or_create(session_id)
+        session = self.history.get_or_create(session_id)
 
         # Trigger background consolidation when history is long
         unconsolidated = len(session.messages) - session.last_consolidated
@@ -92,12 +113,11 @@ class DefaultConversation:
 
         history = session.get_history(max_messages=self.memory_window)
 
-        # plugin_context is a list of extra context strings from pre_context hooks
         extra_context: str | None = None
         if plugin_context:
             extra_context = "\n\n".join(plugin_context)
 
-        return self.context.build_messages(
+        return self.prompt.build_messages(
             history=history,
             current_message=message,
             media=media,
@@ -112,13 +132,13 @@ class DefaultConversation:
         new_messages: list[dict[str, Any]],
     ) -> None:
         """Persist the messages produced during one turn."""
-        session = self.sessions.get_or_create(session_id)
+        session = self.history.get_or_create(session_id)
         self._save_turn(session, new_messages)
-        self.sessions.save(session)
+        self.history.save(session)
 
     async def clear(self, session_id: str) -> bool:
         """Archive current session to memory and start fresh. Returns True on success."""
-        session = self.sessions.get_or_create(session_id)
+        session = self.history.get_or_create(session_id)
         lock = self._consolidation_locks.setdefault(session_id, asyncio.Lock())
         self._consolidating.add(session_id)
         try:
@@ -137,22 +157,20 @@ class DefaultConversation:
             self._consolidating.discard(session_id)
 
         session.clear()
-        self.sessions.save(session)
-        self.sessions.invalidate(session_id)
+        self.history.save(session)
+        self.history.invalidate(session_id)
         return True
 
     def list_sessions(self) -> list[dict[str, Any]]:
         """Return metadata for all known sessions."""
-        return self.sessions.list_sessions()
+        return self.history.list_sessions()
 
     async def _consolidate_memory(
         self, session: Session, archive_all: bool = False
     ) -> bool:
-        """Delegate to MemoryStore.consolidate(). Returns True on success."""
-        return await MemoryStore(self.workspace).consolidate(
+        """Delegate to MemoryBackend. Returns True on success."""
+        return await self.memory.consolidate(
             session,
-            self.provider,
-            self.model,
             archive_all=archive_all,
             memory_window=self.memory_window,
         )
