@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import AsyncExitStack
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from loguru import logger
 
@@ -48,6 +48,7 @@ class ExoclawNanobot:
         cron_service: Any,
         heartbeat: Any,
         mcp_stack: AsyncExitStack,
+        extra_channels: list[Any] | None = None,
     ) -> None:
         self._config = config
         self._bus = bus
@@ -56,30 +57,61 @@ class ExoclawNanobot:
         self._cron_service = cron_service
         self._heartbeat = heartbeat
         self._mcp_stack = mcp_stack
+        self._extra_channels: list[Any] = extra_channels or []
+        self._stop_event: asyncio.Event = asyncio.Event()
 
     async def run(self) -> None:
-        """Start all background services and run the CLI REPL until exit."""
+        """Start all background services and channels, then run until stopped.
+
+        If a CLI channel is configured it drives the lifetime (interactive mode).
+        If only extra_channels are present (gateway mode) the process runs until
+        the OS delivers SIGINT/SIGTERM or :meth:`stop` is called.
+        """
         tasks: list[asyncio.Task[None]] = []
         try:
             tasks.append(asyncio.create_task(self._cron_service.start()))
             tasks.append(asyncio.create_task(self._heartbeat.start()))
             tasks.append(asyncio.create_task(self._agent_loop.run()))
-            await self._cli.start(self._bus)
+            for ch in self._extra_channels:
+                tasks.append(asyncio.create_task(ch.start(self._bus)))
+
+            if self._cli is not None:
+                # Interactive: block until the user exits the REPL.
+                await self._cli.start(self._bus)
+            else:
+                # Gateway: block until stop() is called or a channel dies.
+                done, _ = await asyncio.wait(
+                    [asyncio.create_task(self._stop_event.wait()), *tasks],
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
         finally:
+            for ch in self._extra_channels:
+                try:
+                    await ch.stop()
+                except Exception as e:
+                    logger.warning("Error stopping channel {}: {}", ch, e)
             for t in tasks:
                 t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             await self._mcp_stack.aclose()
 
     async def stop(self) -> None:
-        """Signal the CLI to exit."""
-        await self._cli.stop()
+        """Signal the agent to shut down."""
+        self._stop_event.set()
+        if self._cli is not None:
+            await self._cli.stop()
 
 
 async def create(
     config: Config | None = None,
     *,
     config_path: Path | None = None,
+    extra_channels: list[Any] | None = None,
+    enable_cli: bool = True,
+    on_pre_context: Callable[[str, str, str, str], Awaitable[str]] | None = None,
+    on_pre_tool: Callable[[str, dict[str, Any], str], Awaitable[str | None]] | None = None,
+    on_post_turn: Callable[[list[dict[str, Any]], str, str, str], Awaitable[None]] | None = None,
+    on_max_iterations: Callable[[str, str, str], Awaitable[None]] | None = None,
 ) -> ExoclawNanobot:
     """
     Create a fully wired ExoclawNanobot.
@@ -88,16 +120,28 @@ async def create(
     cron, message, spawn, MCP), subagent manager, agent loop, CLI channel,
     and heartbeat service.
 
-    Usage::
+    Args:
+        extra_channels: Additional Channel implementations started alongside the
+            agent (e.g. Telegram, IPC).  Each must implement
+            ``start(bus)``, ``stop()``, and ``send(msg)``.
+        enable_cli: Set to ``False`` to skip the interactive CLI (gateway mode).
+        on_pre_context: Called before each turn with ``(content, ctx)``; return
+            extra markdown to inject into the system prompt, or ``None``.
+        on_pre_tool: Called before each tool with ``(tool_name, args, ctx)``;
+            return a rejection reason string to block the call, or ``None``.
+        on_post_turn: Called after each turn with ``(messages, ctx)``.
+        on_max_iterations: Called when the tool-call limit is reached with ``(ctx,)``.
+
+    Usage (gateway mode)::
 
         import asyncio
         from exoclaw_nanobot import create
 
-        asyncio.run(main())
-
         async def main():
-            bot = await create()
+            bot = await create(enable_cli=False, extra_channels=[telegram, ipc])
             await bot.run()
+
+        asyncio.run(main())
     """
     if config is None:
         config = load_config(config_path)
@@ -201,10 +245,14 @@ async def create(
         max_tokens=config.agents.defaults.max_tokens,
         reasoning_effort=config.agents.defaults.reasoning_effort,
         tools=tools,
+        on_pre_context=on_pre_context,
+        on_pre_tool=on_pre_tool,
+        on_post_turn=on_post_turn,
+        on_max_iterations=on_max_iterations,
     )
 
-    # CLI channel
-    cli = CLIChannel(history_dir=workspace / "history")
+    # CLI channel (optional)
+    cli = CLIChannel(history_dir=workspace / "history") if enable_cli else None
 
     # Heartbeat
     heartbeat = HeartbeatService(
@@ -224,4 +272,5 @@ async def create(
         cron_service=cron_service,
         heartbeat=heartbeat,
         mcp_stack=mcp_stack,
+        extra_channels=extra_channels,
     )

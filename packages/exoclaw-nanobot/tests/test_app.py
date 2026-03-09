@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import AsyncExitStack
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -60,12 +61,12 @@ class TestExoclawNanobotRun:
                 cancelled.append(True)
                 raise
 
-        app._cron_service.start = slow_cron  # type: ignore[method-assign]
+        app._cron_service.start = slow_cron
 
         async def _cli_start(_bus: object) -> None:
             await asyncio.sleep(0)  # yield so background tasks actually start
 
-        app._cli.start = _cli_start  # type: ignore[method-assign]
+        app._cli.start = _cli_start
 
         await app.run()
         assert len(cancelled) == 1
@@ -179,7 +180,7 @@ class TestCreate:
     async def test_create_with_mcp_servers(self) -> None:
         config = Config()
         config.tools.mcp_servers = {
-            "test": config.tools.mcp_servers.__class__.__class__  # type: ignore[assignment]
+            "test": config.tools.mcp_servers.__class__.__class__  # type: ignore[dict-item]
         }
         # Use a fresh config with mcp server configured via dict
         import json as _json
@@ -191,7 +192,7 @@ class TestCreate:
         fake_tool = MagicMock()
         fake_tool.name = "mcp_mysrv_tool1"
 
-        patches = [
+        patches: list[Any] = [
             patch("exoclaw_nanobot.app.LiteLLMProvider", MagicMock(return_value=MagicMock(get_default_model=MagicMock(return_value="x")))),
             patch("exoclaw_nanobot.app.MessageBus", MagicMock(return_value=MagicMock(publish_outbound=AsyncMock()))),
             patch("exoclaw_nanobot.app.DefaultConversation"),
