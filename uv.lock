@@ -7,6 +7,8 @@ members = [
     "exoclaw-channel-cli",
     "exoclaw-channel-heartbeat",
     "exoclaw-conversation",
+    "exoclaw-github",
+    "exoclaw-nanobot",
     "exoclaw-provider-litellm",
     "exoclaw-subagent",
     "exoclaw-tools-cron",
@@ -568,26 +570,18 @@ wheels = [
 [[package]]
 name = "exoclaw"
 version = "0.1.0"
-source = { editable = "../nanobot" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "loguru" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "loguru", specifier = ">=0.7.3,<1.0.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.0,<10.0.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1.3.0,<2.0.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
+sdist = { url = "https://files.pythonhosted.org/packages/55/d1/c08c5fb7a90341235e63d52ae096ed4ea93b20143cab23ec4ba767dc9dff/exoclaw-0.1.0.tar.gz", hash = "sha256:1b3e7241bb07e7ad5e8ef1a6eb034cd757335b20f6c949c8d31b9ff4d5739d78", size = 14527, upload-time = "2026-03-08T22:21:23.081Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/36/7e/95458231f005ed084b3e640bcbe6e0bdaee5aa84ea9a34e924b54fd299cb/exoclaw-0.1.0-py3-none-any.whl", hash = "sha256:ede100364df0ddb8d26527f6b191c853911658f42615abe19d420d39b718f082", size = 17358, upload-time = "2026-03-08T22:21:24.179Z" },
 ]
-provides-extras = ["dev"]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest-cov", specifier = ">=7.0.0" }]
 
 [[package]]
 name = "exoclaw-channel-cli"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/exoclaw-channel-cli" }
 dependencies = [
     { name = "exoclaw" },
@@ -598,7 +592,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", editable = "../nanobot" },
+    { name = "exoclaw", specifier = ">=0.1.0" },
     { name = "loguru", specifier = ">=0.7.3,<1.0.0" },
     { name = "prompt-toolkit", specifier = ">=3.0.50,<4.0.0" },
     { name = "rich", specifier = ">=14.0.0,<15.0.0" },
@@ -606,7 +600,7 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-channel-heartbeat"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/exoclaw-channel-heartbeat" }
 dependencies = [
     { name = "exoclaw" },
@@ -615,13 +609,13 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", editable = "../nanobot" },
+    { name = "exoclaw", specifier = ">=0.1.0" },
     { name = "loguru", specifier = ">=0.7.3,<1.0.0" },
 ]
 
 [[package]]
 name = "exoclaw-conversation"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/exoclaw-conversation" }
 dependencies = [
     { name = "exoclaw" },
@@ -631,14 +625,76 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", editable = "../nanobot" },
+    { name = "exoclaw", specifier = ">=0.1.0" },
     { name = "loguru", specifier = ">=0.7.3,<1.0.0" },
     { name = "rich", specifier = ">=14.0.0,<15.0.0" },
 ]
 
 [[package]]
-name = "exoclaw-provider-litellm"
+name = "exoclaw-github"
 version = "0.1.0"
+source = { editable = "packages/exoclaw-github" }
+dependencies = [
+    { name = "exoclaw" },
+    { name = "exoclaw-conversation" },
+    { name = "exoclaw-provider-litellm" },
+    { name = "exoclaw-tools-workspace" },
+    { name = "httpx" },
+    { name = "loguru" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "exoclaw", specifier = ">=0.1.0" },
+    { name = "exoclaw-conversation", editable = "packages/exoclaw-conversation" },
+    { name = "exoclaw-provider-litellm", editable = "packages/exoclaw-provider-litellm" },
+    { name = "exoclaw-tools-workspace", editable = "packages/exoclaw-tools-workspace" },
+    { name = "httpx", specifier = ">=0.28.0,<1.0.0" },
+    { name = "loguru", specifier = ">=0.7.3,<1.0.0" },
+]
+
+[[package]]
+name = "exoclaw-nanobot"
+version = "0.1.2"
+source = { editable = "packages/exoclaw-nanobot" }
+dependencies = [
+    { name = "exoclaw" },
+    { name = "exoclaw-channel-cli" },
+    { name = "exoclaw-channel-heartbeat" },
+    { name = "exoclaw-conversation" },
+    { name = "exoclaw-provider-litellm" },
+    { name = "exoclaw-subagent" },
+    { name = "exoclaw-tools-cron" },
+    { name = "exoclaw-tools-mcp" },
+    { name = "exoclaw-tools-message" },
+    { name = "exoclaw-tools-spawn" },
+    { name = "exoclaw-tools-workspace" },
+    { name = "loguru" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "exoclaw", specifier = ">=0.1.0" },
+    { name = "exoclaw-channel-cli", editable = "packages/exoclaw-channel-cli" },
+    { name = "exoclaw-channel-heartbeat", editable = "packages/exoclaw-channel-heartbeat" },
+    { name = "exoclaw-conversation", editable = "packages/exoclaw-conversation" },
+    { name = "exoclaw-provider-litellm", editable = "packages/exoclaw-provider-litellm" },
+    { name = "exoclaw-subagent", editable = "packages/exoclaw-subagent" },
+    { name = "exoclaw-tools-cron", editable = "packages/exoclaw-tools-cron" },
+    { name = "exoclaw-tools-mcp", editable = "packages/exoclaw-tools-mcp" },
+    { name = "exoclaw-tools-message", editable = "packages/exoclaw-tools-message" },
+    { name = "exoclaw-tools-spawn", editable = "packages/exoclaw-tools-spawn" },
+    { name = "exoclaw-tools-workspace", editable = "packages/exoclaw-tools-workspace" },
+    { name = "loguru", specifier = ">=0.7.3,<1.0.0" },
+    { name = "pydantic", specifier = ">=2.0" },
+    { name = "pydantic-settings", specifier = ">=2.0" },
+]
+
+[[package]]
+name = "exoclaw-provider-litellm"
+version = "0.1.1"
 source = { editable = "packages/exoclaw-provider-litellm" }
 dependencies = [
     { name = "exoclaw" },
@@ -649,7 +705,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", editable = "../nanobot" },
+    { name = "exoclaw", specifier = ">=0.1.0" },
     { name = "json-repair", specifier = ">=0.1.0" },
     { name = "litellm", specifier = ">=1.0.0" },
     { name = "loguru", specifier = ">=0.7.3,<1.0.0" },
@@ -657,7 +713,7 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-subagent"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/exoclaw-subagent" }
 dependencies = [
     { name = "exoclaw" },
@@ -666,13 +722,13 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", editable = "../nanobot" },
+    { name = "exoclaw", specifier = ">=0.1.0" },
     { name = "loguru", specifier = ">=0.7.3,<1.0.0" },
 ]
 
 [[package]]
 name = "exoclaw-tools-cron"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/exoclaw-tools-cron" }
 dependencies = [
     { name = "croniter" },
@@ -683,13 +739,13 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "croniter", specifier = ">=6.0.0,<7.0.0" },
-    { name = "exoclaw", editable = "../nanobot" },
+    { name = "exoclaw", specifier = ">=0.1.0" },
     { name = "loguru", specifier = ">=0.7.3,<1.0.0" },
 ]
 
 [[package]]
 name = "exoclaw-tools-mcp"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/exoclaw-tools-mcp" }
 dependencies = [
     { name = "exoclaw" },
@@ -700,7 +756,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", editable = "../nanobot" },
+    { name = "exoclaw", specifier = ">=0.1.0" },
     { name = "httpx", specifier = ">=0.28.0,<1.0.0" },
     { name = "loguru", specifier = ">=0.7.3,<1.0.0" },
     { name = "mcp", specifier = ">=1.26.0,<2.0.0" },
@@ -708,29 +764,29 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-tools-message"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/exoclaw-tools-message" }
 dependencies = [
     { name = "exoclaw" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "exoclaw", editable = "../nanobot" }]
+requires-dist = [{ name = "exoclaw", specifier = ">=0.1.0" }]
 
 [[package]]
 name = "exoclaw-tools-spawn"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/exoclaw-tools-spawn" }
 dependencies = [
     { name = "exoclaw" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "exoclaw", editable = "../nanobot" }]
+requires-dist = [{ name = "exoclaw", specifier = ">=0.1.0" }]
 
 [[package]]
 name = "exoclaw-tools-workspace"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/exoclaw-tools-workspace" }
 dependencies = [
     { name = "exoclaw" },
@@ -741,7 +797,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", editable = "../nanobot" },
+    { name = "exoclaw", specifier = ">=0.1.0" },
     { name = "httpx", specifier = ">=0.28.0,<1.0.0" },
     { name = "loguru", specifier = ">=0.7.3,<1.0.0" },
     { name = "readability-lxml", specifier = ">=0.8.1" },

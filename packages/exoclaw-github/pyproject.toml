@@ -1,0 +1,21 @@
+[project]
+name = "exoclaw-github"
+version = "0.1.0"
+description = "GitHub Actions channel for exoclaw"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "exoclaw>=0.1.0",
+    "exoclaw-conversation>=0.1.0",
+    "exoclaw-provider-litellm>=0.1.0",
+    "exoclaw-tools-workspace>=0.1.0",
+    "httpx>=0.28.0,<1.0.0",
+    "loguru>=0.7.3,<1.0.0",
+]
+
+[project.scripts]
+exoclaw-github = "exoclaw_github.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
