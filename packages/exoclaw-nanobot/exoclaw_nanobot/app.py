@@ -107,6 +107,7 @@ async def create(
     *,
     config_path: Path | None = None,
     extra_channels: list[Any] | None = None,
+    extra_tools: list[Any] | None = None,
     enable_cli: bool = True,
     on_pre_context: Callable[[str, str, str, str], Awaitable[str]] | None = None,
     on_pre_tool: Callable[[str, dict[str, Any], str], Awaitable[str | None]] | None = None,
@@ -233,6 +234,9 @@ async def create(
         await connect_mcp_servers(mcp_cfgs, mcp_registry, mcp_stack)
         tools.extend(mcp_registry._tools.values())
         logger.info("MCP: {} tools registered", len(mcp_registry._tools))
+
+    if extra_tools:
+        tools.extend(extra_tools)
 
     # Agent loop
     agent_loop = AgentLoop(
