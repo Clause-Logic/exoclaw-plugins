@@ -29,6 +29,8 @@ class CronPayload:
     to: str | None = None  # e.g. phone number
     # Skills to load into context when this job runs
     skills: list[str] = field(default_factory=list)
+    # Run without session history (default False — stateful, backwards compatible)
+    stateless: bool = False
 
 
 @dataclass

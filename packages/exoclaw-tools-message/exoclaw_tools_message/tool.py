@@ -66,6 +66,11 @@ class MessageTool(ToolBase):
         """Set the callback for sending messages."""
         self._send_callback = callback
 
+    @property
+    def sent_in_turn(self) -> bool:
+        """Public accessor used by AgentLoop to detect suppress-on-same-target."""
+        return self._sent_in_turn
+
     def start_turn(self) -> None:
         """Reset per-turn send tracking."""
         self._sent_in_turn = False

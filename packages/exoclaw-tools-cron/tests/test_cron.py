@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from pathlib import Path
@@ -516,6 +517,33 @@ class TestCronServiceTimer:
         service._store = None
         # Should not raise even if store is None initially — _load_store creates empty
         await service._on_timer()
+
+    async def test_running_service_honors_external_disable(self, tmp_path: Path) -> None:
+        """A second CronService instance disabling a job externally is respected by the runner."""
+        store_path = tmp_path / "cron" / "jobs.json"
+        called: list[str] = []
+
+        async def on_job(job: CronJob) -> None:
+            called.append(job.id)
+
+        service = CronService(store_path=store_path, on_job=on_job)
+        job = service.add_job(
+            name="external-disable",
+            schedule=CronSchedule(kind="every", every_ms=200),
+            message="hello",
+        )
+        await service.start()
+        try:
+            await asyncio.sleep(0.05)  # ensure mtime will differ
+            external = CronService(store_path=store_path)
+            updated = external.enable_job(job.id, enabled=False)
+            assert updated is not None
+            assert updated.enabled is False
+
+            await asyncio.sleep(0.35)
+            assert called == []
+        finally:
+            service.stop()
 
 
 # ---------------------------------------------------------------------------

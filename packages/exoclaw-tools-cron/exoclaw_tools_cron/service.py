@@ -108,6 +108,7 @@ class CronService:
                             channel=j["payload"].get("channel"),
                             to=j["payload"].get("to"),
                             skills=j["payload"].get("skills", []),
+                            stateless=j["payload"].get("stateless", False),
                         ),
                         state=CronJobState(
                             next_run_at_ms=j.get("state", {}).get("nextRunAtMs"),
@@ -156,6 +157,7 @@ class CronService:
                         "channel": j.payload.channel,
                         "to": j.payload.to,
                         "skills": j.payload.skills,
+                        "stateless": j.payload.stateless,
                     },
                     "state": {
                         "nextRunAtMs": j.state.next_run_at_ms,
@@ -294,6 +296,7 @@ class CronService:
         to: str | None = None,
         delete_after_run: bool = False,
         skills: list[str] | None = None,
+        stateless: bool = False,
     ) -> CronJob:
         """Add a new job."""
         store = self._load_store()
@@ -312,6 +315,7 @@ class CronService:
                 channel=channel,
                 to=to,
                 skills=skills or [],
+                stateless=stateless,
             ),
             state=CronJobState(next_run_at_ms=_compute_next_run(schedule, now)),
             created_at_ms=now,
@@ -348,6 +352,7 @@ class CronService:
         channel: str | None = None,
         to: str | None = None,
         skills: list[str] | None = None,
+        stateless: bool | None = None,
         schedule: CronSchedule | None = None,
     ) -> CronJob | None:
         """Update fields on an existing job."""
@@ -365,6 +370,8 @@ class CronService:
                     job.payload.to = to
                 if skills is not None:
                     job.payload.skills = skills
+                if stateless is not None:
+                    job.payload.stateless = stateless
                 if schedule is not None:
                     _validate_schedule_for_add(schedule)
                     job.schedule = schedule

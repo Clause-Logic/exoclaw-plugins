@@ -78,6 +78,10 @@ class CronTool(ToolBase):
                     "items": {"type": "string"},
                     "description": "Skill names to load into context when this job runs (e.g. ['email-backlog'])",
                 },
+                "stateless": {
+                    "type": "boolean",
+                    "description": "Run without session history (default false — keeps full context)",
+                },
             },
             "required": ["action"],
         }
@@ -93,18 +97,19 @@ class CronTool(ToolBase):
         job_id: str | None = None,
         deliver: bool | None = None,
         skills: list[str] | None = None,
+        stateless: bool | None = None,
         **kwargs: Any,
     ) -> str:
         if action == "add":
             if self._in_cron_context.get():
                 return "Error: cannot schedule new jobs from within a cron job execution"
-            return self._add_job(message, every_seconds, cron_expr, tz, at, skills)
+            return self._add_job(message, every_seconds, cron_expr, tz, at, skills, stateless)
         elif action == "list":
             return self._list_jobs()
         elif action == "remove":
             return self._remove_job(job_id)
         elif action == "update":
-            return self._update_job(job_id, message or None, deliver, skills)
+            return self._update_job(job_id, message or None, deliver, skills, stateless)
         return f"Unknown action: {action}"
 
     def _add_job(
@@ -115,6 +120,7 @@ class CronTool(ToolBase):
         tz: str | None,
         at: str | None,
         skills: list[str] | None = None,
+        stateless: bool | None = None,
     ) -> str:
         if not message:
             return "Error: message is required for add"
@@ -158,6 +164,7 @@ class CronTool(ToolBase):
             to=self._chat_id,
             delete_after_run=delete_after,
             skills=skills,
+            stateless=stateless or False,
         )
         return f"Created job '{job.name}' (id: {job.id})"
 
@@ -174,10 +181,11 @@ class CronTool(ToolBase):
         message: str | None,
         deliver: bool | None,
         skills: list[str] | None,
+        stateless: bool | None = None,
     ) -> str:
         if not job_id:
             return "Error: job_id is required for update"
-        job = self._cron.update_job(job_id, message=message, deliver=deliver, skills=skills)
+        job = self._cron.update_job(job_id, message=message, deliver=deliver, skills=skills, stateless=stateless)
         if job:
             return f"Updated job {job_id}"
         return f"Job {job_id} not found"
