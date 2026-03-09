@@ -84,6 +84,11 @@ class ExoclawNanobot:
                     [asyncio.create_task(self._stop_event.wait()), *tasks],
                     return_when=asyncio.FIRST_COMPLETED,
                 )
+                for t in done:
+                    if not t.cancelled():
+                        exc = t.exception()
+                        if exc is not None:
+                            logger.error("Task failed, triggering shutdown: {!r}", exc)
         finally:
             for ch in self._extra_channels:
                 try:
