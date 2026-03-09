@@ -9,6 +9,7 @@ members = [
     "exoclaw-conversation",
     "exoclaw-github",
     "exoclaw-nanobot",
+    "exoclaw-openrouter-search",
     "exoclaw-provider-litellm",
     "exoclaw-subagent",
     "exoclaw-tools-cron",
@@ -690,6 +691,23 @@ requires-dist = [
     { name = "loguru", specifier = ">=0.7.3,<1.0.0" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pydantic-settings", specifier = ">=2.0" },
+]
+
+[[package]]
+name = "exoclaw-openrouter-search"
+version = "0.1.0"
+source = { editable = "packages/exoclaw-openrouter-search" }
+dependencies = [
+    { name = "exoclaw" },
+    { name = "litellm" },
+    { name = "loguru" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "exoclaw", specifier = ">=0.2.1" },
+    { name = "litellm", specifier = ">=1.0.0" },
+    { name = "loguru", specifier = ">=0.7.3,<1.0.0" },
 ]
 
 [[package]]
