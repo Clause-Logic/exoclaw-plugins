@@ -21,7 +21,7 @@ dependencies = [
 ]
 
 [project.scripts]
-nanobot = "exoclaw_nanobot.__main__:main"
+exoclaw-nanobot = "exoclaw_nanobot.__main__:main"
 
 [build-system]
 requires = ["hatchling"]
