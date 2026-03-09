@@ -2,7 +2,6 @@
 members = ["packages/*"]
 
 [tool.uv.sources]
-exoclaw = { path = "../nanobot", editable = true }
 exoclaw-conversation = { workspace = true }
 exoclaw-provider-litellm = { workspace = true }
 exoclaw-channel-cli = { workspace = true }
