@@ -1,6 +1,6 @@
 [project]
 name = "exoclaw-tools-mcp"
-version = "0.1.0"
+version = "0.1.1"
 description = "MCP client tool for exoclaw — connects to MCP servers and wraps their tools"
 readme = "README.md"
 requires-python = ">=3.11"
