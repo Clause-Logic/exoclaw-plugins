@@ -61,6 +61,20 @@ no batteries included.
 |---|---|
 | `nanobot/agent/tools/message.py` | `exoclaw_tools_message/tool.py` |
 
+### exoclaw-nanobot
+
+Meta-bundle that pulls in all exoclaw-plugins and provides one-line wiring.
+Config and provider registry live here (no nanobot equivalent — nanobot baked
+these into the main package).
+
+| nanobot | exoclaw-plugins |
+|---|---|
+| `nanobot/config/schema.py` | `exoclaw_nanobot/config/schema.py` |
+| `nanobot/config/loader.py` | `exoclaw_nanobot/config/loader.py` |
+| `nanobot/providers/registry.py` | `exoclaw_nanobot/providers.py` |
+
+---
+
 ### exoclaw-tools-spawn
 
 | nanobot | exoclaw-plugins |
@@ -108,15 +122,15 @@ Note: `MCPServerConfig` dataclass is new — replaces nanobot's dependency on `c
 | `nanobot/providers/azure_openai_provider.py` | `exoclaw-provider-azure` |
 | `nanobot/providers/custom_provider.py` | `exoclaw-provider-openai` |
 | `nanobot/providers/openai_codex_provider.py` | `exoclaw-provider-openai` |
-| `nanobot/providers/registry.py` | `exoclaw-provider-registry` (or exoclaw core) |
+| `nanobot/providers/registry.py` | `exoclaw-nanobot/exoclaw_nanobot/providers.py` |
 | `nanobot/providers/transcription.py` | `exoclaw-transcription` |
 
 ### Config
 
 | nanobot | candidate package |
 |---|---|
-| `nanobot/config/schema.py` | `exoclaw-config` (or exoclaw core) |
-| `nanobot/config/loader.py` | `exoclaw-config` (or exoclaw core) |
+| `nanobot/config/schema.py` | `exoclaw-nanobot/exoclaw_nanobot/config/schema.py` |
+| `nanobot/config/loader.py` | `exoclaw-nanobot/exoclaw_nanobot/config/loader.py` |
 
 ### Channels (tier 3)
 
