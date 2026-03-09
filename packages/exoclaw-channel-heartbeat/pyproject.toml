@@ -2,6 +2,7 @@
 name = "exoclaw-channel-heartbeat"
 version = "0.1.0"
 description = "Periodic heartbeat channel for exoclaw"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "exoclaw>=0.1.0",

@@ -2,6 +2,7 @@
 name = "exoclaw-conversation"
 version = "0.1.0"
 description = "File-backed conversation implementation for exoclaw"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "exoclaw>=0.1.0",

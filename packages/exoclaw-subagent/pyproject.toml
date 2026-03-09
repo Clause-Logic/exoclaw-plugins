@@ -2,6 +2,7 @@
 name = "exoclaw-subagent"
 version = "0.1.0"
 description = "Subagent manager for exoclaw — nested agent execution via AgentLoop"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "exoclaw>=0.1.0",

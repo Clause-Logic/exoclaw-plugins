@@ -2,6 +2,7 @@
 name = "exoclaw-channel-cli"
 version = "0.1.0"
 description = "Interactive CLI channel for exoclaw"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "exoclaw>=0.1.0",

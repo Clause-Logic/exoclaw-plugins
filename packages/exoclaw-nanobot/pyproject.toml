@@ -2,6 +2,7 @@
 name = "exoclaw-nanobot"
 version = "0.1.0"
 description = "Full-stack exoclaw bundle — config, provider registry, and one-line wiring"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "exoclaw>=0.1.0",
