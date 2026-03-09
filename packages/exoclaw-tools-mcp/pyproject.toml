@@ -1,0 +1,15 @@
+[project]
+name = "exoclaw-tools-mcp"
+version = "0.1.0"
+description = "MCP client tool for exoclaw — connects to MCP servers and wraps their tools"
+requires-python = ">=3.11"
+dependencies = [
+    "exoclaw>=0.1.0",
+    "mcp>=1.26.0,<2.0.0",
+    "httpx>=0.28.0,<1.0.0",
+    "loguru>=0.7.3,<1.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

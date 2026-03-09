@@ -1,0 +1,86 @@
+"""Spawn tool for creating background subagents."""
+
+from typing import Any, Protocol, runtime_checkable
+
+from exoclaw.agent.tools.protocol import ToolBase
+
+
+@runtime_checkable
+class SpawnManager(Protocol):
+    """Protocol for subagent lifecycle management."""
+
+    async def spawn(
+        self,
+        task: str,
+        label: str | None = None,
+        origin_channel: str = "cli",
+        origin_chat_id: str = "direct",
+        session_key: str | None = None,
+        search: bool = False,
+    ) -> str: ...
+
+
+class SpawnTool(ToolBase):
+    """Tool to spawn a subagent for background task execution."""
+
+    def __init__(self, manager: SpawnManager):
+        self._manager = manager
+        self._origin_channel = "cli"
+        self._origin_chat_id = "direct"
+        self._session_key = "cli:direct"
+
+    def set_context(self, channel: str, chat_id: str, session_key: str | None = None) -> None:
+        """Set the origin context for subagent announcements."""
+        self._origin_channel = channel
+        self._origin_chat_id = chat_id
+        self._session_key = session_key or f"{channel}:{chat_id}"
+
+    @property
+    def name(self) -> str:
+        return "spawn"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Spawn a subagent to handle a task in the background. "
+            "Use this for complex or time-consuming tasks that can run independently. "
+            "The subagent will complete the task and report back when done."
+        )
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "The task for the subagent to complete",
+                },
+                "label": {
+                    "type": "string",
+                    "description": "Optional short label for the task (for display)",
+                },
+                "search": {
+                    "type": "boolean",
+                    "description": "Set to true if the subagent needs to search the web to complete the task.",
+                },
+            },
+            "required": ["task"],
+        }
+
+    async def execute(
+        self,
+        task: str,
+        label: str | None = None,
+        search: bool = False,
+        **kwargs: Any,
+    ) -> str:
+        """Spawn a subagent to execute the given task."""
+        return await self._manager.spawn(
+            task=task,
+            label=label,
+            origin_channel=self._origin_channel,
+            origin_chat_id=self._origin_chat_id,
+            session_key=self._session_key,
+            search=search,
+        )

@@ -1,0 +1,13 @@
+[project]
+name = "exoclaw-subagent"
+version = "0.1.0"
+description = "Subagent manager for exoclaw — nested agent execution via AgentLoop"
+requires-python = ">=3.11"
+dependencies = [
+    "exoclaw>=0.1.0",
+    "loguru>=0.7.3,<1.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
