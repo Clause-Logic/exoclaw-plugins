@@ -20,6 +20,9 @@ dependencies = [
     "loguru>=0.7.3,<1.0.0",
 ]
 
+[project.scripts]
+exoclaw = "exoclaw_nanobot.__main__:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
