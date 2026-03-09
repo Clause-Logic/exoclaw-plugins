@@ -17,9 +17,9 @@ from exoclaw_nanobot.config.schema import Config
 
 
 class TestGetConfigPath:
-    def test_returns_exoclaw_path(self) -> None:
+    def test_returns_nanobot_path(self) -> None:
         path = get_config_path()
-        assert ".exoclaw" in str(path)
+        assert ".nanobot" in str(path)
         assert path.name == "config.json"
 
 

@@ -10,7 +10,7 @@ from exoclaw_nanobot.config.schema import Config
 
 def get_config_path() -> Path:
     """Get the default configuration file path."""
-    return Path.home() / ".exoclaw" / "config.json"
+    return Path.home() / ".nanobot" / "config.json"
 
 
 def load_config(config_path: Path | None = None) -> Config:

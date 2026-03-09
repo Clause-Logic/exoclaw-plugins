@@ -24,15 +24,15 @@ class TestConfigDefaults:
         cfg = Config()
         path = cfg.workspace_path
         assert not str(path).startswith("~")
-        assert ".exoclaw" in str(path)
+        assert ".nanobot" in str(path)
 
     def test_custom_workspace(self) -> None:
         cfg = Config()
         cfg.agents.defaults.workspace = "/tmp/test_workspace"
         assert str(cfg.workspace_path) == "/tmp/test_workspace"
 
-    def test_env_prefix_is_exoclaw(self) -> None:
-        assert cfg_env_prefix() == "EXOCLAW_"
+    def test_env_prefix_is_nanobot(self) -> None:
+        assert cfg_env_prefix() == "NANOBOT_"
 
     def test_channels_defaults(self) -> None:
         cfg = Config()

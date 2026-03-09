@@ -214,7 +214,7 @@ class ChannelsConfig(Base):
 
 
 class AgentDefaults(Base):
-    workspace: str = "~/.exoclaw/workspace"
+    workspace: str = "~/.nanobot/workspace"
     model: str = "anthropic/claude-opus-4-5"
     provider: str = "auto"
     max_tokens: int = 8192
@@ -310,7 +310,7 @@ class Config(BaseSettings):
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
 
-    model_config = SettingsConfigDict(env_prefix="EXOCLAW_", env_nested_delimiter="__")
+    model_config = SettingsConfigDict(env_prefix="NANOBOT_", env_nested_delimiter="__")
 
     @property
     def workspace_path(self) -> Path:
