@@ -135,7 +135,7 @@ class LiteLLMProvider:
         litellm.drop_params = True
 
         if callbacks_env := os.environ.get("LITELLM_CALLBACKS"):
-            litellm.callbacks = [c.strip() for c in callbacks_env.split(",") if c.strip()]
+            litellm.callbacks = [c.strip() for c in callbacks_env.split(",") if c.strip()]  # type: ignore[misc]
 
         self._llm_logging = os.environ.get("LLM_LOGGING", "").lower() == "true"
         self._llm_log_truncate = int(os.environ.get("LLM_LOG_TRUNCATE", "500"))

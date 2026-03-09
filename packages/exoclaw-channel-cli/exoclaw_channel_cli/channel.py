@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 console = Console()
 EXIT_COMMANDS = {"exit", "quit", "/exit", "/quit", ":q"}
 
-_PROMPT_SESSION: PromptSession | None = None
+_PROMPT_SESSION: PromptSession[str] | None = None
 _SAVED_TERM_ATTRS = None
 
 
@@ -96,9 +96,10 @@ async def _read_interactive_input_async() -> str:
         raise RuntimeError("Call _init_prompt_session() first")
     try:
         with patch_stdout():
-            return await _PROMPT_SESSION.prompt_async(
+            result: str = await _PROMPT_SESSION.prompt_async(
                 HTML("<b fg='ansiblue'>You:</b> "),
             )
+            return result
     except EOFError as exc:
         raise KeyboardInterrupt from exc
 

@@ -4,9 +4,24 @@ members = ["packages/*"]
 [tool.uv.sources]
 exoclaw = { path = "../nanobot", editable = true }
 
+[dependency-groups]
+dev = [
+    "pytest>=9.0.0,<10.0.0",
+    "pytest-asyncio>=1.3.0,<2.0.0",
+    "pytest-cov>=7.0.0",
+    "pytest-timeout>=2.3.0",
+    "mypy>=1.0.0",
+]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests"]
+testpaths = ["packages"]
+timeout = 10
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 100

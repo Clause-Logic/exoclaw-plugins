@@ -1,10 +1,13 @@
 """Skills loader for agent capabilities."""
 
+from __future__ import annotations
+
 import json
 import os
 import re
 import shutil
 from pathlib import Path
+from typing import Any
 
 # Default builtin skills directory — none bundled in this package
 BUILTIN_SKILLS_DIR: Path | None = None
@@ -135,7 +138,7 @@ class SkillsLoader:
 
         return "\n".join(lines)
 
-    def _get_missing_requirements(self, skill_meta: dict) -> str:
+    def _get_missing_requirements(self, skill_meta: dict[str, Any]) -> str:
         """Get a description of missing requirements."""
         missing = []
         requires = skill_meta.get("requires", {})
@@ -151,7 +154,7 @@ class SkillsLoader:
         """Get the description of a skill from its frontmatter."""
         meta = self.get_skill_metadata(name)
         if meta and meta.get("description"):
-            return meta["description"]
+            return str(meta["description"])
         return name
 
     def _strip_frontmatter(self, content: str) -> str:
@@ -162,17 +165,18 @@ class SkillsLoader:
                 return content[match.end():].strip()
         return content
 
-    def _parse_exoclaw_metadata(self, raw: str) -> dict:
+    def _parse_exoclaw_metadata(self, raw: str) -> dict[str, Any]:
         """Parse skill metadata JSON from frontmatter (supports exoclaw, nanobot, openclaw keys)."""
         try:
             data = json.loads(raw)
             if isinstance(data, dict):
-                return data.get("exoclaw", data.get("nanobot", data.get("openclaw", {})))
+                result = data.get("exoclaw", data.get("nanobot", data.get("openclaw", {})))
+                return dict(result) if isinstance(result, dict) else {}
             return {}
         except (json.JSONDecodeError, TypeError):
             return {}
 
-    def _check_requirements(self, skill_meta: dict) -> bool:
+    def _check_requirements(self, skill_meta: dict[str, Any]) -> bool:
         """Check if skill requirements are met (bins, env vars)."""
         requires = skill_meta.get("requires", {})
         for b in requires.get("bins", []):
@@ -183,7 +187,7 @@ class SkillsLoader:
                 return False
         return True
 
-    def _get_skill_meta(self, name: str) -> dict:
+    def _get_skill_meta(self, name: str) -> dict[str, Any]:
         """Get exoclaw metadata for a skill (cached in frontmatter)."""
         meta = self.get_skill_metadata(name) or {}
         return self._parse_exoclaw_metadata(meta.get("metadata", ""))
@@ -238,7 +242,7 @@ class SkillsLoader:
                 result.append(s["name"])
         return result
 
-    def get_skill_metadata(self, name: str) -> dict | None:
+    def get_skill_metadata(self, name: str) -> dict[str, Any] | None:
         """
         Get metadata from a skill's frontmatter.
 
