@@ -68,27 +68,33 @@ class ExoclawNanobot:
         the OS delivers SIGINT/SIGTERM or :meth:`stop` is called.
         """
         tasks: list[asyncio.Task[None]] = []
+        channel_tasks: list[asyncio.Task[None]] = []
         try:
             tasks.append(asyncio.create_task(self._cron_service.start()))
             tasks.append(asyncio.create_task(self._heartbeat.start()))
             tasks.append(asyncio.create_task(self._agent_loop.run()))
             for ch in self._extra_channels:
-                tasks.append(asyncio.create_task(ch.start(self._bus)))
+                t = asyncio.create_task(ch.start(self._bus))
+                tasks.append(t)
+                channel_tasks.append(t)
 
             if self._cli is not None:
                 # Interactive: block until the user exits the REPL.
                 await self._cli.start(self._bus)
             else:
                 # Gateway: block until stop() is called or a channel dies.
+                # Only watch channel tasks — infrastructure tasks (cron, heartbeat,
+                # agent_loop) may complete normally and must not trigger shutdown.
+                watch = [asyncio.create_task(self._stop_event.wait()), *channel_tasks]
                 done, _ = await asyncio.wait(
-                    [asyncio.create_task(self._stop_event.wait()), *tasks],
+                    watch,
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 for t in done:
                     if not t.cancelled():
                         exc = t.exception()
                         if exc is not None:
-                            logger.error("Task failed, triggering shutdown: {!r}", exc)
+                            logger.error("Channel task failed, triggering shutdown: {!r}", exc)
         finally:
             for ch in self._extra_channels:
                 try:
