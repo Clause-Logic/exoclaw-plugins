@@ -73,6 +73,8 @@ class ExoclawNanobot:
             tasks.append(asyncio.create_task(self._cron_service.start()))
             tasks.append(asyncio.create_task(self._heartbeat.start()))
             tasks.append(asyncio.create_task(self._agent_loop.run()))
+            if self._extra_channels:
+                tasks.append(asyncio.create_task(self._dispatch_outbound()))
             for ch in self._extra_channels:
                 t = asyncio.create_task(ch.start(self._bus))
                 tasks.append(t)
@@ -105,6 +107,25 @@ class ExoclawNanobot:
                 t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             await self._mcp_stack.aclose()
+
+    async def _dispatch_outbound(self) -> None:
+        """Route outbound bus messages to the matching extra_channel."""
+        channel_map: dict[str, Any] = {ch.name: ch for ch in self._extra_channels}
+        while True:
+            try:
+                msg = await asyncio.wait_for(self._bus.consume_outbound(), timeout=1.0)
+                ch = channel_map.get(msg.channel)
+                if ch is not None:
+                    try:
+                        await ch.send(msg)
+                    except Exception as e:
+                        logger.error("Error sending to {}: {}", msg.channel, e)
+                else:
+                    logger.warning("No channel for outbound message to: {}", msg.channel)
+            except asyncio.TimeoutError:
+                continue
+            except asyncio.CancelledError:
+                break
 
     async def stop(self) -> None:
         """Signal the agent to shut down."""
