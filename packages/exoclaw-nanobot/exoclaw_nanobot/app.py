@@ -11,6 +11,7 @@ from loguru import logger
 
 from exoclaw.agent.loop import AgentLoop
 from exoclaw.agent.tools.registry import ToolRegistry
+from exoclaw.bus.events import InboundMessage
 from exoclaw.bus.queue import MessageBus
 from exoclaw_channel_cli.channel import CLIChannel
 from exoclaw_channel_heartbeat.service import HeartbeatService
@@ -19,6 +20,7 @@ from exoclaw_provider_litellm.provider import LiteLLMProvider
 from exoclaw_subagent.manager import SubagentManager
 from exoclaw_tools_cron.service import CronService
 from exoclaw_tools_cron.tool import CronTool
+from exoclaw_tools_cron.types import CronJob
 from exoclaw_tools_message.tool import MessageTool
 from exoclaw_tools_mcp.config import MCPServerConfig as MCPConfig
 from exoclaw_tools_mcp.tool import connect_mcp_servers
@@ -242,7 +244,7 @@ async def create(
             provider=provider,
             model=model,
         ),
-        model=config.agents.defaults.search_model or model,
+        model=model,
         max_iterations=config.agents.defaults.max_tool_iterations,
     )
     tools.append(SpawnTool(manager=subagent_mgr))
@@ -286,6 +288,22 @@ async def create(
         on_post_turn=on_post_turn,
         on_max_iterations=on_max_iterations,
     )
+
+    # Wire cron jobs to publish inbound messages to the bus
+    async def _on_cron_job(job: CronJob) -> str | None:
+        if job.payload.kind == "agent_turn":
+            channel = job.payload.channel or "cli"
+            chat_id = job.payload.to or "direct"
+            msg = InboundMessage(
+                channel=channel,
+                sender_id="cron",
+                chat_id=chat_id,
+                content=job.payload.message,
+            )
+            await bus.publish_inbound(msg)
+        return None
+
+    cron_service.on_job = _on_cron_job
 
     # CLI channel (optional)
     cli = CLIChannel(history_dir=workspace / "history") if enable_cli else None

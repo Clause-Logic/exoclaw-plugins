@@ -1,6 +1,6 @@
 [project]
 name = "exoclaw-nanobot"
-version = "0.1.9"
+version = "0.1.10"
 description = "Full-stack exoclaw bundle — config, provider registry, and one-line wiring"
 readme = "README.md"
 requires-python = ">=3.11"

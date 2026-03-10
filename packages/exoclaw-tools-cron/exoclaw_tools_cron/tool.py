@@ -3,7 +3,7 @@
 from contextvars import ContextVar
 from typing import Any
 
-from exoclaw.agent.tools.protocol import ToolBase
+from exoclaw.agent.tools.protocol import ToolBase, ToolContext
 
 from exoclaw_tools_cron.service import CronService
 from exoclaw_tools_cron.types import CronSchedule
@@ -85,6 +85,16 @@ class CronTool(ToolBase):
             },
             "required": ["action"],
         }
+
+    async def execute_with_context(
+        self,
+        ctx: ToolContext,
+        action: str,
+        **kwargs: Any,
+    ) -> str:
+        self._channel = ctx.channel
+        self._chat_id = ctx.chat_id
+        return await self.execute(action=action, **kwargs)
 
     async def execute(
         self,
