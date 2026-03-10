@@ -2,7 +2,7 @@
 
 from typing import Any, Protocol, runtime_checkable
 
-from exoclaw.agent.tools.protocol import ToolBase
+from exoclaw.agent.tools.protocol import ToolBase, ToolContext
 
 
 @runtime_checkable
@@ -62,6 +62,22 @@ class SpawnTool(ToolBase):
             },
             "required": ["task"],
         }
+
+    async def execute_with_context(
+        self,
+        ctx: ToolContext,
+        task: str,
+        label: str | None = None,
+        **kwargs: Any,
+    ) -> str:
+        """Spawn a subagent, routing the result back to the caller's session."""
+        return await self._manager.spawn(
+            task=task,
+            label=label,
+            origin_channel=ctx.channel,
+            origin_chat_id=ctx.chat_id,
+            session_key=ctx.session_key,
+        )
 
     async def execute(
         self,
