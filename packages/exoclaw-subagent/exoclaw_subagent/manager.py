@@ -51,7 +51,6 @@ class SubagentManager:
         origin_channel: str = "cli",
         origin_chat_id: str = "direct",
         session_key: str | None = None,
-        search: bool = False,
     ) -> str:
         """Spawn a background subagent. Returns immediately."""
         task_id = str(uuid.uuid4())[:8]
