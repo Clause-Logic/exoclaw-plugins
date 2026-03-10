@@ -116,6 +116,8 @@ class ExoclawNanobot:
         while True:
             try:
                 msg = await asyncio.wait_for(self._bus.consume_outbound(), timeout=1.0)
+                if msg.metadata and msg.metadata.get("_tool_hint"):
+                    continue
                 ch = channel_map.get(msg.channel)
                 if ch is not None:
                     try:

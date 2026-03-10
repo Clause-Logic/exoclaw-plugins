@@ -41,6 +41,81 @@ def _make_app(
     )
 
 
+class TestDispatchOutbound:
+    def _make_app_with_channel(self, channel_name: str = "telegram") -> tuple[Any, Any, Any]:
+        from exoclaw.bus.queue import MessageBus
+        bus = MessageBus()
+        fake_channel = MagicMock()
+        fake_channel.name = channel_name
+        fake_channel.send = AsyncMock()
+
+        config = Config()
+        agent_loop = MagicMock()
+        agent_loop.run = AsyncMock()
+        cron_service = MagicMock()
+        cron_service.start = AsyncMock()
+        heartbeat = MagicMock()
+        heartbeat.start = AsyncMock()
+
+        from contextlib import AsyncExitStack
+        app = ExoclawNanobot(
+            config=config,
+            bus=bus,
+            agent_loop=agent_loop,
+            cli=None,
+            cron_service=cron_service,
+            heartbeat=heartbeat,
+            mcp_stack=AsyncExitStack(),
+            extra_channels=[fake_channel],
+        )
+        return app, bus, fake_channel
+
+    async def test_regular_message_forwarded_to_channel(self) -> None:
+        from exoclaw.bus.events import OutboundMessage
+        app, bus, channel = self._make_app_with_channel()
+
+        await bus.publish_outbound(OutboundMessage(
+            channel="telegram", chat_id="123", content="Hello!",
+        ))
+
+        task = asyncio.create_task(app._dispatch_outbound())
+        await asyncio.sleep(0.05)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        channel.send.assert_called_once()
+
+    async def test_tool_hint_not_forwarded_to_channel(self) -> None:
+        """Tool-hint progress messages must NOT be sent to channels like Telegram.
+
+        When the agent calls read_file("...") or web_search("..."), it publishes
+        a progress message with _tool_hint=True. These are internal status updates
+        and should be suppressed before reaching the user's channel.
+        """
+        from exoclaw.bus.events import OutboundMessage
+        app, bus, channel = self._make_app_with_channel()
+
+        await bus.publish_outbound(OutboundMessage(
+            channel="telegram",
+            chat_id="123",
+            content='read_file("foo.txt")',
+            metadata={"_progress": True, "_tool_hint": True},
+        ))
+
+        task = asyncio.create_task(app._dispatch_outbound())
+        await asyncio.sleep(0.05)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        channel.send.assert_not_called()
+
+
 class TestExoclawNanobotRun:
     async def test_starts_background_tasks_and_cli(self) -> None:
         app = _make_app()
