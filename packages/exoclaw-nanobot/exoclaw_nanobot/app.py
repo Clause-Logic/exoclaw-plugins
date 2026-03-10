@@ -11,7 +11,7 @@ from loguru import logger
 
 from exoclaw.agent.loop import AgentLoop
 from exoclaw.agent.tools.registry import ToolRegistry
-from exoclaw.bus.events import InboundMessage
+from exoclaw.bus.events import OutboundMessage
 from exoclaw.bus.queue import MessageBus
 from exoclaw_channel_cli.channel import CLIChannel
 from exoclaw_channel_heartbeat.service import HeartbeatService
@@ -289,18 +289,27 @@ async def create(
         on_max_iterations=on_max_iterations,
     )
 
-    # Wire cron jobs to publish inbound messages to the bus
+    # Wire cron jobs to run silently via process_direct.
+    # Using process_direct with on_progress=None suppresses all tool-hint progress
+    # messages (e.g. read_file("...")) that would otherwise be sent to the user's
+    # channel mid-run. The final response is only delivered when deliver=True.
     async def _on_cron_job(job: CronJob) -> str | None:
         if job.payload.kind == "agent_turn":
             channel = job.payload.channel or "cli"
             chat_id = job.payload.to or "direct"
-            msg = InboundMessage(
+            response = await agent_loop.process_direct(
+                job.payload.message,
+                session_key=f"cron:{job.id}",
                 channel=channel,
-                sender_id="cron",
                 chat_id=chat_id,
-                content=job.payload.message,
+                on_progress=None,
             )
-            await bus.publish_inbound(msg)
+            if job.payload.deliver and response:
+                await bus.publish_outbound(OutboundMessage(
+                    channel=channel,
+                    chat_id=chat_id,
+                    content=response,
+                ))
         return None
 
     cron_service.on_job = _on_cron_job
