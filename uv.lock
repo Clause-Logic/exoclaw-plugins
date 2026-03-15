@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 members = [
     "exoclaw-channel-cli",
     "exoclaw-channel-heartbeat",
+    "exoclaw-channel-pipe",
     "exoclaw-conversation",
     "exoclaw-github",
     "exoclaw-nanobot",
@@ -605,6 +606,21 @@ requires-dist = [
 name = "exoclaw-channel-heartbeat"
 version = "0.1.1"
 source = { editable = "packages/exoclaw-channel-heartbeat" }
+dependencies = [
+    { name = "exoclaw" },
+    { name = "loguru" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "exoclaw", specifier = ">=0.1.0" },
+    { name = "loguru", specifier = ">=0.7.3,<1.0.0" },
+]
+
+[[package]]
+name = "exoclaw-channel-pipe"
+version = "0.1.0"
+source = { editable = "packages/exoclaw-channel-pipe" }
 dependencies = [
     { name = "exoclaw" },
     { name = "loguru" },
