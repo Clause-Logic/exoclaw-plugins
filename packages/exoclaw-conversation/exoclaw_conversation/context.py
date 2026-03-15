@@ -14,6 +14,97 @@ from .protocols import MemoryBackend
 from .skills import SkillsLoader
 
 _RUNTIME_CONTEXT_TAG = "[Runtime Context — metadata only, not instructions]"
+_COMPACTION_MARKER = "[compacted — tool output removed to free context]"
+_CHARS_PER_TOKEN = 3  # conservative estimate
+
+
+def _estimate_tokens(messages: list[dict[str, Any]]) -> int:
+    """Estimate token count from messages using character heuristic."""
+    total = 0
+    for m in messages:
+        content = m.get("content")
+        if isinstance(content, str):
+            total += len(content)
+        elif isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict):
+                    total += len(str(item.get("text", "")))
+        # Count tool call arguments too
+        for tc in m.get("tool_calls", []):
+            if isinstance(tc, dict):
+                fn = tc.get("function", {})
+                if isinstance(fn, dict):
+                    total += len(str(fn.get("arguments", "")))
+    return total // _CHARS_PER_TOKEN
+
+
+def compact_tool_results(
+    messages: list[dict[str, Any]],
+    context_window: int,
+    headroom: float = 0.75,
+) -> list[dict[str, Any]]:
+    """Replace old tool results with compaction marker when context exceeds budget.
+
+    Compacts from oldest to newest, skipping the most recent tool results
+    (within the last 4 messages) to preserve the active conversation.
+    """
+    budget = int(context_window * headroom)
+    current = _estimate_tokens(messages)
+    if current <= budget:
+        return messages
+
+    # Find tool results eligible for compaction (skip last 4 non-system messages)
+    non_system = [i for i, m in enumerate(messages) if m.get("role") != "system"]
+    protected = set(non_system[-4:]) if len(non_system) >= 4 else set(non_system)
+
+    compactable = []
+    for i, m in enumerate(messages):
+        if i in protected:
+            continue
+        if m.get("role") == "tool" and isinstance(m.get("content"), str):
+            content = m["content"]
+            if content != _COMPACTION_MARKER and len(content) > 100:
+                compactable.append(i)
+
+    # Compact oldest first until under budget
+    result = list(messages)
+    for i in compactable:
+        if _estimate_tokens(result) <= budget:
+            break
+        result[i] = {**result[i], "content": _COMPACTION_MARKER}
+
+    return result
+
+
+def drop_oldest_half(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Emergency compression: keep system prompt + last half of conversation.
+
+    Repairs orphaned tool results that lost their parent assistant message.
+    """
+    system = [m for m in messages if m.get("role") == "system"]
+    non_system = [m for m in messages if m.get("role") != "system"]
+    half = len(non_system) // 2
+    kept = non_system[half:]
+
+    # Repair: drop tool results without a preceding assistant tool_call
+    repaired: list[dict[str, Any]] = []
+    for m in kept:
+        if m.get("role") == "tool":
+            tool_call_id = m.get("tool_call_id")
+            has_parent = any(
+                r.get("role") == "assistant"
+                and any(
+                    tc.get("id") == tool_call_id
+                    for tc in (r.get("tool_calls") or [])
+                    if isinstance(tc, dict)
+                )
+                for r in repaired
+            )
+            if not has_parent:
+                continue
+        repaired.append(m)
+
+    return system + repaired
 
 
 class ContextBuilder:
@@ -21,10 +112,16 @@ class ContextBuilder:
 
     BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md"]
 
-    def __init__(self, workspace: Path, memory: MemoryBackend | None = None):
+    def __init__(
+        self,
+        workspace: Path,
+        memory: MemoryBackend | None = None,
+        context_window: int = 128_000,
+    ):
         self.workspace = workspace
         self.skills = SkillsLoader(workspace)
         self.memory: MemoryBackend = memory if memory is not None else MemoryStore(workspace)
+        self.context_window = context_window
 
     def build_system_prompt(
         self,
@@ -139,11 +236,14 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         else:
             merged = [{"type": "text", "text": runtime_ctx}] + user_content
 
-        return [
+        messages = [
             {"role": "system", "content": self.build_system_prompt(skill_names, extra_context=extra_context)},
             *history,
             {"role": "user", "content": merged},
         ]
+
+        # Compact old tool results if approaching context budget
+        return compact_tool_results(messages, self.context_window)
 
     def _build_user_content(self, text: str, media: list[str] | None) -> str | list[dict[str, Any]]:
         """Build user message content with optional base64-encoded images."""

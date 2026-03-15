@@ -6,13 +6,16 @@ requires-python = ">=3.11"
 members = [
     "exoclaw-channel-cli",
     "exoclaw-channel-heartbeat",
+    "exoclaw-channel-pipe",
     "exoclaw-conversation",
     "exoclaw-github",
     "exoclaw-nanobot",
     "exoclaw-openrouter-search",
     "exoclaw-provider-litellm",
     "exoclaw-subagent",
+    "exoclaw-tools-batch",
     "exoclaw-tools-cron",
+    "exoclaw-tools-llm-call",
     "exoclaw-tools-mcp",
     "exoclaw-tools-message",
     "exoclaw-tools-spawn",
@@ -570,14 +573,14 @@ wheels = [
 
 [[package]]
 name = "exoclaw"
-version = "0.2.1"
+version = "0.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "loguru" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a8/b9/5154587e668bf710cf03f4f038141aa29a9357c6f7f33fe51e4aacc7f8a3/exoclaw-0.2.1.tar.gz", hash = "sha256:0fd2e7c4815317f06b41b77e6a013045670f778cc90a61ae464cfd73507c7574", size = 17100, upload-time = "2026-03-09T20:19:03.008Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4b/1f/ba0eb2217abb375f663136b7ec2e02018cceddfd91b64928a4c1c435586b/exoclaw-0.4.0.tar.gz", hash = "sha256:ca19ba7d9bb71420594c760c84d04f414c7c131bf1a98fa556c29607b15c475e", size = 20478, upload-time = "2026-03-15T19:33:30.542Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c9/62/f58468b1d5c29dcf98631841057a17c53a39a1d473f518ec0d763ac9f72d/exoclaw-0.2.1-py3-none-any.whl", hash = "sha256:511f609963996a1f63051840055e47a69afe5e494a05fd5d1d6bda83ec9b0da2", size = 18469, upload-time = "2026-03-09T20:19:02.051Z" },
+    { url = "https://files.pythonhosted.org/packages/d3/58/d536e68eebafc19020ffab5caaaa2dfcbc839bebcd2eefb477523a82eddc/exoclaw-0.4.0-py3-none-any.whl", hash = "sha256:308bc19e4de1fb8be183f8bf7e416c335a88c18d2f7fc730acc9df1806b14661", size = 21025, upload-time = "2026-03-15T19:33:29.504Z" },
 ]
 
 [[package]]
@@ -603,6 +606,21 @@ requires-dist = [
 name = "exoclaw-channel-heartbeat"
 version = "0.1.1"
 source = { editable = "packages/exoclaw-channel-heartbeat" }
+dependencies = [
+    { name = "exoclaw" },
+    { name = "loguru" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "exoclaw", specifier = ">=0.1.0" },
+    { name = "loguru", specifier = ">=0.7.3,<1.0.0" },
+]
+
+[[package]]
+name = "exoclaw-channel-pipe"
+version = "0.1.0"
+source = { editable = "packages/exoclaw-channel-pipe" }
 dependencies = [
     { name = "exoclaw" },
     { name = "loguru" },
@@ -656,7 +674,7 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-nanobot"
-version = "0.1.4"
+version = "0.1.12"
 source = { editable = "packages/exoclaw-nanobot" }
 dependencies = [
     { name = "exoclaw" },
@@ -731,7 +749,7 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-subagent"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "packages/exoclaw-subagent" }
 dependencies = [
     { name = "exoclaw" },
@@ -745,8 +763,19 @@ requires-dist = [
 ]
 
 [[package]]
+name = "exoclaw-tools-batch"
+version = "0.1.0"
+source = { editable = "packages/exoclaw-tools-batch" }
+dependencies = [
+    { name = "exoclaw" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "exoclaw", specifier = ">=0.1.0" }]
+
+[[package]]
 name = "exoclaw-tools-cron"
-version = "0.1.2"
+version = "0.1.3"
 source = { editable = "packages/exoclaw-tools-cron" }
 dependencies = [
     { name = "croniter" },
@@ -759,6 +788,21 @@ requires-dist = [
     { name = "croniter", specifier = ">=6.0.0,<7.0.0" },
     { name = "exoclaw", specifier = ">=0.1.0" },
     { name = "loguru", specifier = ">=0.7.3,<1.0.0" },
+]
+
+[[package]]
+name = "exoclaw-tools-llm-call"
+version = "0.1.0"
+source = { editable = "packages/exoclaw-tools-llm-call" }
+dependencies = [
+    { name = "exoclaw" },
+    { name = "jinja2" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "exoclaw", specifier = ">=0.3.0" },
+    { name = "jinja2", specifier = ">=3.1.0" },
 ]
 
 [[package]]
@@ -793,7 +837,7 @@ requires-dist = [{ name = "exoclaw", specifier = ">=0.1.0" }]
 
 [[package]]
 name = "exoclaw-tools-spawn"
-version = "0.1.1"
+version = "0.1.3"
 source = { editable = "packages/exoclaw-tools-spawn" }
 dependencies = [
     { name = "exoclaw" },

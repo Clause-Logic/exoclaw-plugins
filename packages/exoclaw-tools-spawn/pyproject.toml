@@ -8,6 +8,9 @@ dependencies = [
     "exoclaw>=0.1.0",
 ]
 
+[project.entry-points."exoclaw.skills"]
+spawn = "exoclaw_tools_spawn.skills:spawn"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
