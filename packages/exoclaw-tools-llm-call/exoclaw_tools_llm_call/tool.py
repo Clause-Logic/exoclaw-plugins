@@ -9,6 +9,7 @@ from typing import Any
 import jinja2
 from exoclaw.agent.tools.protocol import ToolBase
 from exoclaw.providers.protocol import LLMProvider
+from exoclaw.providers.types import ResponseFormat
 
 
 def _file(path: str) -> str:
@@ -27,6 +28,16 @@ def _render(template: str, vars: dict[str, Any] | None = None) -> str:
     return tmpl.render(**(vars or {}))
 
 
+def _build_response_format(schema: dict[str, Any]) -> ResponseFormat:
+    """Build a ResponseFormatJSONSchema from a user-provided schema dict."""
+    name = schema.pop("name", "response")
+    strict = schema.pop("strict", None)
+    json_schema: dict[str, Any] = {"name": name, "schema": schema}
+    if strict is not None:
+        json_schema["strict"] = strict
+    return {"type": "json_schema", "json_schema": json_schema}
+
+
 class LLMCallTool(ToolBase):
     """Single-shot LLM call with Jinja2 templated prompts.
 
@@ -34,12 +45,12 @@ class LLMCallTool(ToolBase):
         provider:       LLMProvider instance
         allowed_models: list of model IDs the agent is allowed to use
         default_model:  fallback model when none specified
-        output_dir:     optional directory for output files
 
     Call-time (from the agent):
         prompt:   Jinja2 template string — use {{ var }}, {{ file('/path') }}
         vars:     dict of template variables (optional)
         model:    model ID to use (must be in allowed_models)
+        schema:   JSON Schema for structured output (optional)
         output:   file path to write result to (optional, otherwise returned inline)
     """
 
@@ -48,12 +59,10 @@ class LLMCallTool(ToolBase):
         provider: LLMProvider,
         allowed_models: list[str] | None = None,
         default_model: str | None = None,
-        output_dir: str | None = None,
     ) -> None:
         self._provider = provider
         self._allowed_models = allowed_models or []
         self._default_model = default_model
-        self._output_dir = output_dir
 
     @property
     def name(self) -> str:
@@ -68,6 +77,7 @@ class LLMCallTool(ToolBase):
             "Use {{ var }} for variable substitution and {{ file('/path') }} "
             "to inline file contents. "
             f"Allowed models: {models}. "
+            "Set schema for structured JSON output. "
             "Set output to a file path to write the result to disk "
             "instead of returning it inline."
         )
@@ -95,6 +105,14 @@ class LLMCallTool(ToolBase):
                         f"Default: {self._default_model or 'provider default'}"
                     ),
                 },
+                "schema": {
+                    "type": "object",
+                    "description": (
+                        "JSON Schema for structured output. The LLM response will conform "
+                        "to this schema. Include 'name' (optional, default 'response') and "
+                        "standard JSON Schema properties (type, properties, required, etc.)."
+                    ),
+                },
                 "output": {
                     "type": "string",
                     "description": "File path to write output to. If omitted, result returned inline.",
@@ -108,6 +126,7 @@ class LLMCallTool(ToolBase):
         prompt: str,
         vars: dict[str, Any] | None = None,
         model: str | None = None,
+        schema: dict[str, Any] | None = None,
         output: str | None = None,
         **kwargs: Any,
     ) -> str:
@@ -127,12 +146,16 @@ class LLMCallTool(ToolBase):
 
         # Call LLM
         messages = [{"role": "user", "content": rendered}]
+        chat_kwargs: dict[str, Any] = {
+            "messages": messages,
+            "tools": [],
+            "model": use_model,
+        }
+        if schema:
+            chat_kwargs["response_format"] = _build_response_format(dict(schema))
+
         try:
-            response = await self._provider.chat(
-                messages=messages,
-                tools=[],
-                model=use_model,
-            )
+            response = await self._provider.chat(**chat_kwargs)
             text = response.content or ""
         except Exception as e:
             return f"Error calling LLM: {e}"

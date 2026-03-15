@@ -12,7 +12,7 @@ import litellm
 from litellm import acompletion
 from loguru import logger
 
-from exoclaw.providers.types import LLMResponse, ToolCallRequest
+from exoclaw.providers.types import LLMResponse, ResponseFormat, ToolCallRequest
 
 # Standard chat-completion message keys.
 _ALLOWED_MSG_KEYS = frozenset({"role", "content", "tool_calls", "tool_call_id", "name", "reasoning_content"})
@@ -179,6 +179,7 @@ class LiteLLMProvider:
         max_tokens: int = 4096,
         temperature: float = 0.7,
         reasoning_effort: str | None = None,
+        response_format: ResponseFormat | None = None,
     ) -> LLMResponse:
         """Send a chat completion request via LiteLLM."""
         resolved_model = model or self.default_model
@@ -207,6 +208,9 @@ class LiteLLMProvider:
         if reasoning_effort:
             kwargs["reasoning_effort"] = reasoning_effort
             kwargs["drop_params"] = True
+
+        if response_format:
+            kwargs["response_format"] = response_format
 
         if tools:
             kwargs["tools"] = tools
