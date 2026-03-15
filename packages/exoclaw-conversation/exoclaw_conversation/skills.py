@@ -38,22 +38,28 @@ class SkillsLoader:
         """Load skills from installed Python packages via entry points."""
         import importlib.metadata
 
-        for pkg in packages:
-            try:
-                eps = importlib.metadata.entry_points(group="exoclaw.skills")
-            except TypeError:
-                # Python 3.11 compat
-                eps = importlib.metadata.entry_points().get("exoclaw.skills", [])
-
+        # Build a mapping from normalized package name to its entry points
+        pkg_ep_map: dict[str, list[importlib.metadata.EntryPoint]] = {}
+        for dist in importlib.metadata.distributions():
+            dist_name = dist.metadata["Name"]
+            if dist_name is None:
+                continue
+            normalized = dist_name.replace("-", "_").lower()
+            eps = dist.entry_points
             for ep in eps:
-                if ep.dist and ep.dist.name and ep.dist.name.replace("-", "_") == pkg.replace("-", "_"):
-                    try:
-                        loader_fn = ep.load()
-                        result = loader_fn()
-                        if isinstance(result, dict) and "name" in result and "content" in result:
-                            self._package_skills[result["name"]] = result["content"]
-                    except Exception:
-                        pass
+                if ep.group == "exoclaw.skills":
+                    pkg_ep_map.setdefault(normalized, []).append(ep)
+
+        for pkg in packages:
+            normalized_pkg = pkg.replace("-", "_").lower()
+            for ep in pkg_ep_map.get(normalized_pkg, []):
+                try:
+                    loader_fn = ep.load()
+                    result = loader_fn()
+                    if isinstance(result, dict) and "name" in result and "content" in result:
+                        self._package_skills[result["name"]] = result["content"]
+                except Exception:
+                    pass
 
     def list_skills(self, filter_unavailable: bool = True) -> list[dict[str, str]]:
         """

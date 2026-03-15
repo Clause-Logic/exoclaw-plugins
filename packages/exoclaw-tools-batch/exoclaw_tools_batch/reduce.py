@@ -245,7 +245,9 @@ class ReduceTool(ToolBase):
             available = ", ".join(self._registry.tool_names)
             return f"Error: tool '{tool_name}' not found. Available: {available}"
 
-        base_params = then.get("params", {})
+        base_params = then.get("params") or {}
+        if not isinstance(base_params, dict):
+            return "Error: then.params must be a dict"
         max_rounds = 20  # safety limit
         round_num = 0
 
@@ -257,15 +259,16 @@ class ReduceTool(ToolBase):
             for i in range(0, len(items), chunk_size):
                 chunks.append(items[i : i + chunk_size])
 
-            # Call tool on each chunk concurrently
+            # Call tool on each chunk concurrently, using a temp dir per round
             semaphore = asyncio.Semaphore(10)
+            round_tmp = tempfile.TemporaryDirectory(
+                prefix=f"tree_r{round_num}_", dir=self._output_dir
+            )
 
-            async def _process_chunk(chunk: list[Any]) -> str:
+            async def _process_chunk(chunk: list[Any], _tmp_dir: str = round_tmp.name) -> str:
                 async with semaphore:
-                    # Write chunk to temp file
-                    fd, chunk_path = tempfile.mkstemp(
-                        suffix=".json", prefix=f"tree_r{round_num}_", dir=self._output_dir
-                    )
+                    # Write chunk to temp file inside the round's temp dir
+                    fd, chunk_path = tempfile.mkstemp(suffix=".json", prefix="chunk_", dir=_tmp_dir)
                     with open(fd, "w") as f:
                         json.dump(chunk, f, indent=2)
 
@@ -275,6 +278,9 @@ class ReduceTool(ToolBase):
 
             tasks = [_process_chunk(chunk) for chunk in chunks]
             results = await asyncio.gather(*tasks)
+
+            # Clean up temp chunk files for this round
+            round_tmp.cleanup()
 
             # Collect results as the new items for next round
             items = []

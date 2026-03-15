@@ -49,7 +49,7 @@ class PipeChannel:
         try:
             reader = asyncio.StreamReader()
             protocol = asyncio.StreamReaderProtocol(reader)
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             await loop.connect_read_pipe(lambda: protocol, sys.stdin)
 
             while self._running:

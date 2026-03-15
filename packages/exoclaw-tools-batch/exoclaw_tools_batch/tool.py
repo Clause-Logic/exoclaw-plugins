@@ -95,6 +95,8 @@ class BatchTool(ToolBase):
             return json.dumps({"output_path": "", "count": 0})
 
         max_concurrent = concurrency or self._concurrency
+        if max_concurrent < 1:
+            return "Error: concurrency must be >= 1"
         semaphore = asyncio.Semaphore(max_concurrent)
 
         async def _run_one(index: int, params: dict[str, Any]) -> dict[str, Any]:

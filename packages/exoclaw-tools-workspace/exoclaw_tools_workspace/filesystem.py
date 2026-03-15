@@ -63,6 +63,12 @@ class ReadFileTool(ToolBase):
 
     async def execute(self, path: str, offset: int = 0, limit: int | None = None, **kwargs: Any) -> str:
         try:
+            # Validate offset and limit
+            if offset < 0:
+                return "Error: offset must be >= 0"
+            if limit is not None and limit < 1:
+                return "Error: limit must be >= 1"
+
             file_path = _resolve_path(path, self._workspace, self._allowed_dir)
             if not file_path.exists():
                 return f"Error: File not found: {path}"
@@ -78,21 +84,32 @@ class ReadFileTool(ToolBase):
                     f"Use offset and limit to read a portion, e.g. read_file(path, offset=0, limit=50)."
                 )
 
-            content = file_path.read_text(encoding="utf-8")
-            lines = content.splitlines(keepends=True)
-            total_lines = len(lines)
-
-            # Apply range
+            # Ranged read: stream lines to avoid loading entire file
             if offset > 0 or limit is not None:
-                end = offset + limit if limit is not None else total_lines
-                selected = lines[offset:end]
+                selected: list[str] = []
+                total_lines = 0
+                end = offset + limit if limit is not None else None
+                with open(file_path, encoding="utf-8") as fh:
+                    for i, line in enumerate(fh):
+                        total_lines = i + 1
+                        if i < offset:
+                            continue
+                        if end is not None and i >= end:
+                            # Keep counting total lines
+                            for _ in fh:
+                                total_lines += 1
+                            break
+                        selected.append(line)
+
+                actual_end = offset + len(selected)
+                header = f"[lines {offset + 1}-{actual_end} of {total_lines}]\n"
                 text = "".join(selected)
-                header = f"[lines {offset}-{min(end, total_lines)} of {total_lines}]\n"
                 if len(text) > self._MAX_CHARS:
                     text = text[: self._MAX_CHARS] + "\n... (truncated)"
                 return header + text
 
             # Full file
+            content = file_path.read_text(encoding="utf-8")
             if len(content) > self._MAX_CHARS:
                 return content[: self._MAX_CHARS] + f"\n\n... (truncated — file is {len(content):,} chars, showing first {self._MAX_CHARS:,}. Use offset/limit to read more.)"
             return content

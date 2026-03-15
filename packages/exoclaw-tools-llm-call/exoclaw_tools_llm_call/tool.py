@@ -12,18 +12,32 @@ from exoclaw.providers.protocol import LLMProvider
 from exoclaw.providers.types import ResponseFormat
 
 
-def _file(path: str) -> str:
-    """Jinja2 global: read a file and return its contents."""
-    p = Path(path)
-    if not p.exists():
-        return f"[file not found: {path}]"
-    return p.read_text()
+def _make_file_reader(allowed_dir: Path | None = None):
+    """Create a file() Jinja2 helper, optionally restricted to allowed_dir."""
+
+    def _file(path: str) -> str:
+        """Jinja2 global: read a file and return its contents."""
+        p = Path(path).resolve()
+        if allowed_dir is not None:
+            try:
+                p.relative_to(allowed_dir.resolve())
+            except ValueError:
+                return f"[file access denied: {path} is outside allowed directory]"
+        if not p.exists():
+            return f"[file not found: {path}]"
+        return p.read_text()
+
+    return _file
 
 
-def _render(template: str, vars: dict[str, Any] | None = None) -> str:
+def _render(
+    template: str,
+    vars: dict[str, Any] | None = None,
+    allowed_dir: Path | None = None,
+) -> str:
     """Render a Jinja2 template with file() global and optional vars."""
     env = jinja2.Environment(undefined=jinja2.StrictUndefined)
-    env.globals["file"] = _file
+    env.globals["file"] = _make_file_reader(allowed_dir)
     tmpl = env.from_string(template)
     return tmpl.render(**(vars or {}))
 
@@ -59,10 +73,12 @@ class LLMCallTool(ToolBase):
         provider: LLMProvider,
         allowed_models: list[str] | None = None,
         default_model: str | None = None,
+        allowed_dir: Path | None = None,
     ) -> None:
         self._provider = provider
         self._allowed_models = allowed_models or []
         self._default_model = default_model
+        self._allowed_dir = allowed_dir
 
     @property
     def name(self) -> str:
@@ -143,7 +159,7 @@ class LLMCallTool(ToolBase):
 
         # Render template
         try:
-            rendered = _render(prompt, all_vars)
+            rendered = _render(prompt, all_vars, allowed_dir=self._allowed_dir)
         except jinja2.TemplateError as e:
             return f"Error rendering template: {e}"
 
