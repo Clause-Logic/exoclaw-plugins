@@ -8,6 +8,15 @@ dependencies = [
     "exoclaw>=0.1.0",
 ]
 
+[project.entry-points."exoclaw.skills"]
+etl = "exoclaw_tools_batch.skills:etl"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["exoclaw_tools_batch"]
+
+[tool.hatch.build.targets.sdist]
+include = ["exoclaw_tools_batch/"]

@@ -21,10 +21,39 @@ class SkillsLoader:
     specific tools or perform certain tasks.
     """
 
-    def __init__(self, workspace: Path, builtin_skills_dir: Path | None = None):
+    def __init__(
+        self,
+        workspace: Path,
+        builtin_skills_dir: Path | None = None,
+        skill_packages: list[str] | None = None,
+    ):
         self.workspace = workspace
         self.workspace_skills = workspace / "skills"
         self.builtin_skills = builtin_skills_dir or BUILTIN_SKILLS_DIR
+        self._package_skills: dict[str, str] = {}
+        if skill_packages:
+            self._load_package_skills(skill_packages)
+
+    def _load_package_skills(self, packages: list[str]) -> None:
+        """Load skills from installed Python packages via entry points."""
+        import importlib.metadata
+
+        for pkg in packages:
+            try:
+                eps = importlib.metadata.entry_points(group="exoclaw.skills")
+            except TypeError:
+                # Python 3.11 compat
+                eps = importlib.metadata.entry_points().get("exoclaw.skills", [])
+
+            for ep in eps:
+                if ep.dist and ep.dist.name and ep.dist.name.replace("-", "_") == pkg.replace("-", "_"):
+                    try:
+                        loader_fn = ep.load()
+                        result = loader_fn()
+                        if isinstance(result, dict) and "name" in result and "content" in result:
+                            self._package_skills[result["name"]] = result["content"]
+                    except Exception:
+                        pass
 
     def list_skills(self, filter_unavailable: bool = True) -> list[dict[str, str]]:
         """
@@ -54,6 +83,11 @@ class SkillsLoader:
                     if skill_file.exists() and not any(s["name"] == skill_dir.name for s in skills):
                         skills.append({"name": skill_dir.name, "path": str(skill_file), "source": "builtin"})
 
+        # Package skills (lowest priority — workspace and builtin override)
+        for name in self._package_skills:
+            if not any(s["name"] == name for s in skills):
+                skills.append({"name": name, "path": f"package:{name}", "source": "package"})
+
         # Filter by requirements
         if filter_unavailable:
             return [s for s in skills if self._check_requirements(self._get_skill_meta(s["name"]))]
@@ -79,6 +113,10 @@ class SkillsLoader:
             builtin_skill = self.builtin_skills / name / "SKILL.md"
             if builtin_skill.exists():
                 return builtin_skill.read_text(encoding="utf-8")
+
+        # Check package skills
+        if name in self._package_skills:
+            return self._package_skills[name]
 
         return None
 
