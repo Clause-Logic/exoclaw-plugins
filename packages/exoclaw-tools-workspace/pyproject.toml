@@ -1,6 +1,6 @@
 [project]
 name = "exoclaw-tools-workspace"
-version = "0.1.1"
+version = "0.2.0"
 description = "File, shell, and web tools for exoclaw"
 readme = "README.md"
 requires-python = ">=3.11"
