@@ -14,6 +14,7 @@ members = [
     "exoclaw-subagent",
     "exoclaw-tools-batch",
     "exoclaw-tools-cron",
+    "exoclaw-tools-llm-call",
     "exoclaw-tools-mcp",
     "exoclaw-tools-message",
     "exoclaw-tools-spawn",
@@ -571,14 +572,14 @@ wheels = [
 
 [[package]]
 name = "exoclaw"
-version = "0.2.1"
+version = "0.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "loguru" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a8/b9/5154587e668bf710cf03f4f038141aa29a9357c6f7f33fe51e4aacc7f8a3/exoclaw-0.2.1.tar.gz", hash = "sha256:0fd2e7c4815317f06b41b77e6a013045670f778cc90a61ae464cfd73507c7574", size = 17100, upload-time = "2026-03-09T20:19:03.008Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/07/4b/f578fa928c926a29d9333a07ada5d8e296a18988b7a219d06e6f8103c0ac/exoclaw-0.3.0.tar.gz", hash = "sha256:260e79ce5b79ebd5f0b6995237bb9f10dd9407211dae573472408656abc928a2", size = 20032, upload-time = "2026-03-15T01:34:59.387Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c9/62/f58468b1d5c29dcf98631841057a17c53a39a1d473f518ec0d763ac9f72d/exoclaw-0.2.1-py3-none-any.whl", hash = "sha256:511f609963996a1f63051840055e47a69afe5e494a05fd5d1d6bda83ec9b0da2", size = 18469, upload-time = "2026-03-09T20:19:02.051Z" },
+    { url = "https://files.pythonhosted.org/packages/1f/31/a197d8565165e770e92dce5703f3700df1f3c7618abbbde8de8e36123200/exoclaw-0.3.0-py3-none-any.whl", hash = "sha256:02a10062bd9c02a81d30872213bf33ef2cfe55013e4e75fb0f2b242feba62f96", size = 20472, upload-time = "2026-03-15T01:35:00.268Z" },
 ]
 
 [[package]]
@@ -771,6 +772,21 @@ requires-dist = [
     { name = "croniter", specifier = ">=6.0.0,<7.0.0" },
     { name = "exoclaw", specifier = ">=0.1.0" },
     { name = "loguru", specifier = ">=0.7.3,<1.0.0" },
+]
+
+[[package]]
+name = "exoclaw-tools-llm-call"
+version = "0.1.0"
+source = { editable = "packages/exoclaw-tools-llm-call" }
+dependencies = [
+    { name = "exoclaw" },
+    { name = "jinja2" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "exoclaw", specifier = ">=0.3.0" },
+    { name = "jinja2", specifier = ">=3.1.0" },
 ]
 
 [[package]]

@@ -14,6 +14,7 @@ exoclaw-tools-mcp = { workspace = true }
 exoclaw-subagent = { workspace = true }
 exoclaw-github = { workspace = true }
 exoclaw-tools-batch = { workspace = true }
+exoclaw-tools-llm-call = { workspace = true }
 
 [dependency-groups]
 dev = [
