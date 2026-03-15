@@ -138,9 +138,12 @@ class LLMCallTool(ToolBase):
                 f"Allowed: {', '.join(self._allowed_models)}"
             )
 
+        # Merge explicit vars with any extra kwargs (e.g. input_path from reduce)
+        all_vars = {**kwargs, **(vars or {})}
+
         # Render template
         try:
-            rendered = _render(prompt, vars)
+            rendered = _render(prompt, all_vars)
         except jinja2.TemplateError as e:
             return f"Error rendering template: {e}"
 

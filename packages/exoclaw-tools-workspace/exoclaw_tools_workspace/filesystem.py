@@ -38,17 +38,30 @@ class ReadFileTool(ToolBase):
 
     @property
     def description(self) -> str:
-        return "Read the contents of a file at the given path."
+        return (
+            "Read the contents of a file. Use offset and limit to read a specific "
+            "line range instead of the entire file (recommended for large files)."
+        )
 
     @property
     def parameters(self) -> dict[str, Any]:
         return {
             "type": "object",
-            "properties": {"path": {"type": "string", "description": "The file path to read"}},
+            "properties": {
+                "path": {"type": "string", "description": "The file path to read"},
+                "offset": {
+                    "type": "integer",
+                    "description": "Line number to start from (0-based, default 0)",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of lines to return",
+                },
+            },
             "required": ["path"],
         }
 
-    async def execute(self, path: str, **kwargs: Any) -> str:
+    async def execute(self, path: str, offset: int = 0, limit: int | None = None, **kwargs: Any) -> str:
         try:
             file_path = _resolve_path(path, self._workspace, self._allowed_dir)
             if not file_path.exists():
@@ -57,15 +70,31 @@ class ReadFileTool(ToolBase):
                 return f"Error: Not a file: {path}"
 
             size = file_path.stat().st_size
-            if size > self._MAX_CHARS * 4:
+
+            # If no range specified and file is huge, return metadata + hint
+            if offset == 0 and limit is None and size > self._MAX_CHARS * 4:
                 return (
                     f"Error: File too large ({size:,} bytes). "
-                    f"Use exec tool with head/tail/grep to read portions."
+                    f"Use offset and limit to read a portion, e.g. read_file(path, offset=0, limit=50)."
                 )
 
             content = file_path.read_text(encoding="utf-8")
+            lines = content.splitlines(keepends=True)
+            total_lines = len(lines)
+
+            # Apply range
+            if offset > 0 or limit is not None:
+                end = offset + limit if limit is not None else total_lines
+                selected = lines[offset:end]
+                text = "".join(selected)
+                header = f"[lines {offset}-{min(end, total_lines)} of {total_lines}]\n"
+                if len(text) > self._MAX_CHARS:
+                    text = text[: self._MAX_CHARS] + "\n... (truncated)"
+                return header + text
+
+            # Full file
             if len(content) > self._MAX_CHARS:
-                return content[: self._MAX_CHARS] + f"\n\n... (truncated — file is {len(content):,} chars, limit {self._MAX_CHARS:,})"
+                return content[: self._MAX_CHARS] + f"\n\n... (truncated — file is {len(content):,} chars, showing first {self._MAX_CHARS:,}. Use offset/limit to read more.)"
             return content
         except PermissionError as e:
             return f"Error: {e}"

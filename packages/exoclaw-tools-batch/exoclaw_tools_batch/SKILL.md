@@ -39,7 +39,9 @@ reduce(dir="...", key="results", chunk_size=50)
 
 ## Tips
 
-- Output stays on disk until you `read_file` it — context stays clean
-- Use `schema` in `llm_call` for structured JSON output
-- Use cheap models (haiku) for extraction/filtering, expensive models for final synthesis
-- `batch` + `llm_call` = parallel cheap model calls with no agent loop overhead
+- **Don't read_file batch output** — it dumps raw content into your context and wastes tokens. Instead, pipe it to `llm_call` via `{{ file(path) }}` which sends it to the cheap model directly.
+- If you must inspect output, peek with `read_file(path, offset=0, limit=10)`.
+- Use `{{ file('/path') }}` in llm_call prompts to keep content off the agent context.
+- Use `schema` in `llm_call` for structured JSON output.
+- Use cheap models (haiku/nano) for extraction/filtering, expensive models for final synthesis.
+- Don't use batch for a single item — call the tool directly.

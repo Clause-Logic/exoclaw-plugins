@@ -34,8 +34,10 @@ class PipeChannel:
 
     name = "pipe"
 
-    def __init__(self, chat_id: str = "pipe") -> None:
-        self._chat_id = chat_id
+    def __init__(self, chat_id: str | None = None) -> None:
+        import uuid
+
+        self._chat_id = chat_id or f"pipe-{uuid.uuid4().hex[:8]}"
         self._running = False
         self._turn_done = asyncio.Event()
         self._turn_done.set()
