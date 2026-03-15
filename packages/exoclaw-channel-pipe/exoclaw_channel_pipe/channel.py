@@ -26,8 +26,8 @@ class PipeChannel:
     """
     Non-interactive channel that reads from stdin line-by-line.
 
-    Each line becomes an inbound message. Responses are written to stdout.
-    EOF on stdin triggers shutdown.
+    Each line becomes an inbound message. Responses arrive via send()
+    (called by nanobot's outbound dispatcher). EOF triggers shutdown.
 
     Implements the exoclaw Channel protocol.
     """
@@ -37,37 +37,12 @@ class PipeChannel:
     def __init__(self, chat_id: str = "pipe") -> None:
         self._chat_id = chat_id
         self._running = False
-        self._bus: Bus | None = None
+        self._turn_done = asyncio.Event()
+        self._turn_done.set()
 
     async def start(self, bus: Bus) -> None:
         """Read stdin lines and publish as inbound messages."""
-        self._bus = bus
         self._running = True
-
-        turn_done = asyncio.Event()
-        turn_done.set()
-        turn_response: list[str] = []
-
-        async def _consume_outbound() -> None:
-            while self._running:
-                try:
-                    msg = await asyncio.wait_for(bus.consume_outbound(), timeout=1.0)
-                    if msg.metadata and msg.metadata.get("_progress"):
-                        # Print progress to stderr so stdout stays clean
-                        print(f"  > {msg.content}", file=sys.stderr)
-                    elif not turn_done.is_set():
-                        if msg.content:
-                            turn_response.append(msg.content)
-                        turn_done.set()
-                    elif msg.content:
-                        # Async message (subagent result, etc.)
-                        print(msg.content, flush=True)
-                except asyncio.TimeoutError:
-                    continue
-                except asyncio.CancelledError:
-                    break
-
-        outbound_task = asyncio.create_task(_consume_outbound())
 
         try:
             reader = asyncio.StreamReader()
@@ -87,8 +62,7 @@ class PipeChannel:
 
                     logger.debug("pipe input: {}", text)
 
-                    turn_done.clear()
-                    turn_response.clear()
+                    self._turn_done.clear()
 
                     await bus.publish_inbound(InboundMessage(
                         channel=self.name,
@@ -97,24 +71,26 @@ class PipeChannel:
                         content=text,
                     ))
 
-                    await turn_done.wait()
-
-                    if turn_response:
-                        print(turn_response[0], flush=True)
+                    # Wait for response via send()
+                    await self._turn_done.wait()
 
                 except asyncio.CancelledError:
                     break
         finally:
             self._running = False
-            outbound_task.cancel()
-            await asyncio.gather(outbound_task, return_exceptions=True)
 
     async def stop(self) -> None:
         """Signal shutdown."""
         self._running = False
+        self._turn_done.set()  # Unblock if waiting
         logger.info("PipeChannel stopping")
 
     async def send(self, msg: OutboundMessage) -> None:
-        """Write an outbound message to stdout."""
+        """Called by nanobot's outbound dispatcher with agent responses."""
+        if msg.metadata and msg.metadata.get("_progress"):
+            print(f"  > {msg.content}", file=sys.stderr, flush=True)
+            return
         if msg.content:
             print(msg.content, flush=True)
+        if not self._turn_done.is_set():
+            self._turn_done.set()
