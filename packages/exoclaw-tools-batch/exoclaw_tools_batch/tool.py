@@ -114,8 +114,24 @@ class BatchTool(ToolBase):
             {"result": r["result"]} if "result" in r else {"error": r["error"]} for r in ordered
         ]
 
+        # Aggregate usage from results that contain it (e.g. llm_call)
+        total_usage: dict[str, int] = {}
+        for r in results:
+            if "result" not in r:
+                continue
+            try:
+                parsed = json.loads(r["result"])
+                if isinstance(parsed, dict) and "usage" in parsed:
+                    for k, v in parsed["usage"].items():
+                        if isinstance(v, int):
+                            total_usage[k] = total_usage.get(k, 0) + v
+            except (json.JSONDecodeError, TypeError):
+                pass
+
         # Write to temp file
-        output = {"tool": tool, "count": len(results), "results": results}
+        output: dict[str, Any] = {"tool": tool, "count": len(results), "results": results}
+        if total_usage:
+            output["usage"] = total_usage
         output_dir = self._output_dir
         if output_dir:
             Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -123,4 +139,7 @@ class BatchTool(ToolBase):
         with open(fd, "w") as f:
             json.dump(output, f, indent=2)
 
-        return json.dumps({"output_path": path, "count": len(results)})
+        meta: dict[str, Any] = {"output_path": path, "count": len(results)}
+        if total_usage:
+            meta["usage"] = total_usage
+        return json.dumps(meta)

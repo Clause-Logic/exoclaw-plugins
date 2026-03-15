@@ -24,7 +24,9 @@ async def test_basic_call() -> None:
     tool = LLMCallTool(provider=provider)
 
     result = await tool.execute(prompt="What is 2+2?")
-    assert result == "result text"
+    data = json.loads(result)
+    assert data["content"] == "result text"
+    assert "usage" in data
     provider.chat.assert_called_once()
     call_args = provider.chat.call_args
     assert call_args.kwargs["messages"][0]["content"] == "What is 2+2?"
@@ -116,7 +118,9 @@ async def test_inline_return() -> None:
     tool = LLMCallTool(provider=provider)
 
     result = await tool.execute(prompt="hi")
-    assert result == "inline result"
+    data = json.loads(result)
+    assert data["content"] == "inline result"
+    assert "usage" in data
 
 
 @pytest.mark.asyncio

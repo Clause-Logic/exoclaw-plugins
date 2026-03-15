@@ -160,10 +160,23 @@ class LLMCallTool(ToolBase):
         except Exception as e:
             return f"Error calling LLM: {e}"
 
+        usage = response.usage or {}
+
         # Write to file or return inline
         if output:
             Path(output).parent.mkdir(parents=True, exist_ok=True)
             Path(output).write_text(text)
-            return json.dumps({"output_path": output, "chars": len(text)})
+            result: dict[str, Any] = {
+                "output_path": output,
+                "chars": len(text),
+                "usage": usage,
+            }
+            if use_model:
+                result["model"] = use_model
+            return json.dumps(result)
 
-        return text
+        # Inline: wrap in JSON so usage is always available
+        result = {"content": text, "usage": usage}
+        if use_model:
+            result["model"] = use_model
+        return json.dumps(result)
