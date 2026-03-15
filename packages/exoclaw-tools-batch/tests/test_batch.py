@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -47,12 +48,20 @@ def _make_registry(*tools: object) -> ToolRegistry:
 
 
 @pytest.fixture
-def batch() -> BatchTool:
-    tool = BatchTool()
+def batch(tmp_path: object) -> BatchTool:
+    tool = BatchTool(output_dir=str(tmp_path))
     reg = _make_registry(FakeTool(), SlowTool(), FailTool())
     reg.register(tool)  # type: ignore[arg-type]
     tool.set_registry(reg)
     return tool
+
+
+def _read_output(result_json: str) -> dict:
+    """Parse batch result, read the output file, return its contents."""
+    meta = json.loads(result_json)
+    path = meta["output_path"]
+    with open(path) as f:
+        return json.load(f)
 
 
 @pytest.mark.asyncio
@@ -61,7 +70,12 @@ async def test_basic_batch(batch: BatchTool) -> None:
         tool="echo",
         items=[{"text": "a"}, {"text": "b"}, {"text": "c"}],
     )
-    data = json.loads(result)
+    meta = json.loads(result)
+    assert meta["count"] == 3
+    assert meta["output_path"].endswith(".json")
+
+    data = _read_output(result)
+    assert data["tool"] == "echo"
     assert data["count"] == 3
     assert data["results"][0]["result"] == "echo:a"
     assert data["results"][1]["result"] == "echo:b"
@@ -71,9 +85,9 @@ async def test_basic_batch(batch: BatchTool) -> None:
 @pytest.mark.asyncio
 async def test_empty_items(batch: BatchTool) -> None:
     result = await batch.execute(tool="echo", items=[])
-    data = json.loads(result)
-    assert data["count"] == 0
-    assert data["results"] == []
+    meta = json.loads(result)
+    assert meta["count"] == 0
+    assert meta["output_path"] == ""
 
 
 @pytest.mark.asyncio
@@ -94,11 +108,10 @@ async def test_no_registry() -> None:
 @pytest.mark.asyncio
 async def test_error_handling(batch: BatchTool) -> None:
     result = await batch.execute(tool="fail", items=[{}, {}])
-    data = json.loads(result)
+    data = _read_output(result)
     assert data["count"] == 2
-    # Registry wraps errors, so result contains "Error"
     for r in data["results"]:
-        assert "result" in r  # registry catches and returns error string
+        assert "result" in r
         assert "boom" in r["result"]
 
 
@@ -109,7 +122,7 @@ async def test_preserves_order(batch: BatchTool) -> None:
         items=[{"n": i} for i in range(20)],
         concurrency=5,
     )
-    data = json.loads(result)
+    data = _read_output(result)
     assert data["count"] == 20
     for i, r in enumerate(data["results"]):
         assert r["result"] == f"done:{i}"
@@ -117,11 +130,22 @@ async def test_preserves_order(batch: BatchTool) -> None:
 
 @pytest.mark.asyncio
 async def test_concurrency_limit(batch: BatchTool) -> None:
-    """Verify concurrency parameter is respected (doesn't crash)."""
     result = await batch.execute(
         tool="echo",
         items=[{"text": str(i)} for i in range(10)],
         concurrency=2,
     )
-    data = json.loads(result)
+    data = _read_output(result)
     assert data["count"] == 10
+
+
+@pytest.mark.asyncio
+async def test_output_file_cleanup(batch: BatchTool) -> None:
+    """Output files exist and are valid JSON."""
+    result = await batch.execute(tool="echo", items=[{"text": "x"}])
+    meta = json.loads(result)
+    path = meta["output_path"]
+    assert os.path.exists(path)
+    with open(path) as f:
+        data = json.load(f)
+    assert data["results"][0]["result"] == "echo:x"

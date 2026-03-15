@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import tempfile
+from pathlib import Path
 from typing import Any
 
 from exoclaw.agent.tools.protocol import ToolBase, ToolContext
@@ -15,7 +17,8 @@ class BatchTool(ToolBase):
 
     The LLM calls batch() with a tool name + list of param dicts.
     Each item is executed via the registry (no LLM involved).
-    Results are coalesced into a single response.
+    Results are written to a temp file and the path is returned,
+    keeping the agent's context window clean.
 
     Receives the registry via duck-typed set_registry() called at
     registration time (same pattern as set_bus).
@@ -23,9 +26,14 @@ class BatchTool(ToolBase):
 
     DEFAULT_CONCURRENCY = 10
 
-    def __init__(self, concurrency: int = DEFAULT_CONCURRENCY) -> None:
+    def __init__(
+        self,
+        concurrency: int = DEFAULT_CONCURRENCY,
+        output_dir: str | None = None,
+    ) -> None:
         self._registry: ToolRegistry | None = None
         self._concurrency = concurrency
+        self._output_dir = output_dir
 
     def set_registry(self, registry: ToolRegistry) -> None:
         """Called at registration time by AgentLoop."""
@@ -40,7 +48,8 @@ class BatchTool(ToolBase):
         return (
             "Run a tool against multiple inputs concurrently. "
             "Each item in the list is a dict of parameters for the tool. "
-            "Results are returned as a JSON array in the same order. "
+            "Results are written to a temp file and the path is returned. "
+            "Use read_file to inspect results. "
             "Use this when you need to call the same tool many times "
             "(e.g., fetch 20 URLs, read 10 files). "
             "No LLM calls are made — tools run directly."
@@ -83,7 +92,7 @@ class BatchTool(ToolBase):
             return f"Error: Tool '{tool}' not found. Available: {available}"
 
         if not items:
-            return json.dumps({"results": [], "count": 0})
+            return json.dumps({"output_path": "", "count": 0})
 
         max_concurrent = concurrency or self._concurrency
         semaphore = asyncio.Semaphore(max_concurrent)
@@ -106,4 +115,15 @@ class BatchTool(ToolBase):
             for r in ordered
         ]
 
-        return json.dumps({"results": results, "count": len(results)})
+        # Write to temp file
+        output = {"tool": tool, "count": len(results), "results": results}
+        output_dir = self._output_dir
+        if output_dir:
+            Path(output_dir).mkdir(parents=True, exist_ok=True)
+        fd, path = tempfile.mkstemp(
+            suffix=".json", prefix=f"batch_{tool}_", dir=output_dir
+        )
+        with open(fd, "w") as f:
+            json.dump(output, f, indent=2)
+
+        return json.dumps({"output_path": path, "count": len(results)})
