@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import json
-import tempfile
 from pathlib import Path
 from typing import Any
 
 import jinja2
-
 from exoclaw.agent.tools.protocol import ToolBase
 from exoclaw.providers.protocol import LLMProvider
 

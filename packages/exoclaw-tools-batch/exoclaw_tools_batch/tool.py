@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from exoclaw.agent.tools.protocol import ToolBase, ToolContext
+from exoclaw.agent.tools.protocol import ToolBase
 from exoclaw.agent.tools.registry import ToolRegistry
 
 
@@ -71,7 +71,7 @@ class BatchTool(ToolBase):
                 },
                 "concurrency": {
                     "type": "integer",
-                    "description": f"Max parallel executions (default {DEFAULT_CONCURRENCY})",
+                    "description": f"Max parallel executions (default {self.DEFAULT_CONCURRENCY})",
                 },
             },
             "required": ["tool", "items"],
@@ -111,8 +111,7 @@ class BatchTool(ToolBase):
         # Restore original order
         ordered = sorted(completed, key=lambda r: r["index"])
         results = [
-            {"result": r["result"]} if "result" in r else {"error": r["error"]}
-            for r in ordered
+            {"result": r["result"]} if "result" in r else {"error": r["error"]} for r in ordered
         ]
 
         # Write to temp file
@@ -120,9 +119,7 @@ class BatchTool(ToolBase):
         output_dir = self._output_dir
         if output_dir:
             Path(output_dir).mkdir(parents=True, exist_ok=True)
-        fd, path = tempfile.mkstemp(
-            suffix=".json", prefix=f"batch_{tool}_", dir=output_dir
-        )
+        fd, path = tempfile.mkstemp(suffix=".json", prefix=f"batch_{tool}_", dir=output_dir)
         with open(fd, "w") as f:
             json.dump(output, f, indent=2)
 

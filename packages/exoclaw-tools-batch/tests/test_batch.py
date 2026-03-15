@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import json
-import os
+from pathlib import Path
 
 import pytest
-
 from exoclaw.agent.tools.registry import ToolRegistry
 from exoclaw_tools_batch import BatchTool
 
@@ -14,7 +13,11 @@ from exoclaw_tools_batch import BatchTool
 class FakeTool:
     name = "echo"
     description = "Returns the input as-is"
-    parameters = {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}
+    parameters = {
+        "type": "object",
+        "properties": {"text": {"type": "string"}},
+        "required": ["text"],
+    }
 
     async def execute(self, text: str = "", **kwargs: object) -> str:
         return f"echo:{text}"
@@ -27,6 +30,7 @@ class SlowTool:
 
     async def execute(self, n: int = 0, **kwargs: object) -> str:
         import asyncio
+
         await asyncio.sleep(0.01)
         return f"done:{n}"
 
@@ -145,7 +149,7 @@ async def test_output_file_cleanup(batch: BatchTool) -> None:
     result = await batch.execute(tool="echo", items=[{"text": "x"}])
     meta = json.loads(result)
     path = meta["output_path"]
-    assert os.path.exists(path)
+    assert Path(path).exists()
     with open(path) as f:
         data = json.load(f)
     assert data["results"][0]["result"] == "echo:x"

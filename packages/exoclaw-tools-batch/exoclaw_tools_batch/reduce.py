@@ -209,12 +209,14 @@ class ReduceTool(ToolBase):
         # Chunk mode — split into multiple files
         if chunk_size and len(merged) > chunk_size:
             chunk_dir, chunk_paths = self._write_chunks(merged, chunk_size)
-            return json.dumps({
-                "output_dir": chunk_dir,
-                "files": chunk_paths,
-                "count": len(merged),
-                "chunks": len(chunk_paths),
-            })
+            return json.dumps(
+                {
+                    "output_dir": chunk_dir,
+                    "files": chunk_paths,
+                    "count": len(merged),
+                    "chunks": len(chunk_paths),
+                }
+            )
 
         # Single output
         result: dict[str, Any] = {"count": len(merged), "results": merged}
@@ -297,8 +299,10 @@ class ReduceTool(ToolBase):
         if errors:
             result_data["errors"] = errors
         out_path = self._write_output(result_data, output)
-        return json.dumps({
-            "output_path": out_path,
-            "count": len(items),
-            "rounds": round_num,
-        })
+        return json.dumps(
+            {
+                "output_path": out_path,
+                "count": len(items),
+                "rounds": round_num,
+            }
+        )

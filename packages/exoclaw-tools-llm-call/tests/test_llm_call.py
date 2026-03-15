@@ -7,7 +7,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
-
 from exoclaw.providers.types import LLMResponse
 from exoclaw_tools_llm_call import LLMCallTool
 
@@ -36,7 +35,7 @@ async def test_template_vars() -> None:
     provider = _make_provider("ok")
     tool = LLMCallTool(provider=provider)
 
-    result = await tool.execute(
+    await tool.execute(
         prompt="Hello {{ name }}, you are {{ age }}",
         vars={"name": "Stephen", "age": "30"},
     )
@@ -52,7 +51,7 @@ async def test_file_function(tmp_path: Path) -> None:
     provider = _make_provider("processed")
     tool = LLMCallTool(provider=provider)
 
-    result = await tool.execute(
+    await tool.execute(
         prompt="{{ file('" + str(test_file) + "') }}",
     )
     call_args = provider.chat.call_args
@@ -64,7 +63,7 @@ async def test_file_not_found() -> None:
     provider = _make_provider("ok")
     tool = LLMCallTool(provider=provider)
 
-    result = await tool.execute(prompt="{{ file('/nonexistent/path') }}")
+    await tool.execute(prompt="{{ file('/nonexistent/path') }}")
     call_args = provider.chat.call_args
     assert "file not found" in call_args.kwargs["messages"][0]["content"]
 
@@ -74,7 +73,7 @@ async def test_model_selection() -> None:
     provider = _make_provider("ok")
     tool = LLMCallTool(provider=provider, allowed_models=["haiku", "sonnet"])
 
-    result = await tool.execute(prompt="hi", model="haiku")
+    await tool.execute(prompt="hi", model="haiku")
     assert provider.chat.call_args.kwargs["model"] == "haiku"
 
 
@@ -93,7 +92,7 @@ async def test_default_model() -> None:
     provider = _make_provider("ok")
     tool = LLMCallTool(provider=provider, default_model="haiku")
 
-    result = await tool.execute(prompt="hi")
+    await tool.execute(prompt="hi")
     assert provider.chat.call_args.kwargs["model"] == "haiku"
 
 
@@ -153,7 +152,7 @@ async def test_combined_with_vars_and_file(tmp_path: Path) -> None:
         default_model="haiku",
     )
 
-    result = await tool.execute(
+    await tool.execute(
         prompt=(
             "Feed: {{ feed_name }}\n\n"
             "Entries:\n{{ file(data_path) }}\n\n"

@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 import pytest
-
 from exoclaw.agent.tools.registry import ToolRegistry
 from exoclaw_tools_batch import ReduceTool
 
@@ -272,9 +270,7 @@ async def test_tree_reduce_no_registry(tmp_path: Path) -> None:
     reduce = ReduceTool(output_dir=str(tmp_path))
     f1 = _write_json(tmp_path / "a.json", {"results": list(range(50))})
 
-    result = await reduce.execute(
-        files=[f1], until=1, then={"tool": "condenser"}
-    )
+    result = await reduce.execute(files=[f1], until=1, then={"tool": "condenser"})
     assert "Error" in result
     assert "registry" in result.lower()
 
@@ -288,9 +284,7 @@ async def test_tree_reduce_tool_not_found(tmp_path: Path) -> None:
 
     f1 = _write_json(tmp_path / "a.json", {"results": list(range(50))})
 
-    result = await reduce.execute(
-        files=[f1], until=1, then={"tool": "nonexistent"}
-    )
+    result = await reduce.execute(files=[f1], until=1, then={"tool": "nonexistent"})
     assert "Error" in result
     assert "nonexistent" in result
 
@@ -300,8 +294,6 @@ async def test_tree_reduce_missing_tool_name(tmp_path: Path) -> None:
     reduce = _make_tree_reduce(tmp_path)
     f1 = _write_json(tmp_path / "a.json", {"results": list(range(10))})
 
-    result = await reduce.execute(
-        files=[f1], until=1, then={"params": {}}
-    )
+    result = await reduce.execute(files=[f1], until=1, then={"params": {}})
     assert "Error" in result
     assert "then.tool" in result
