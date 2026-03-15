@@ -7,12 +7,12 @@ description: Delegate tasks to background subagents that run independently and r
 
 Spawn independent agents that run in the background. You get an immediate response and the result is delivered later.
 
-## When to use spawn vs batch
+## When to use spawn
 
-- **spawn** — the task needs LLM reasoning, tool access, and may take multiple steps. Each subagent gets a full agent loop.
-- **batch** — the task is deterministic (fetch URLs, read files) or uses cheap LLM calls (llm_call). No agent loop per item.
-
-Rule of thumb: if you'd write a multi-step prompt, spawn it. If you'd write a for-loop, batch it.
+- The task needs LLM reasoning, tool access, and may take multiple steps
+- Each subagent gets a full agent loop with its own conversation
+- Don't spawn subagents for simple tasks you can do directly
+- If the `batch` tool is available, prefer it for deterministic fan-out (fetch URLs, read files) — spawn is for tasks that need independent reasoning
 
 ## Usage
 
@@ -37,4 +37,3 @@ Rule of thumb: if you'd write a multi-step prompt, spawn it. If you'd write a fo
 - Results are delivered to the session that spawned them
 - Multiple subagents can run concurrently
 - Failed subagents report errors back — you don't need to poll
-- Don't spawn subagents for simple tasks you can do directly
