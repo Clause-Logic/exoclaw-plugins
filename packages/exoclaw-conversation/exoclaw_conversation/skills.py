@@ -19,6 +19,10 @@ class SkillsLoader:
 
     Skills are markdown files (SKILL.md) that teach the agent how to use
     specific tools or perform certain tasks.
+
+    Package skills can provide:
+        - {name, content}: SKILL.md content only
+        - {name, content, path}: full skill directory with hooks
     """
 
     def __init__(
@@ -31,11 +35,18 @@ class SkillsLoader:
         self.workspace_skills = workspace / "skills"
         self.builtin_skills = builtin_skills_dir or BUILTIN_SKILLS_DIR
         self._package_skills: dict[str, str] = {}
+        self._package_skill_dirs: dict[str, Path] = {}
         if skill_packages:
             self._load_package_skills(skill_packages)
 
     def _load_package_skills(self, packages: list[str]) -> None:
-        """Load skills from installed Python packages via entry points."""
+        """Load skills from installed Python packages via entry points.
+
+        Entry points return a dict with:
+            name: skill name
+            content: SKILL.md content
+            path (optional): Path to skill directory containing hooks/, SKILL.md, etc.
+        """
         import importlib.metadata
 
         # Build a mapping from normalized package name to its entry points
@@ -58,8 +69,30 @@ class SkillsLoader:
                     result = loader_fn()
                     if isinstance(result, dict) and "name" in result and "content" in result:
                         self._package_skills[result["name"]] = result["content"]
+                        if "path" in result:
+                            self._package_skill_dirs[result["name"]] = Path(result["path"])
                 except Exception:
                     pass
+
+    @property
+    def _all_skill_dirs(self) -> list[tuple[Path, str]]:
+        """Return all skill directories as (dir, source) pairs for hook scanning."""
+        dirs: list[tuple[Path, str]] = []
+        # Workspace (highest priority)
+        if self.workspace_skills.exists():
+            for d in self.workspace_skills.iterdir():
+                if d.is_dir():
+                    dirs.append((d, "workspace"))
+        # Builtin
+        if self.builtin_skills and self.builtin_skills.exists():
+            for d in self.builtin_skills.iterdir():
+                if d.is_dir():
+                    dirs.append((d, "builtin"))
+        # Package
+        for name, path in self._package_skill_dirs.items():
+            if path.is_dir():
+                dirs.append((path, "package"))
+        return dirs
 
     def list_skills(self, filter_unavailable: bool = True) -> list[dict[str, str]]:
         """
@@ -92,7 +125,8 @@ class SkillsLoader:
         # Package skills (lowest priority — workspace and builtin override)
         for name in self._package_skills:
             if not any(s["name"] == name for s in skills):
-                skills.append({"name": name, "path": f"package:{name}", "source": "package"})
+                path = str(self._package_skill_dirs[name] / "SKILL.md") if name in self._package_skill_dirs else f"package:{name}"
+                skills.append({"name": name, "path": path, "source": "package"})
 
         # Filter by requirements
         if filter_unavailable:
@@ -239,41 +273,37 @@ class SkillsLoader:
     def get_bootstrap_injections(self) -> list[str]:
         """Return content from hooks/exoclaw/bootstrap.md for all installed skills."""
         results = []
-        for skills_dir in (self.workspace_skills, self.builtin_skills):
-            if not skills_dir or not skills_dir.exists():
+        seen: set[str] = set()
+        for skill_dir, _source in self._all_skill_dirs:
+            if skill_dir.name in seen:
                 continue
-            for skill_dir in skills_dir.iterdir():
-                if not skill_dir.is_dir():
-                    continue
-                # Support both exoclaw and legacy nanobot hook paths
-                for hook_path in (
-                    skill_dir / "hooks" / "exoclaw" / "bootstrap.md",
-                    skill_dir / "hooks" / "nanobot" / "bootstrap.md",
-                ):
-                    if hook_path.exists():
-                        content = hook_path.read_text(encoding="utf-8").strip()
-                        if content:
-                            results.append(content)
-                        break
+            seen.add(skill_dir.name)
+            for hook_path in (
+                skill_dir / "hooks" / "exoclaw" / "bootstrap.md",
+                skill_dir / "hooks" / "nanobot" / "bootstrap.md",
+            ):
+                if hook_path.exists():
+                    content = hook_path.read_text(encoding="utf-8").strip()
+                    if content:
+                        results.append(content)
+                    break
         return results
 
     def get_skill_hook_scripts(self, hook_name: str) -> list[Path]:
         """Return paths to executable hook scripts named hook_name across all installed skills."""
         results = []
-        for skills_dir in (self.workspace_skills, self.builtin_skills):
-            if not skills_dir or not skills_dir.exists():
+        seen: set[str] = set()
+        for skill_dir, _source in sorted(self._all_skill_dirs, key=lambda x: x[0].name):
+            if skill_dir.name in seen:
                 continue
-            for skill_dir in sorted(skills_dir.iterdir()):
-                if not skill_dir.is_dir():
-                    continue
-                # Support both exoclaw and legacy nanobot hook paths
-                for hook_file in (
-                    skill_dir / "hooks" / "exoclaw" / hook_name,
-                    skill_dir / "hooks" / "nanobot" / hook_name,
-                ):
-                    if hook_file.exists() and os.access(hook_file, os.X_OK):
-                        results.append(hook_file)
-                        break
+            seen.add(skill_dir.name)
+            for hook_file in (
+                skill_dir / "hooks" / "exoclaw" / hook_name,
+                skill_dir / "hooks" / "nanobot" / hook_name,
+            ):
+                if hook_file.exists() and os.access(hook_file, os.X_OK):
+                    results.append(hook_file)
+                    break
         return results
 
     def get_always_skills(self) -> list[str]:
