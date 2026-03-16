@@ -201,10 +201,12 @@ class SkillsLoader:
             skill_meta = self._get_skill_meta(s["name"])
             available = self._check_requirements(skill_meta)
 
-            lines.append(f"  <skill available=\"{str(available).lower()}\">")
+            source = s.get("source", "workspace")
+            lines.append(f"  <skill available=\"{str(available).lower()}\" source=\"{source}\">")
             lines.append(f"    <name>{name}</name>")
             lines.append(f"    <description>{desc}</description>")
-            lines.append(f"    <location>{path}</location>")
+            if not path.startswith("package:"):
+                lines.append(f"    <location>{path}</location>")
 
             if not available:
                 missing = self._get_missing_requirements(skill_meta)
