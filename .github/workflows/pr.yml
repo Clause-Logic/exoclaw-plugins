@@ -1,0 +1,74 @@
+name: PR
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      packages: ${{ steps.changed.outputs.packages }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed packages
+        id: changed
+        run: |
+          CHANGED=$(git diff origin/main...HEAD --name-only)
+
+          # If any global files changed, recheck all packages
+          if echo "$CHANGED" | grep -qE '^(mise\.toml|pyproject\.toml|uv\.lock|\.github/)'; then
+            PACKAGES=$(ls packages/ | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          else
+            PACKAGES=$(echo "$CHANGED" | \
+              grep '^packages/' | \
+              cut -d/ -f2 | \
+              sort -u | \
+              jq -R -s -c 'split("\n") | map(select(length > 0))')
+          fi
+
+          echo "packages=$PACKAGES" >> "$GITHUB_OUTPUT"
+
+  validate:
+    needs: detect
+    if: needs.detect.outputs.packages != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        package: ${{ fromJson(needs.detect.outputs.packages) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Check formatting
+        run: mise run check-format
+        env:
+          PACKAGE: ${{ matrix.package }}
+
+      - name: Lint
+        run: mise run lint
+        env:
+          PACKAGE: ${{ matrix.package }}
+
+      - name: Test
+        run: mise run test
+        env:
+          PACKAGE: ${{ matrix.package }}
+
+  ci:
+    needs: validate
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check all validations passed
+        run: |
+          if [ "${{ needs.validate.result }}" != "success" ] && [ "${{ needs.validate.result }}" != "skipped" ]; then
+            exit 1
+          fi

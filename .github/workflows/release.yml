@@ -1,0 +1,59 @@
+name: Release
+
+on:
+  push:
+    tags: ['*-v*']
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # required for PyPI trusted publishing
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+
+      - name: Parse tag
+        id: tag
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG##*-v}"
+          PACKAGE="${TAG%-v*}"
+          echo "package=$PACKAGE" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Validate version matches pyproject.toml
+        run: |
+          PACKAGE="${{ steps.tag.outputs.package }}"
+          EXPECTED="${{ steps.tag.outputs.version }}"
+          ACTUAL=$(grep '^version' "packages/$PACKAGE/pyproject.toml" | head -1 | sed 's/version = "\(.*\)"/\1/')
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "Version mismatch: tag=$EXPECTED pyproject.toml=$ACTUAL"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Check formatting
+        run: mise run check-format
+        env:
+          PACKAGE: ${{ steps.tag.outputs.package }}
+
+      - name: Lint
+        run: mise run lint
+        env:
+          PACKAGE: ${{ steps.tag.outputs.package }}
+
+      - name: Test
+        run: mise run test
+        env:
+          PACKAGE: ${{ steps.tag.outputs.package }}
+
+      - name: Build
+        run: uv build --package ${{ steps.tag.outputs.package }}
+
+      - name: Publish to PyPI
+        run: uv publish
