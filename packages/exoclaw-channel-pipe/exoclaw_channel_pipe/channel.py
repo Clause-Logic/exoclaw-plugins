@@ -66,12 +66,14 @@ class PipeChannel:
 
                     self._turn_done.clear()
 
-                    await bus.publish_inbound(InboundMessage(
-                        channel=self.name,
-                        sender_id="user",
-                        chat_id=self._chat_id,
-                        content=text,
-                    ))
+                    await bus.publish_inbound(
+                        InboundMessage(
+                            channel=self.name,
+                            sender_id="user",
+                            chat_id=self._chat_id,
+                            content=text,
+                        )
+                    )
 
                     # Wait for response via send()
                     await self._turn_done.wait()

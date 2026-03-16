@@ -164,7 +164,9 @@ class GitHubLabelTool(ToolBase):
 
     @property
     def description(self) -> str:
-        return "Add or remove labels on the current issue or PR. Also lists all available repo labels."
+        return (
+            "Add or remove labels on the current issue or PR. Also lists all available repo labels."
+        )
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -370,7 +372,9 @@ class GitHubIssueTool(ToolBase):
                 resp = await client.get(f"{base}/{number}", headers=_gh_headers(self._token))
                 resp.raise_for_status()
                 data = resp.json()
-            return f"#{data['number']} [{data['state']}] {data['title']}\n\n{data.get('body') or ''}"
+            return (
+                f"#{data['number']} [{data['state']}] {data['title']}\n\n{data.get('body') or ''}"
+            )
 
         if action in ("update", "close"):
             patch: dict[str, Any] = {}
@@ -589,10 +593,7 @@ class GitHubChecksTool(ToolBase):
         if not runs:
             return f"No check runs found for {sha[:8]}"
 
-        lines = [
-            f"- {r['name']}: {r['status']} / {r.get('conclusion') or 'pending'}"
-            for r in runs
-        ]
+        lines = [f"- {r['name']}: {r['status']} / {r.get('conclusion') or 'pending'}" for r in runs]
         return f"Check runs for {sha[:8]}:\n" + "\n".join(lines)
 
 

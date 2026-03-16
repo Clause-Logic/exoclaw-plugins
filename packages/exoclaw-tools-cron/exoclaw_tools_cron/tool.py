@@ -30,6 +30,7 @@ class CronTool(ToolBase):
     def reset_cron_context(self, token: object) -> None:
         """Restore previous cron context."""
         from contextvars import Token
+
         if isinstance(token, Token):
             self._in_cron_context.reset(token)
 
@@ -195,7 +196,9 @@ class CronTool(ToolBase):
     ) -> str:
         if not job_id:
             return "Error: job_id is required for update"
-        job = self._cron.update_job(job_id, message=message, deliver=deliver, skills=skills, stateless=stateless)
+        job = self._cron.update_job(
+            job_id, message=message, deliver=deliver, skills=skills, stateless=stateless
+        )
         if job:
             return f"Updated job {job_id}"
         return f"Job {job_id} not found"

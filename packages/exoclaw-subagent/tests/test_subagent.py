@@ -82,6 +82,7 @@ class TestSubagentManagerInit:
 
     def test_satisfies_spawn_manager_protocol(self) -> None:
         from exoclaw_tools_spawn.tool import SpawnManager
+
         mgr = _make_manager()
         assert isinstance(mgr, SpawnManager)
 

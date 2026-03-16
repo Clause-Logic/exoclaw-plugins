@@ -37,7 +37,9 @@ class TestMCPServerConfig:
         assert cfg.tool_timeout == 60
 
     def test_sse_config(self) -> None:
-        cfg = MCPServerConfig(url="http://localhost:8080/sse", headers={"Authorization": "Bearer tok"})
+        cfg = MCPServerConfig(
+            url="http://localhost:8080/sse", headers={"Authorization": "Bearer tok"}
+        )
         assert cfg.url == "http://localhost:8080/sse"
         assert cfg.headers == {"Authorization": "Bearer tok"}
 
@@ -51,7 +53,9 @@ class TestMCPServerConfig:
 # ---------------------------------------------------------------------------
 
 
-def _make_tool_def(name: str = "search", description: str = "Search", schema: dict[str, Any] | None = None) -> MagicMock:
+def _make_tool_def(
+    name: str = "search", description: str = "Search", schema: dict[str, Any] | None = None
+) -> MagicMock:
     td = MagicMock()
     td.name = name
     td.description = description
@@ -107,7 +111,9 @@ class TestMCPToolWrapperExecute:
 
         wrapper = MCPToolWrapper(session, "s", _make_tool_def())
 
-        with patch("exoclaw_tools_mcp.tool.asyncio.wait_for", new=AsyncMock(return_value=result_obj)):
+        with patch(
+            "exoclaw_tools_mcp.tool.asyncio.wait_for", new=AsyncMock(return_value=result_obj)
+        ):
             with patch("exoclaw_tools_mcp.tool.types") as mock_types:
                 mock_types.TextContent = type(text_block)
                 result = await wrapper.execute(query="hello")
@@ -128,7 +134,9 @@ class TestMCPToolWrapperExecute:
 
         wrapper = MCPToolWrapper(session, "s", _make_tool_def())
 
-        with patch("exoclaw_tools_mcp.tool.asyncio.wait_for", new=AsyncMock(return_value=result_obj)):
+        with patch(
+            "exoclaw_tools_mcp.tool.asyncio.wait_for", new=AsyncMock(return_value=result_obj)
+        ):
             with patch("exoclaw_tools_mcp.tool.types") as mock_types:
                 mock_types.TextContent = type(None)  # block won't match
                 result = await wrapper.execute()
@@ -143,7 +151,9 @@ class TestMCPToolWrapperExecute:
 
         wrapper = MCPToolWrapper(session, "s", _make_tool_def())
 
-        with patch("exoclaw_tools_mcp.tool.asyncio.wait_for", new=AsyncMock(return_value=result_obj)):
+        with patch(
+            "exoclaw_tools_mcp.tool.asyncio.wait_for", new=AsyncMock(return_value=result_obj)
+        ):
             with patch("exoclaw_tools_mcp.tool.types"):
                 result = await wrapper.execute()
 
@@ -174,7 +184,9 @@ class TestMCPToolWrapperExecute:
 
         wrapper = MCPToolWrapper(session, "s", _make_tool_def())
 
-        with patch("exoclaw_tools_mcp.tool.asyncio.wait_for", new=AsyncMock(return_value=result_obj)):
+        with patch(
+            "exoclaw_tools_mcp.tool.asyncio.wait_for", new=AsyncMock(return_value=result_obj)
+        ):
             with patch("exoclaw_tools_mcp.tool.types") as mock_types:
                 mock_types.TextContent = FakeText
                 result = await wrapper.execute()
@@ -228,10 +240,11 @@ class TestConnectMCPServersStdio:
 
         session, _ = _make_mcp_modules()
 
-        with patch("exoclaw_tools_mcp.tool.stdio_client") as mock_transport, \
-             patch("exoclaw_tools_mcp.tool.ClientSession") as MockSession, \
-             patch("exoclaw_tools_mcp.tool.StdioServerParameters"):
-
+        with (
+            patch("exoclaw_tools_mcp.tool.stdio_client") as mock_transport,
+            patch("exoclaw_tools_mcp.tool.ClientSession") as MockSession,
+            patch("exoclaw_tools_mcp.tool.StdioServerParameters"),
+        ):
             mock_rw = (MagicMock(), MagicMock())
             mock_ctx = MagicMock()
             mock_ctx.__aenter__ = AsyncMock(return_value=mock_rw)
@@ -253,10 +266,11 @@ class TestConnectMCPServersStdio:
 
         session, _ = _make_mcp_modules()
 
-        with patch("exoclaw_tools_mcp.tool.stdio_client") as mock_transport, \
-             patch("exoclaw_tools_mcp.tool.ClientSession") as MockSession, \
-             patch("exoclaw_tools_mcp.tool.StdioServerParameters"):
-
+        with (
+            patch("exoclaw_tools_mcp.tool.stdio_client") as mock_transport,
+            patch("exoclaw_tools_mcp.tool.ClientSession") as MockSession,
+            patch("exoclaw_tools_mcp.tool.StdioServerParameters"),
+        ):
             mock_rw = (MagicMock(), MagicMock())
             mock_ctx = MagicMock()
             mock_ctx.__aenter__ = AsyncMock(return_value=mock_rw)
@@ -277,9 +291,10 @@ class TestConnectMCPServersSSE:
 
         session, _ = _make_mcp_modules()
 
-        with patch("exoclaw_tools_mcp.tool.sse_client") as mock_transport, \
-             patch("exoclaw_tools_mcp.tool.ClientSession") as MockSession:
-
+        with (
+            patch("exoclaw_tools_mcp.tool.sse_client") as mock_transport,
+            patch("exoclaw_tools_mcp.tool.ClientSession") as MockSession,
+        ):
             mock_rw = (MagicMock(), MagicMock())
             mock_ctx = MagicMock()
             mock_ctx.__aenter__ = AsyncMock(return_value=mock_rw)
@@ -300,10 +315,11 @@ class TestConnectMCPServersStreamableHttp:
 
         session, _ = _make_mcp_modules()
 
-        with patch("exoclaw_tools_mcp.tool.streamable_http_client") as mock_transport, \
-             patch("exoclaw_tools_mcp.tool.ClientSession") as MockSession, \
-             patch("exoclaw_tools_mcp.tool.httpx.AsyncClient") as MockHttpx:
-
+        with (
+            patch("exoclaw_tools_mcp.tool.streamable_http_client") as mock_transport,
+            patch("exoclaw_tools_mcp.tool.ClientSession") as MockSession,
+            patch("exoclaw_tools_mcp.tool.httpx.AsyncClient") as MockHttpx,
+        ):
             mock_rw = (MagicMock(), MagicMock(), MagicMock())
             mock_http_ctx = MagicMock()
             mock_http_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
@@ -328,10 +344,11 @@ class TestConnectMCPServersStreamableHttp:
 
         session, _ = _make_mcp_modules()
 
-        with patch("exoclaw_tools_mcp.tool.streamable_http_client") as mock_transport, \
-             patch("exoclaw_tools_mcp.tool.ClientSession") as MockSession, \
-             patch("exoclaw_tools_mcp.tool.httpx.AsyncClient") as MockHttpx:
-
+        with (
+            patch("exoclaw_tools_mcp.tool.streamable_http_client") as mock_transport,
+            patch("exoclaw_tools_mcp.tool.ClientSession") as MockSession,
+            patch("exoclaw_tools_mcp.tool.httpx.AsyncClient") as MockHttpx,
+        ):
             mock_rw = (MagicMock(), MagicMock(), MagicMock())
             mock_http_ctx = MagicMock()
             mock_http_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
@@ -371,14 +388,13 @@ class TestConnectMCPServersErrorHandling:
             ctx.__aexit__ = AsyncMock(return_value=False)
             return ctx
 
-        with patch("exoclaw_tools_mcp.tool.stdio_client", side_effect=transport_factory), \
-             patch("exoclaw_tools_mcp.tool.ClientSession", return_value=session), \
-             patch("exoclaw_tools_mcp.tool.StdioServerParameters"):
-
+        with (
+            patch("exoclaw_tools_mcp.tool.stdio_client", side_effect=transport_factory),
+            patch("exoclaw_tools_mcp.tool.ClientSession", return_value=session),
+            patch("exoclaw_tools_mcp.tool.StdioServerParameters"),
+        ):
             async with AsyncExitStack() as stack:
-                await connect_mcp_servers(
-                    {"bad": bad_cfg, "good": good_cfg}, registry, stack
-                )
+                await connect_mcp_servers({"bad": bad_cfg, "good": good_cfg}, registry, stack)
 
         # good server still registered
         assert len(registry.get_definitions()) == 1
@@ -405,10 +421,11 @@ class TestConnectMCPServersErrorHandling:
         def session_factory(*args, **kwargs):  # type: ignore[no-untyped-def]
             return next(sessions)
 
-        with patch("exoclaw_tools_mcp.tool.stdio_client", side_effect=transport_factory), \
-             patch("exoclaw_tools_mcp.tool.ClientSession", side_effect=session_factory), \
-             patch("exoclaw_tools_mcp.tool.StdioServerParameters"):
-
+        with (
+            patch("exoclaw_tools_mcp.tool.stdio_client", side_effect=transport_factory),
+            patch("exoclaw_tools_mcp.tool.ClientSession", side_effect=session_factory),
+            patch("exoclaw_tools_mcp.tool.StdioServerParameters"),
+        ):
             async with AsyncExitStack() as stack:
                 await connect_mcp_servers({"s1": cfg1, "s2": cfg2}, registry, stack)
 

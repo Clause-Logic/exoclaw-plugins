@@ -35,7 +35,9 @@ class TestLoadConfig:
         cfg = load_config(p)
         assert cfg.agents.defaults.max_tokens == 1234
 
-    def test_returns_default_on_invalid_json(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_returns_default_on_invalid_json(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         p = tmp_path / "config.json"
         p.write_text("not json!!!")
         cfg = load_config(p)
@@ -43,7 +45,9 @@ class TestLoadConfig:
         out = capsys.readouterr().out
         assert "Warning" in out
 
-    def test_returns_default_on_validation_error(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_returns_default_on_validation_error(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         p = tmp_path / "config.json"
         # agents.defaults.maxTokens should be int, not a dict
         p.write_text(json.dumps({"agents": {"defaults": {"maxTokens": {"bad": "value"}}}}))

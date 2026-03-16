@@ -308,11 +308,13 @@ async def create(
                 on_progress=None,
             )
             if job.payload.deliver and response:
-                await bus.publish_outbound(OutboundMessage(
-                    channel=channel,
-                    chat_id=chat_id,
-                    content=response,
-                ))
+                await bus.publish_outbound(
+                    OutboundMessage(
+                        channel=channel,
+                        chat_id=chat_id,
+                        content=response,
+                    )
+                )
         return None
 
     cron_service.on_job = _on_cron_job

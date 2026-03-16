@@ -144,7 +144,7 @@ class DefaultConversation:
         self._consolidating.add(session_id)
         try:
             async with lock:
-                snapshot = session.messages[session.last_consolidated:]
+                snapshot = session.messages[session.last_consolidated :]
                 if snapshot:
                     temp = Session(key=session_id)
                     temp.messages = list(snapshot)
@@ -166,9 +166,7 @@ class DefaultConversation:
         """Return metadata for all known sessions."""
         return self.history.list_sessions()
 
-    async def _consolidate_memory(
-        self, session: Session, archive_all: bool = False
-    ) -> bool:
+    async def _consolidate_memory(self, session: Session, archive_all: bool = False) -> bool:
         """Delegate to MemoryBackend. Returns True on success."""
         return await self.memory.consolidate(
             session,
@@ -188,7 +186,11 @@ class DefaultConversation:
             if role == "assistant" and not content and not entry.get("tool_calls"):
                 continue  # skip empty assistant messages — they poison session context
 
-            if role == "tool" and isinstance(content, str) and len(content) > _TOOL_RESULT_MAX_CHARS:
+            if (
+                role == "tool"
+                and isinstance(content, str)
+                and len(content) > _TOOL_RESULT_MAX_CHARS
+            ):
                 entry["content"] = content[:_TOOL_RESULT_MAX_CHARS] + "\n... (truncated)"
 
             elif role == "user":
@@ -208,10 +210,9 @@ class DefaultConversation:
                             and c["text"].startswith(_RUNTIME_CONTEXT_TAG)
                         ):
                             continue
-                        if (
-                            c.get("type") == "image_url"
-                            and c.get("image_url", {}).get("url", "").startswith("data:image/")
-                        ):
+                        if c.get("type") == "image_url" and c.get("image_url", {}).get(
+                            "url", ""
+                        ).startswith("data:image/"):
                             filtered.append({"type": "text", "text": "[image]"})
                         else:
                             filtered.append(c)

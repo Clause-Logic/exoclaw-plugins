@@ -39,8 +39,6 @@ jobs:
 
       - name: Check formatting
         run: mise run check-format
-        env:
-          PACKAGE: ${{ steps.tag.outputs.package }}
 
       - name: Lint
         run: mise run lint

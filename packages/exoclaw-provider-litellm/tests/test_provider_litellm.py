@@ -24,6 +24,7 @@ from exoclaw.providers.types import LLMResponse, ToolCallRequest
 # _short_tool_id
 # ---------------------------------------------------------------------------
 
+
 class TestShortToolId:
     def test_length(self) -> None:
         assert len(_short_tool_id()) == 9
@@ -39,6 +40,7 @@ class TestShortToolId:
 # ---------------------------------------------------------------------------
 # _normalize_tool_call_id
 # ---------------------------------------------------------------------------
+
 
 class TestNormalizeToolCallId:
     def test_already_9_alnum(self) -> None:
@@ -60,6 +62,7 @@ class TestNormalizeToolCallId:
 # _is_anthropic
 # ---------------------------------------------------------------------------
 
+
 class TestIsAnthropic:
     def test_claude_model(self) -> None:
         assert _is_anthropic("claude-3-opus")
@@ -76,6 +79,7 @@ class TestIsAnthropic:
 # ---------------------------------------------------------------------------
 # _sanitize_empty_content
 # ---------------------------------------------------------------------------
+
 
 class TestSanitizeEmptyContent:
     def test_empty_string_user(self) -> None:
@@ -94,10 +98,15 @@ class TestSanitizeEmptyContent:
         assert result[0]["content"] == "hello"
 
     def test_list_content_filters_empty_text(self) -> None:
-        msgs = [{"role": "user", "content": [
-            {"type": "text", "text": ""},
-            {"type": "text", "text": "hello"},
-        ]}]
+        msgs = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": ""},
+                    {"type": "text", "text": "hello"},
+                ],
+            }
+        ]
         result = _sanitize_empty_content(msgs)
         content = result[0]["content"]
         assert isinstance(content, list)
@@ -124,6 +133,7 @@ class TestSanitizeEmptyContent:
 # _sanitize_request_messages
 # ---------------------------------------------------------------------------
 
+
 class TestSanitizeRequestMessages:
     def test_strips_unknown_keys(self) -> None:
         msgs = [{"role": "user", "content": "hi", "unknown_key": "strip_me"}]
@@ -144,6 +154,7 @@ class TestSanitizeRequestMessages:
 # ---------------------------------------------------------------------------
 # LiteLLMProvider
 # ---------------------------------------------------------------------------
+
 
 def _make_litellm_response(
     content: str = "hello",
@@ -205,6 +216,7 @@ class TestLiteLLMProvider:
 
     async def test_chat_tool_arguments_as_string(self) -> None:
         import json
+
         tc = MagicMock()
         tc.function.name = "exec"
         tc.function.arguments = json.dumps({"command": "ls"})
@@ -242,6 +254,7 @@ class TestLiteLLMProvider:
 
     async def test_chat_logging_enabled(self, capsys: Any) -> None:
         import os
+
         p = LiteLLMProvider()
         p._llm_logging = True
         p._llm_log_truncate = 100
@@ -284,6 +297,7 @@ class TestLiteLLMProvider:
 # ---------------------------------------------------------------------------
 # Additional coverage: provider edge cases
 # ---------------------------------------------------------------------------
+
 
 class TestLiteLLMProviderExtra:
     async def test_chat_no_choices(self) -> None:
@@ -335,7 +349,9 @@ class TestLiteLLMProviderExtra:
 
     def test_sanitize_messages_strips_unknown_top_level_keys(self) -> None:
         p = LiteLLMProvider()
-        msgs = [{"role": "user", "content": "hi", "timestamp": "2024", "reasoning_content": "thoughts"}]
+        msgs = [
+            {"role": "user", "content": "hi", "timestamp": "2024", "reasoning_content": "thoughts"}
+        ]
         result = p._sanitize_messages(msgs)
         assert "timestamp" not in result[0]
         # reasoning_content is allowed

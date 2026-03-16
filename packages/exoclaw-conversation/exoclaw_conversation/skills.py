@@ -112,7 +112,9 @@ class SkillsLoader:
                 if skill_dir.is_dir():
                     skill_file = skill_dir / "SKILL.md"
                     if skill_file.exists():
-                        skills.append({"name": skill_dir.name, "path": str(skill_file), "source": "workspace"})
+                        skills.append(
+                            {"name": skill_dir.name, "path": str(skill_file), "source": "workspace"}
+                        )
 
         # Built-in skills
         if self.builtin_skills and self.builtin_skills.exists():
@@ -120,12 +122,18 @@ class SkillsLoader:
                 if skill_dir.is_dir():
                     skill_file = skill_dir / "SKILL.md"
                     if skill_file.exists() and not any(s["name"] == skill_dir.name for s in skills):
-                        skills.append({"name": skill_dir.name, "path": str(skill_file), "source": "builtin"})
+                        skills.append(
+                            {"name": skill_dir.name, "path": str(skill_file), "source": "builtin"}
+                        )
 
         # Package skills (lowest priority — workspace and builtin override)
         for name in self._package_skills:
             if not any(s["name"] == name for s in skills):
-                path = str(self._package_skill_dirs[name] / "SKILL.md") if name in self._package_skill_dirs else f"package:{name}"
+                path = (
+                    str(self._package_skill_dirs[name] / "SKILL.md")
+                    if name in self._package_skill_dirs
+                    else f"package:{name}"
+                )
                 skills.append({"name": name, "path": path, "source": "package"})
 
         # Filter by requirements
@@ -201,7 +209,7 @@ class SkillsLoader:
             skill_meta = self._get_skill_meta(s["name"])
             available = self._check_requirements(skill_meta)
 
-            lines.append(f"  <skill available=\"{str(available).lower()}\">")
+            lines.append(f'  <skill available="{str(available).lower()}">')
             lines.append(f"    <name>{name}</name>")
             lines.append(f"    <description>{desc}</description>")
             lines.append(f"    <location>{path}</location>")
@@ -240,7 +248,7 @@ class SkillsLoader:
         if content.startswith("---"):
             match = re.match(r"^---\n.*?\n---\n", content, re.DOTALL)
             if match:
-                return content[match.end():].strip()
+                return content[match.end() :].strip()
         return content
 
     def _parse_exoclaw_metadata(self, raw: str) -> dict[str, Any]:
@@ -337,7 +345,7 @@ class SkillsLoader:
                 for line in match.group(1).split("\n"):
                     if ":" in line:
                         key, value = line.split(":", 1)
-                        metadata[key.strip()] = value.strip().strip('"\'')
+                        metadata[key.strip()] = value.strip().strip("\"'")
                 return metadata
 
         return None

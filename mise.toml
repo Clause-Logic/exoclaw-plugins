@@ -9,12 +9,12 @@ run = [
 ]
 
 [tasks.format]
-description = "Format code with ruff (set PACKAGE=<name>)"
-run = "uv run ruff format packages/$PACKAGE"
+description = "Format all code with ruff"
+run = "uv run ruff format ."
 
 [tasks.check-format]
-description = "Check formatting without writing changes (set PACKAGE=<name>)"
-run = "uv run ruff format --check packages/$PACKAGE"
+description = "Check formatting without writing changes"
+run = "uv run ruff format --check ."
 
 [tasks.test]
 description = "Run tests (set PACKAGE=<name>)"

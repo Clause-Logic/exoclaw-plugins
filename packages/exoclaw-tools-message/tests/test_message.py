@@ -132,7 +132,9 @@ class TestMessageToolExecute:
         result = await t.execute(content="hi")
         assert "Error" in result
 
-    async def test_explicit_channel_and_chat_id(self, tool: MessageTool, send_cb: AsyncMock) -> None:
+    async def test_explicit_channel_and_chat_id(
+        self, tool: MessageTool, send_cb: AsyncMock
+    ) -> None:
         result = await tool.execute(content="hi", channel="slack", chat_id="C123")
         assert "slack:C123" in result
 
@@ -152,7 +154,9 @@ class TestMessageToolExecute:
         assert isinstance(call_args, OutboundMessage)
         assert call_args.metadata["message_id"] == "orig_msg"
 
-    async def test_explicit_message_id_overrides(self, tool: MessageTool, send_cb: AsyncMock) -> None:
+    async def test_explicit_message_id_overrides(
+        self, tool: MessageTool, send_cb: AsyncMock
+    ) -> None:
         tool.set_context("cli", "user1", message_id="orig")
         await tool.execute(content="reply", message_id="override")
         call_args = send_cb.call_args[0][0]

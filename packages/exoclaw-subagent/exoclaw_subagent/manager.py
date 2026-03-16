@@ -98,7 +98,9 @@ class SubagentManager:
             logger.error("Subagent [{}] failed: {}", task_id, e)
 
         logger.info("Subagent [{}] {}", task_id, status)
-        await self._announce(label, task, result, status, origin_channel, origin_chat_id, session_key)
+        await self._announce(
+            label, task, result, status, origin_channel, origin_chat_id, session_key
+        )
 
     async def _announce(
         self,

@@ -25,6 +25,7 @@ from exoclaw_conversation.protocols import HistoryStore, MemoryBackend, PromptBu
 # helpers.py
 # ---------------------------------------------------------------------------
 
+
 class TestEnsureDir:
     def test_creates_directory(self, tmp_path: Path) -> None:
         d = tmp_path / "new" / "nested"
@@ -71,6 +72,7 @@ class TestDetectImageMime:
 # ---------------------------------------------------------------------------
 # session/manager.py
 # ---------------------------------------------------------------------------
+
 
 class TestSession:
     def test_add_message(self) -> None:
@@ -186,6 +188,7 @@ class TestSessionManager:
 # ---------------------------------------------------------------------------
 # memory.py
 # ---------------------------------------------------------------------------
+
 
 class TestMemoryStore:
     def test_read_write_long_term(self, tmp_path: Path) -> None:
@@ -321,6 +324,7 @@ class TestMemoryStore:
 # skills.py
 # ---------------------------------------------------------------------------
 
+
 class TestSkillsLoader:
     def _make_skill(self, workspace: Path, name: str, content: str = "# Skill") -> None:
         skill_dir = workspace / "skills" / name
@@ -395,11 +399,17 @@ class TestSkillsLoader:
 
     def test_check_requirements_missing_bin(self) -> None:
         loader = SkillsLoader(Path("/tmp"))
-        assert loader._check_requirements({"requires": {"bins": ["definitely_not_installed_xyz"]}}) is False
+        assert (
+            loader._check_requirements({"requires": {"bins": ["definitely_not_installed_xyz"]}})
+            is False
+        )
 
     def test_check_requirements_missing_env(self) -> None:
         loader = SkillsLoader(Path("/tmp"))
-        assert loader._check_requirements({"requires": {"env": ["DEFINITELY_NOT_SET_XYZ_ABC"]}}) is False
+        assert (
+            loader._check_requirements({"requires": {"env": ["DEFINITELY_NOT_SET_XYZ_ABC"]}})
+            is False
+        )
 
     def test_parse_exoclaw_metadata_valid_json(self) -> None:
         loader = SkillsLoader(Path("/tmp"))
@@ -446,6 +456,7 @@ class TestSkillsLoader:
 # ---------------------------------------------------------------------------
 # context.py
 # ---------------------------------------------------------------------------
+
 
 class TestContextBuilder:
     def test_build_system_prompt_minimal(self, tmp_path: Path) -> None:
@@ -506,7 +517,9 @@ class TestContextBuilder:
 
     def test_build_messages_media_nonexistent(self, tmp_path: Path) -> None:
         builder = ContextBuilder(tmp_path)
-        msgs = builder.build_messages(history=[], current_message="look", media=["/nonexistent.png"])
+        msgs = builder.build_messages(
+            history=[], current_message="look", media=["/nonexistent.png"]
+        )
         assert isinstance(msgs[-1]["content"], str)
 
     def test_add_tool_result(self, tmp_path: Path) -> None:
@@ -528,6 +541,7 @@ class TestContextBuilder:
 # protocols.py
 # ---------------------------------------------------------------------------
 
+
 class TestProtocols:
     def test_session_manager_satisfies_history_store(self, tmp_path: Path) -> None:
         mgr = SessionManager(tmp_path)
@@ -545,6 +559,7 @@ class TestProtocols:
 # ---------------------------------------------------------------------------
 # conversation.py
 # ---------------------------------------------------------------------------
+
 
 def _make_mock_history(session: Session | None = None) -> MagicMock:
     s = session or Session(key="test:1")
@@ -754,6 +769,7 @@ class TestDefaultConversation:
 # Additional coverage: skills builtin, memory edge cases, context paths
 # ---------------------------------------------------------------------------
 
+
 class TestSkillsLoaderBuiltin:
     def _make_builtin_skill(self, builtin_dir: Path, name: str, content: str = "# Skill") -> None:
         skill_dir = builtin_dir / name
@@ -812,12 +828,14 @@ class TestSkillsLoaderBuiltin:
 
     def test_get_missing_requirements_bin_and_env(self) -> None:
         loader = SkillsLoader(Path("/tmp"))
-        missing = loader._get_missing_requirements({
-            "requires": {
-                "bins": ["definitely_not_installed_xyz"],
-                "env": ["DEFINITELY_NOT_SET_XYZ"],
+        missing = loader._get_missing_requirements(
+            {
+                "requires": {
+                    "bins": ["definitely_not_installed_xyz"],
+                    "env": ["DEFINITELY_NOT_SET_XYZ"],
+                }
             }
-        })
+        )
         assert "CLI:" in missing
         assert "ENV:" in missing
 
@@ -855,7 +873,9 @@ class TestMemoryStoreEdgeCases:
         provider.chat = AsyncMock(return_value=response)
         store = MemoryStore(tmp_path, provider=provider, model="m")
         session = Session(key="test")
-        session.messages = [{"role": "user", "content": str(i), "timestamp": "2024-01-01T00:00"} for i in range(20)]
+        session.messages = [
+            {"role": "user", "content": str(i), "timestamp": "2024-01-01T00:00"} for i in range(20)
+        ]
         session.last_consolidated = 0
         result = await store.consolidate(session, archive_all=False, memory_window=10)
         assert result is True
@@ -872,7 +892,12 @@ class TestMemoryStoreEdgeCases:
         store = MemoryStore(tmp_path, provider=provider, model="m")
         session = Session(key="test")
         session.messages = [
-            {"role": "user", "content": "run it", "timestamp": "2024-01-01T00:00", "tools_used": ["exec"]},
+            {
+                "role": "user",
+                "content": "run it",
+                "timestamp": "2024-01-01T00:00",
+                "tools_used": ["exec"],
+            },
         ]
         result = await store.consolidate(session, archive_all=True)
         assert result is True
@@ -907,7 +932,9 @@ class TestMemoryStoreEdgeCases:
 
 
 class TestContextBuilderExtra:
-    def _make_skill(self, workspace: Path, name: str, content: str = "# Skill", always: bool = False) -> None:
+    def _make_skill(
+        self, workspace: Path, name: str, content: str = "# Skill", always: bool = False
+    ) -> None:
         skill_dir = workspace / "skills" / name
         skill_dir.mkdir(parents=True, exist_ok=True)
         if always:
@@ -949,7 +976,9 @@ class TestContextBuilderExtra:
     def test_add_assistant_message_with_thinking_blocks(self, tmp_path: Path) -> None:
         builder = ContextBuilder(tmp_path)
         msgs: list[dict[str, Any]] = []
-        builder.add_assistant_message(msgs, "hello", thinking_blocks=[{"type": "thinking", "thinking": "..."}])
+        builder.add_assistant_message(
+            msgs, "hello", thinking_blocks=[{"type": "thinking", "thinking": "..."}]
+        )
         assert msgs[0]["thinking_blocks"] is not None
 
 

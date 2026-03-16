@@ -119,7 +119,9 @@ class TestSpawnToolExecute:
         call_kwargs = manager.spawn.call_args.kwargs
         assert call_kwargs["search"] is True
 
-    async def test_spawn_returns_manager_response(self, tool: SpawnTool, manager: AsyncMock) -> None:
+    async def test_spawn_returns_manager_response(
+        self, tool: SpawnTool, manager: AsyncMock
+    ) -> None:
         manager.spawn.return_value = "Subagent [my task] started (id: xyz)."
         result = await tool.execute(task="do it")
         assert result == "Subagent [my task] started (id: xyz)."

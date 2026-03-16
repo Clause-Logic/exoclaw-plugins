@@ -54,6 +54,7 @@ class TestConfigDefaults:
 
 def cfg_env_prefix() -> str:
     from pydantic_settings import BaseSettings
+
     cfg = Config()
     return cfg.model_config.get("env_prefix", "")
 
