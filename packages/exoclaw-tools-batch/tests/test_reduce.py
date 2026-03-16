@@ -134,6 +134,36 @@ async def test_non_list_values_appended(reduce: ReduceTool, tmp_path: Path) -> N
     assert data["results"] == ["scalar_value", {"nested": True}]
 
 
+@pytest.mark.asyncio
+async def test_non_json_files_wrapped(reduce: ReduceTool, tmp_path: Path) -> None:
+    """Non-JSON files (markdown, plain text) are wrapped as {file, content}."""
+    md = tmp_path / "notes.md"
+    md.write_text("# My Notes\n\nSome content here.")
+    txt = tmp_path / "readme.txt"
+    txt.write_text("Just a plain text file.")
+
+    result = await reduce.execute(files=[str(md), str(txt)])
+    data = _read_output(result)
+    assert data["count"] == 2
+    assert data["results"][0]["file"] == "notes.md"
+    assert "# My Notes" in data["results"][0]["content"]
+    assert data["results"][1]["file"] == "readme.txt"
+
+
+@pytest.mark.asyncio
+async def test_mixed_json_and_text(reduce: ReduceTool, tmp_path: Path) -> None:
+    """Mix of JSON and non-JSON files works together."""
+    f1 = _write_json(tmp_path / "data.json", {"results": [{"url": "a"}]})
+    md = tmp_path / "note.md"
+    md.write_text("Some markdown content")
+
+    result = await reduce.execute(files=[f1, str(md)])
+    data = _read_output(result)
+    assert data["count"] == 2
+    assert data["results"][0] == {"url": "a"}
+    assert data["results"][1]["file"] == "note.md"
+
+
 # ---------------------------------------------------------------------------
 # chunk_size tests
 # ---------------------------------------------------------------------------

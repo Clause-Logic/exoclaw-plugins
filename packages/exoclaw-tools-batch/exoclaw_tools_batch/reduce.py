@@ -105,7 +105,11 @@ class ReduceTool(ToolBase):
         }
 
     def _extract_items(self, paths: list[Path], key: str) -> tuple[list[Any], list[str]]:
-        """Read files and extract items at key."""
+        """Read files and extract items at key.
+
+        Non-JSON files (markdown, plain text, etc.) are wrapped as
+        {"file": filename, "content": text} so reduce works on any file type.
+        """
         merged: list[Any] = []
         errors: list[str] = []
         for p in paths:
@@ -113,9 +117,17 @@ class ReduceTool(ToolBase):
                 errors.append(f"not found: {p}")
                 continue
             try:
-                data = json.loads(p.read_text())
-            except (json.JSONDecodeError, OSError) as e:
+                text = p.read_text()
+            except OSError as e:
                 errors.append(f"{p.name}: {e}")
+                continue
+
+            # Try JSON first
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                # Non-JSON file — wrap as content item
+                merged.append({"file": p.name, "content": text})
                 continue
 
             if key:
