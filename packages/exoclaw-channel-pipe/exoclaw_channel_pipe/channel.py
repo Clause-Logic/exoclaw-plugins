@@ -14,9 +14,8 @@ import asyncio
 import sys
 from typing import TYPE_CHECKING
 
-from loguru import logger
-
 from exoclaw.bus.events import InboundMessage, OutboundMessage
+from loguru import logger
 
 if TYPE_CHECKING:
     from exoclaw.bus.protocol import Bus

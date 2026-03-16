@@ -4,16 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from typing import Any
-
 from exoclaw.bus.events import InboundMessage, OutboundMessage
 from exoclaw_github.channel import GitHubChannel, GitHubEvent
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -7,8 +7,6 @@ from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from loguru import logger
-
 from exoclaw.agent.loop import AgentLoop
 from exoclaw.agent.tools.registry import ToolRegistry
 from exoclaw.bus.events import OutboundMessage
@@ -21,9 +19,9 @@ from exoclaw_subagent.manager import SubagentManager
 from exoclaw_tools_cron.service import CronService
 from exoclaw_tools_cron.tool import CronTool
 from exoclaw_tools_cron.types import CronJob
-from exoclaw_tools_message.tool import MessageTool
 from exoclaw_tools_mcp.config import MCPServerConfig as MCPConfig
 from exoclaw_tools_mcp.tool import connect_mcp_servers
+from exoclaw_tools_message.tool import MessageTool
 from exoclaw_tools_spawn.tool import SpawnTool
 from exoclaw_tools_workspace.filesystem import (
     EditFileTool,
@@ -33,6 +31,7 @@ from exoclaw_tools_workspace.filesystem import (
 )
 from exoclaw_tools_workspace.shell import ExecTool
 from exoclaw_tools_workspace.web import WebFetchTool, WebSearchTool
+from loguru import logger
 
 from exoclaw_nanobot.config.loader import load_config
 from exoclaw_nanobot.config.schema import Config

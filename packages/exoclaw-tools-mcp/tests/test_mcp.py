@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 from contextlib import AsyncExitStack
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
 
 from exoclaw.agent.tools.registry import ToolRegistry
 from exoclaw_tools_mcp.config import MCPServerConfig
 from exoclaw_tools_mcp.tool import MCPToolWrapper, connect_mcp_servers
-
 
 # ---------------------------------------------------------------------------
 # MCPServerConfig
@@ -242,7 +239,7 @@ class TestConnectMCPServersStdio:
 
         with (
             patch("exoclaw_tools_mcp.tool.stdio_client") as mock_transport,
-            patch("exoclaw_tools_mcp.tool.ClientSession") as MockSession,
+            patch("exoclaw_tools_mcp.tool.ClientSession") as MockSession,  # noqa: N806
             patch("exoclaw_tools_mcp.tool.StdioServerParameters"),
         ):
             mock_rw = (MagicMock(), MagicMock())
@@ -268,7 +265,7 @@ class TestConnectMCPServersStdio:
 
         with (
             patch("exoclaw_tools_mcp.tool.stdio_client") as mock_transport,
-            patch("exoclaw_tools_mcp.tool.ClientSession") as MockSession,
+            patch("exoclaw_tools_mcp.tool.ClientSession") as MockSession,  # noqa: N806
             patch("exoclaw_tools_mcp.tool.StdioServerParameters"),
         ):
             mock_rw = (MagicMock(), MagicMock())
@@ -293,7 +290,7 @@ class TestConnectMCPServersSSE:
 
         with (
             patch("exoclaw_tools_mcp.tool.sse_client") as mock_transport,
-            patch("exoclaw_tools_mcp.tool.ClientSession") as MockSession,
+            patch("exoclaw_tools_mcp.tool.ClientSession") as MockSession,  # noqa: N806
         ):
             mock_rw = (MagicMock(), MagicMock())
             mock_ctx = MagicMock()
@@ -317,8 +314,8 @@ class TestConnectMCPServersStreamableHttp:
 
         with (
             patch("exoclaw_tools_mcp.tool.streamable_http_client") as mock_transport,
-            patch("exoclaw_tools_mcp.tool.ClientSession") as MockSession,
-            patch("exoclaw_tools_mcp.tool.httpx.AsyncClient") as MockHttpx,
+            patch("exoclaw_tools_mcp.tool.ClientSession") as MockSession,  # noqa: N806
+            patch("exoclaw_tools_mcp.tool.httpx.AsyncClient") as MockHttpx,  # noqa: N806
         ):
             mock_rw = (MagicMock(), MagicMock(), MagicMock())
             mock_http_ctx = MagicMock()
@@ -346,8 +343,8 @@ class TestConnectMCPServersStreamableHttp:
 
         with (
             patch("exoclaw_tools_mcp.tool.streamable_http_client") as mock_transport,
-            patch("exoclaw_tools_mcp.tool.ClientSession") as MockSession,
-            patch("exoclaw_tools_mcp.tool.httpx.AsyncClient") as MockHttpx,
+            patch("exoclaw_tools_mcp.tool.ClientSession") as MockSession,  # noqa: N806
+            patch("exoclaw_tools_mcp.tool.httpx.AsyncClient") as MockHttpx,  # noqa: N806
         ):
             mock_rw = (MagicMock(), MagicMock(), MagicMock())
             mock_http_ctx = MagicMock()

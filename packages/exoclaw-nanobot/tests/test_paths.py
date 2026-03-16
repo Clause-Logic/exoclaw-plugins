@@ -33,8 +33,9 @@ def test_runtime_dirs_follow_config_path(monkeypatch: object, tmp_path: Path) ->
 
 def test_media_dir_supports_channel_namespace(tmp_path: Path) -> None:
     config_file = tmp_path / "instance-b" / "config.json"
-    import exoclaw_nanobot.config.paths as _paths
     import unittest.mock as _mock
+
+    import exoclaw_nanobot.config.paths as _paths
 
     with _mock.patch.object(_paths, "get_config_path", return_value=config_file):
         assert get_media_dir() == config_file.parent / "media"
@@ -54,8 +55,9 @@ def test_workspace_path_is_explicitly_resolved() -> None:
 
 def test_ensure_dir_creates_directories(tmp_path: Path) -> None:
     config_file = tmp_path / "deep" / "nested" / "config.json"
-    import exoclaw_nanobot.config.paths as _paths
     import unittest.mock as _mock
+
+    import exoclaw_nanobot.config.paths as _paths
 
     with _mock.patch.object(_paths, "get_config_path", return_value=config_file):
         data = get_data_dir()

@@ -9,10 +9,9 @@ from typing import Any
 
 import json_repair
 import litellm
+from exoclaw.providers.types import LLMResponse, ResponseFormat, ToolCallRequest
 from litellm import acompletion
 from loguru import logger
-
-from exoclaw.providers.types import LLMResponse, ResponseFormat, ToolCallRequest
 
 # Standard chat-completion message keys.
 _ALLOWED_MSG_KEYS = frozenset(

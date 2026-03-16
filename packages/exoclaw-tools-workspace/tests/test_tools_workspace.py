@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from exoclaw_tools_workspace.filesystem import (
     EditFileTool,
     ListDirTool,
@@ -18,7 +16,6 @@ from exoclaw_tools_workspace.filesystem import (
     _resolve_path,
 )
 from exoclaw_tools_workspace.shell import ExecTool
-
 
 # ---------------------------------------------------------------------------
 # _resolve_path
@@ -325,7 +322,6 @@ class TestWebSearchTool:
 
     async def test_brave_search_success(self) -> None:
         from exoclaw_tools_workspace.web import WebSearchTool
-        import httpx
 
         mock_resp = MagicMock()
         mock_resp.json.return_value = {
@@ -430,7 +426,6 @@ class TestWebFetchTool:
 
     async def test_fetch_error(self) -> None:
         from exoclaw_tools_workspace.web import WebFetchTool
-        import httpx
 
         tool = WebFetchTool()
         with patch("exoclaw_tools_workspace.web.httpx.AsyncClient") as mock_client:
@@ -504,7 +499,7 @@ class TestEditFileToolExtra:
 class TestExecToolExtra:
     async def test_restrict_to_workspace_absolute_outside(self, tmp_path: Path) -> None:
         tool = ExecTool(restrict_to_workspace=True, working_dir=str(tmp_path))
-        result = await tool.execute(f"cat /etc/passwd")
+        result = await tool.execute("cat /etc/passwd")
         assert result.startswith("Error")
         assert "outside" in result
 

@@ -3,7 +3,6 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from exoclaw_openrouter_search.tool import OpenRouterSearchTool
 
 

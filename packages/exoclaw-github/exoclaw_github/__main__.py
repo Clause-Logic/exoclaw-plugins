@@ -1,7 +1,6 @@
 """Entry point: python -m exoclaw_github"""
 
 import asyncio
-import sys
 
 from exoclaw_github.app import run
 

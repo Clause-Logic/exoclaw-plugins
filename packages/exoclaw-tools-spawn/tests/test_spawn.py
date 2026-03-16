@@ -5,9 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
-
 from exoclaw_tools_spawn.tool import SpawnManager, SpawnTool
-
 
 # ---------------------------------------------------------------------------
 # SpawnManager protocol

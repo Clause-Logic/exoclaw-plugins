@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from exoclaw_nanobot.config.loader import (
     _migrate_config,
     get_config_path,

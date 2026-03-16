@@ -7,6 +7,7 @@ import os
 from typing import TYPE_CHECKING, Any
 
 import httpx
+from exoclaw.agent.tools.protocol import ToolBase
 from loguru import logger
 
 
@@ -17,8 +18,6 @@ def _gh_headers(token: str) -> dict[str, str]:
         "X-GitHub-Api-Version": "2022-11-28",
     }
 
-
-from exoclaw.agent.tools.protocol import ToolBase
 
 if TYPE_CHECKING:
     from exoclaw.bus.events import InboundMessage

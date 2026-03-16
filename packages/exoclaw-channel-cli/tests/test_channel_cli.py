@@ -6,17 +6,15 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
+from exoclaw.bus.events import OutboundMessage
+from exoclaw.bus.queue import MessageBus
 from exoclaw_channel_cli.channel import (
-    CLIChannel,
     EXIT_COMMANDS,
+    CLIChannel,
     _flush_pending_tty_input,
     _print_response,
     _restore_terminal,
 )
-from exoclaw.bus.events import OutboundMessage
-from exoclaw.bus.queue import MessageBus
-
 
 # ---------------------------------------------------------------------------
 # Module-level helpers
@@ -241,8 +239,8 @@ class TestFlushPendingTtyInputExtra:
 
 class TestInitPromptSession:
     def test_creates_session(self) -> None:
-        from exoclaw_channel_cli.channel import _init_prompt_session
         import exoclaw_channel_cli.channel as ch
+        from exoclaw_channel_cli.channel import _init_prompt_session
 
         with patch("termios.tcgetattr", return_value=[1, 2, 3]):
             _init_prompt_session()
@@ -251,8 +249,8 @@ class TestInitPromptSession:
         ch._SAVED_TERM_ATTRS = None
 
     def test_termios_exception_handled(self) -> None:
-        from exoclaw_channel_cli.channel import _init_prompt_session
         import exoclaw_channel_cli.channel as ch
+        from exoclaw_channel_cli.channel import _init_prompt_session
 
         with patch("termios.tcgetattr", side_effect=Exception("no tty")):
             _init_prompt_session()
@@ -262,16 +260,16 @@ class TestInitPromptSession:
 
 class TestReadInteractiveInputAsync:
     async def test_raises_without_session(self) -> None:
-        from exoclaw_channel_cli.channel import _read_interactive_input_async
         import exoclaw_channel_cli.channel as ch
+        from exoclaw_channel_cli.channel import _read_interactive_input_async
 
         ch._PROMPT_SESSION = None
         with pytest.raises(RuntimeError):
             await _read_interactive_input_async()
 
     async def test_eof_becomes_keyboard_interrupt(self) -> None:
-        from exoclaw_channel_cli.channel import _read_interactive_input_async
         import exoclaw_channel_cli.channel as ch
+        from exoclaw_channel_cli.channel import _read_interactive_input_async
 
         mock_session = MagicMock()
         mock_session.prompt_async = AsyncMock(side_effect=EOFError)

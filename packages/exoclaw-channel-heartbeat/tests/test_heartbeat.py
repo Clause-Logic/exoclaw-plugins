@@ -7,10 +7,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from exoclaw.providers.types import LLMResponse, ToolCallRequest
-from exoclaw_channel_heartbeat.service import HeartbeatService, _HEARTBEAT_TOOL
-
+from exoclaw_channel_heartbeat.service import _HEARTBEAT_TOOL, HeartbeatService
 
 # ---------------------------------------------------------------------------
 # Helpers

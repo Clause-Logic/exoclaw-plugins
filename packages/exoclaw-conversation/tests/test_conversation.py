@@ -4,22 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import json
-import tempfile
-from datetime import datetime
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
+from exoclaw_conversation.context import _RUNTIME_CONTEXT_TAG, ContextBuilder
+from exoclaw_conversation.conversation import _RUNTIME_CONTEXT_TAG as CONV_TAG
+from exoclaw_conversation.conversation import DefaultConversation
 from exoclaw_conversation.helpers import detect_image_mime, ensure_dir, safe_filename
 from exoclaw_conversation.memory import MemoryStore
+from exoclaw_conversation.protocols import HistoryStore, MemoryBackend, PromptBuilder
 from exoclaw_conversation.session.manager import Session, SessionManager
 from exoclaw_conversation.skills import SkillsLoader
-from exoclaw_conversation.context import ContextBuilder, _RUNTIME_CONTEXT_TAG
-from exoclaw_conversation.conversation import DefaultConversation, _RUNTIME_CONTEXT_TAG as CONV_TAG
-from exoclaw_conversation.protocols import HistoryStore, MemoryBackend, PromptBuilder
-
 
 # ---------------------------------------------------------------------------
 # helpers.py

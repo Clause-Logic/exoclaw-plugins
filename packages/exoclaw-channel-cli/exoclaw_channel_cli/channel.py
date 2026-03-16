@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from exoclaw.bus.events import InboundMessage, OutboundMessage
 from loguru import logger
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import HTML
@@ -18,8 +19,6 @@ from prompt_toolkit.patch_stdout import patch_stdout
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.text import Text
-
-from exoclaw.bus.events import InboundMessage, OutboundMessage
 
 if TYPE_CHECKING:
     from exoclaw.bus.protocol import Bus

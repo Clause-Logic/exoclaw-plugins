@@ -1,7 +1,6 @@
 """Session management for conversation history."""
 
 import json
-import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path

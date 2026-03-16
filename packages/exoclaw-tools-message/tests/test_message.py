@@ -5,10 +5,8 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
-
 from exoclaw.bus.events import OutboundMessage
 from exoclaw_tools_message.tool import MessageTool, filter_suppressed
-
 
 # ---------------------------------------------------------------------------
 # filter_suppressed

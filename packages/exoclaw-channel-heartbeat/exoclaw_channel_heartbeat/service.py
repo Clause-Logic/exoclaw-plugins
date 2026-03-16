@@ -6,9 +6,8 @@ import asyncio
 from pathlib import Path
 from typing import Any, Callable, Coroutine
 
-from loguru import logger
-
 from exoclaw.providers import LLMProvider
+from loguru import logger
 
 _HEARTBEAT_TOOL: list[dict[str, Any]] = [
     {

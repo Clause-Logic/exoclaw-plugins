@@ -8,9 +8,8 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 import httpx
-from loguru import logger
-
 from exoclaw.agent.tools.protocol import ToolBase
+from loguru import logger
 
 if TYPE_CHECKING:
     from exoclaw.providers.protocol import LLMProvider
@@ -164,7 +163,11 @@ class WebFetchTool(ToolBase):
         self.proxy = proxy
 
     async def execute(
-        self, url: str, extractMode: str = "markdown", maxChars: int | None = None, **kwargs: Any
+        self,
+        url: str,
+        extractMode: str = "markdown",  # noqa: N803
+        maxChars: int | None = None,  # noqa: N803
+        **kwargs: Any,
     ) -> str:
         from readability import Document
 

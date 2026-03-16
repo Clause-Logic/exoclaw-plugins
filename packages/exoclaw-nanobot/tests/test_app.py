@@ -7,8 +7,6 @@ from contextlib import AsyncExitStack
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 from exoclaw_nanobot.app import ExoclawNanobot, create
 from exoclaw_nanobot.config.schema import Config
 from exoclaw_tools_cron.types import CronJob, CronJobState, CronPayload, CronSchedule
@@ -287,7 +285,6 @@ class TestCreate:
             "test": config.tools.mcp_servers.__class__.__class__  # type: ignore[dict-item]
         }
         # Use a fresh config with mcp server configured via dict
-        import json as _json
         from exoclaw_nanobot.config.schema import MCPServerConfig
 
         config2 = Config()
@@ -389,7 +386,6 @@ class TestCreate:
         from exoclaw_tools_cron.service import CronService as RealCronService
 
         captured: dict[str, Any] = {}
-        original_init = RealCronService.__init__
 
         class CapturingCronService(RealCronService):
             pass
@@ -399,8 +395,6 @@ class TestCreate:
         fake_cron._last_mtime = 0.0
         fake_cron._timer_task = None
         fake_cron._running = False
-
-        original_set = object.__setattr__
 
         class CronCapture:
             """Minimal stand-in that captures .on_job assignment."""

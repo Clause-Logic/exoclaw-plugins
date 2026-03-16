@@ -6,19 +6,16 @@ import hashlib
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
+from exoclaw.providers.types import LLMResponse
 from exoclaw_provider_litellm.provider import (
+    _ALLOWED_MSG_KEYS,
     LiteLLMProvider,
     _is_anthropic,
     _normalize_tool_call_id,
     _sanitize_empty_content,
     _sanitize_request_messages,
     _short_tool_id,
-    _ALLOWED_MSG_KEYS,
 )
-from exoclaw.providers.types import LLMResponse, ToolCallRequest
-
 
 # ---------------------------------------------------------------------------
 # _short_tool_id
@@ -253,7 +250,6 @@ class TestLiteLLMProvider:
         assert kwargs["max_tokens"] >= 1
 
     async def test_chat_logging_enabled(self, capsys: Any) -> None:
-        import os
 
         p = LiteLLMProvider()
         p._llm_logging = True

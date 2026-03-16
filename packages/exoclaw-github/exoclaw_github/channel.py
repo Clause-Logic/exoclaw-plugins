@@ -10,9 +10,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import httpx
-from loguru import logger
-
 from exoclaw.bus.events import InboundMessage, OutboundMessage
+from loguru import logger
 
 if TYPE_CHECKING:
     from exoclaw.bus.protocol import Bus
