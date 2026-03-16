@@ -155,7 +155,7 @@ class GitHubLabelTool(ToolBase):
     def on_inbound(self, msg: "InboundMessage") -> None:
         number = msg.metadata.get("number")
         if number is not None:
-            self._number = int(number)
+            self._number = int(number)  # type: ignore[invalid-argument-type]
 
     @property
     def name(self) -> str:
@@ -409,7 +409,7 @@ class GitHubReactionTool(ToolBase):
     def on_inbound(self, msg: "InboundMessage") -> None:
         comment_id = msg.metadata.get("comment_id")
         if comment_id is not None:
-            self._comment_id = int(comment_id)
+            self._comment_id = int(comment_id)  # type: ignore[invalid-argument-type]
             self._comment_kind = str(msg.metadata.get("comment_kind", "issue"))
 
     @property

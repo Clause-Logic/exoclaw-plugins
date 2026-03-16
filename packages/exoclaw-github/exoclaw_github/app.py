@@ -72,7 +72,7 @@ async def create(
     repo_dir = repo_dir or Path(_env("GITHUB_WORKSPACE") or os.getcwd())
 
     # trigger: sentinel ... means "read from env"
-    if trigger is ...:  # type: ignore[comparison-overlap]
+    if trigger is ...:
         env_val = _env("EXOCLAW_TRIGGER", "@exoclaw")
         trigger = env_val if env_val else None
 
