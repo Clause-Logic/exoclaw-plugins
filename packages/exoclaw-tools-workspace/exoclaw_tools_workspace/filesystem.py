@@ -61,7 +61,9 @@ class ReadFileTool(ToolBase):
             "required": ["path"],
         }
 
-    async def execute(self, path: str, offset: int = 0, limit: int | None = None, **kwargs: Any) -> str:
+    async def execute(
+        self, path: str, offset: int = 0, limit: int | None = None, **kwargs: Any
+    ) -> str:
         try:
             # Validate offset and limit
             if offset < 0:
@@ -111,7 +113,10 @@ class ReadFileTool(ToolBase):
             # Full file
             content = file_path.read_text(encoding="utf-8")
             if len(content) > self._MAX_CHARS:
-                return content[: self._MAX_CHARS] + f"\n\n... (truncated — file is {len(content):,} chars, showing first {self._MAX_CHARS:,}. Use offset/limit to read more.)"
+                return (
+                    content[: self._MAX_CHARS]
+                    + f"\n\n... (truncated — file is {len(content):,} chars, showing first {self._MAX_CHARS:,}. Use offset/limit to read more.)"
+                )
             return content
         except PermissionError as e:
             return f"Error: {e}"
@@ -231,7 +236,9 @@ class EditFileTool(ToolBase):
                 )
             )
             return f"Error: old_text not found in {path}.\nBest match ({best_ratio:.0%} similar) at line {best_start + 1}:\n{diff}"
-        return f"Error: old_text not found in {path}. No similar text found. Verify the file content."
+        return (
+            f"Error: old_text not found in {path}. No similar text found. Verify the file content."
+        )
 
 
 class ListDirTool(ToolBase):

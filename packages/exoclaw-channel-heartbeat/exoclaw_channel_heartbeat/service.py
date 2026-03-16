@@ -6,9 +6,8 @@ import asyncio
 from pathlib import Path
 from typing import Any, Callable, Coroutine
 
-from loguru import logger
-
 from exoclaw.providers import LLMProvider
+from loguru import logger
 
 _HEARTBEAT_TOOL: list[dict[str, Any]] = [
     {
@@ -88,11 +87,17 @@ class HeartbeatService:
         """
         response = await self.provider.chat(
             messages=[
-                {"role": "system", "content": "You are a heartbeat agent. Call the heartbeat tool to report your decision."},
-                {"role": "user", "content": (
-                    "Review the following HEARTBEAT.md and decide whether there are active tasks.\n\n"
-                    f"{content}"
-                )},
+                {
+                    "role": "system",
+                    "content": "You are a heartbeat agent. Call the heartbeat tool to report your decision.",
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "Review the following HEARTBEAT.md and decide whether there are active tasks.\n\n"
+                        f"{content}"
+                    ),
+                },
             ],
             tools=_HEARTBEAT_TOOL,
             model=self.model,
@@ -102,7 +107,7 @@ class HeartbeatService:
             return "skip", ""
 
         args = response.tool_calls[0].arguments
-        return args.get("action", "skip"), args.get("tasks", "")
+        return str(args.get("action", "skip")), str(args.get("tasks", ""))
 
     async def start(self) -> None:
         """Start the heartbeat service."""

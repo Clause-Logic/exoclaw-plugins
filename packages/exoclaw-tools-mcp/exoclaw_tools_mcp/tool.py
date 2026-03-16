@@ -5,14 +5,13 @@ from contextlib import AsyncExitStack
 from typing import Any
 
 import httpx
+from exoclaw.agent.tools.protocol import ToolBase
+from exoclaw.agent.tools.registry import ToolRegistry
 from loguru import logger
 from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
-
-from exoclaw.agent.tools.protocol import ToolBase
-from exoclaw.agent.tools.registry import ToolRegistry
 
 from exoclaw_tools_mcp.config import MCPServerConfig
 
@@ -31,7 +30,10 @@ class MCPToolWrapper(ToolBase):
         self._original_name = tool_def.name
         self._name = f"mcp_{server_name}_{tool_def.name}"
         self._description: str = tool_def.description or tool_def.name
-        self._parameters: dict[str, Any] = tool_def.inputSchema or {"type": "object", "properties": {}}
+        self._parameters: dict[str, Any] = tool_def.inputSchema or {
+            "type": "object",
+            "properties": {},
+        }
         self._tool_timeout = tool_timeout
 
     @property
@@ -94,6 +96,7 @@ async def connect_mcp_servers(
                 read, write = await stack.enter_async_context(stdio_client(params))
             elif transport_type == "sse":
                 assert cfg.url is not None
+
                 def httpx_client_factory(
                     headers: dict[str, str] | None = None,
                     timeout: httpx.Timeout | None = None,

@@ -7,8 +7,6 @@ from contextlib import AsyncExitStack
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 from exoclaw_nanobot.app import ExoclawNanobot, create
 from exoclaw_nanobot.config.schema import Config
 from exoclaw_tools_cron.types import CronJob, CronJobState, CronPayload, CronSchedule
@@ -44,6 +42,7 @@ def _make_app(
 class TestDispatchOutbound:
     def _make_app_with_channel(self, channel_name: str = "telegram") -> tuple[Any, Any, Any]:
         from exoclaw.bus.queue import MessageBus
+
         bus = MessageBus()
         fake_channel = MagicMock()
         fake_channel.name = channel_name
@@ -58,6 +57,7 @@ class TestDispatchOutbound:
         heartbeat.start = AsyncMock()
 
         from contextlib import AsyncExitStack
+
         app = ExoclawNanobot(
             config=config,
             bus=bus,
@@ -72,11 +72,16 @@ class TestDispatchOutbound:
 
     async def test_regular_message_forwarded_to_channel(self) -> None:
         from exoclaw.bus.events import OutboundMessage
+
         app, bus, channel = self._make_app_with_channel()
 
-        await bus.publish_outbound(OutboundMessage(
-            channel="telegram", chat_id="123", content="Hello!",
-        ))
+        await bus.publish_outbound(
+            OutboundMessage(
+                channel="telegram",
+                chat_id="123",
+                content="Hello!",
+            )
+        )
 
         task = asyncio.create_task(app._dispatch_outbound())
         await asyncio.sleep(0.05)
@@ -96,14 +101,17 @@ class TestDispatchOutbound:
         and should be suppressed before reaching the user's channel.
         """
         from exoclaw.bus.events import OutboundMessage
+
         app, bus, channel = self._make_app_with_channel()
 
-        await bus.publish_outbound(OutboundMessage(
-            channel="telegram",
-            chat_id="123",
-            content='read_file("foo.txt")',
-            metadata={"_progress": True, "_tool_hint": True},
-        ))
+        await bus.publish_outbound(
+            OutboundMessage(
+                channel="telegram",
+                chat_id="123",
+                content='read_file("foo.txt")',
+                metadata={"_progress": True, "_tool_hint": True},
+            )
+        )
 
         task = asyncio.create_task(app._dispatch_outbound())
         await asyncio.sleep(0.05)
@@ -222,17 +230,35 @@ class TestCreate:
         config = Config()
 
         patches = [
-            patch("exoclaw_nanobot.app.LiteLLMProvider", MagicMock(return_value=MagicMock(get_default_model=MagicMock(return_value="x")))),
-            patch("exoclaw_nanobot.app.MessageBus", MagicMock(return_value=MagicMock(publish_outbound=AsyncMock()))),
+            patch(
+                "exoclaw_nanobot.app.LiteLLMProvider",
+                MagicMock(return_value=MagicMock(get_default_model=MagicMock(return_value="x"))),
+            ),
+            patch(
+                "exoclaw_nanobot.app.MessageBus",
+                MagicMock(return_value=MagicMock(publish_outbound=AsyncMock())),
+            ),
             patch("exoclaw_nanobot.app.DefaultConversation"),
-            patch("exoclaw_nanobot.app.AgentLoop", MagicMock(return_value=MagicMock(run=AsyncMock(), process_direct=AsyncMock()))),
-            patch("exoclaw_nanobot.app.CLIChannel", MagicMock(return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()))),
-            patch("exoclaw_nanobot.app.CronService", MagicMock(return_value=MagicMock(start=AsyncMock()))),
+            patch(
+                "exoclaw_nanobot.app.AgentLoop",
+                MagicMock(return_value=MagicMock(run=AsyncMock(), process_direct=AsyncMock())),
+            ),
+            patch(
+                "exoclaw_nanobot.app.CLIChannel",
+                MagicMock(return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())),
+            ),
+            patch(
+                "exoclaw_nanobot.app.CronService",
+                MagicMock(return_value=MagicMock(start=AsyncMock())),
+            ),
             patch("exoclaw_nanobot.app.CronTool", MagicMock(return_value=MagicMock())),
             patch("exoclaw_nanobot.app.MessageTool", MagicMock(return_value=MagicMock())),
             patch("exoclaw_nanobot.app.SpawnTool", MagicMock(return_value=MagicMock())),
             patch("exoclaw_nanobot.app.SubagentManager", MagicMock(return_value=MagicMock())),
-            patch("exoclaw_nanobot.app.HeartbeatService", MagicMock(return_value=MagicMock(start=AsyncMock()))),
+            patch(
+                "exoclaw_nanobot.app.HeartbeatService",
+                MagicMock(return_value=MagicMock(start=AsyncMock())),
+            ),
             patch("exoclaw_nanobot.app.ReadFileTool", MagicMock(return_value=MagicMock())),
             patch("exoclaw_nanobot.app.WriteFileTool", MagicMock(return_value=MagicMock())),
             patch("exoclaw_nanobot.app.EditFileTool", MagicMock(return_value=MagicMock())),
@@ -255,11 +281,10 @@ class TestCreate:
 
     async def test_create_with_mcp_servers(self) -> None:
         config = Config()
-        config.tools.mcp_servers = {
-            "test": config.tools.mcp_servers.__class__.__class__  # type: ignore[dict-item]
+        config.tools.mcp_servers = {  # type: ignore[assignment]
+            "test": config.tools.mcp_servers.__class__.__class__
         }
         # Use a fresh config with mcp server configured via dict
-        import json as _json
         from exoclaw_nanobot.config.schema import MCPServerConfig
 
         config2 = Config()
@@ -269,17 +294,35 @@ class TestCreate:
         fake_tool.name = "mcp_mysrv_tool1"
 
         patches: list[Any] = [
-            patch("exoclaw_nanobot.app.LiteLLMProvider", MagicMock(return_value=MagicMock(get_default_model=MagicMock(return_value="x")))),
-            patch("exoclaw_nanobot.app.MessageBus", MagicMock(return_value=MagicMock(publish_outbound=AsyncMock()))),
+            patch(
+                "exoclaw_nanobot.app.LiteLLMProvider",
+                MagicMock(return_value=MagicMock(get_default_model=MagicMock(return_value="x"))),
+            ),
+            patch(
+                "exoclaw_nanobot.app.MessageBus",
+                MagicMock(return_value=MagicMock(publish_outbound=AsyncMock())),
+            ),
             patch("exoclaw_nanobot.app.DefaultConversation"),
-            patch("exoclaw_nanobot.app.AgentLoop", MagicMock(return_value=MagicMock(run=AsyncMock(), process_direct=AsyncMock()))),
-            patch("exoclaw_nanobot.app.CLIChannel", MagicMock(return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()))),
-            patch("exoclaw_nanobot.app.CronService", MagicMock(return_value=MagicMock(start=AsyncMock()))),
+            patch(
+                "exoclaw_nanobot.app.AgentLoop",
+                MagicMock(return_value=MagicMock(run=AsyncMock(), process_direct=AsyncMock())),
+            ),
+            patch(
+                "exoclaw_nanobot.app.CLIChannel",
+                MagicMock(return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())),
+            ),
+            patch(
+                "exoclaw_nanobot.app.CronService",
+                MagicMock(return_value=MagicMock(start=AsyncMock())),
+            ),
             patch("exoclaw_nanobot.app.CronTool", MagicMock(return_value=MagicMock())),
             patch("exoclaw_nanobot.app.MessageTool", MagicMock(return_value=MagicMock())),
             patch("exoclaw_nanobot.app.SpawnTool", MagicMock(return_value=MagicMock())),
             patch("exoclaw_nanobot.app.SubagentManager", MagicMock(return_value=MagicMock())),
-            patch("exoclaw_nanobot.app.HeartbeatService", MagicMock(return_value=MagicMock(start=AsyncMock()))),
+            patch(
+                "exoclaw_nanobot.app.HeartbeatService",
+                MagicMock(return_value=MagicMock(start=AsyncMock())),
+            ),
             patch("exoclaw_nanobot.app.ReadFileTool", MagicMock(return_value=MagicMock())),
             patch("exoclaw_nanobot.app.WriteFileTool", MagicMock(return_value=MagicMock())),
             patch("exoclaw_nanobot.app.EditFileTool", MagicMock(return_value=MagicMock())),
@@ -288,7 +331,11 @@ class TestCreate:
             patch("exoclaw_nanobot.app.WebSearchTool", MagicMock(return_value=MagicMock())),
             patch("exoclaw_nanobot.app.WebFetchTool", MagicMock(return_value=MagicMock())),
             patch("exoclaw_nanobot.app.connect_mcp_servers", AsyncMock()),
-            patch("exoclaw.agent.tools.registry.ToolRegistry._tools", {"mcp_mysrv_tool1": fake_tool}, create=True),
+            patch(
+                "exoclaw.agent.tools.registry.ToolRegistry._tools",
+                {"mcp_mysrv_tool1": fake_tool},
+                create=True,
+            ),
         ]
 
         for p in patches:
@@ -304,16 +351,25 @@ class TestCreate:
     def _make_patches(self, fake_bus: Any, fake_loop: Any) -> list[Any]:
         """Build the standard patch list, injecting provided bus and loop mocks."""
         return [
-            patch("exoclaw_nanobot.app.LiteLLMProvider", MagicMock(return_value=MagicMock(get_default_model=MagicMock(return_value="x")))),
+            patch(
+                "exoclaw_nanobot.app.LiteLLMProvider",
+                MagicMock(return_value=MagicMock(get_default_model=MagicMock(return_value="x"))),
+            ),
             patch("exoclaw_nanobot.app.MessageBus", MagicMock(return_value=fake_bus)),
             patch("exoclaw_nanobot.app.DefaultConversation"),
             patch("exoclaw_nanobot.app.AgentLoop", MagicMock(return_value=fake_loop)),
-            patch("exoclaw_nanobot.app.CLIChannel", MagicMock(return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()))),
+            patch(
+                "exoclaw_nanobot.app.CLIChannel",
+                MagicMock(return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())),
+            ),
             patch("exoclaw_nanobot.app.CronTool", MagicMock(return_value=MagicMock())),
             patch("exoclaw_nanobot.app.MessageTool", MagicMock(return_value=MagicMock())),
             patch("exoclaw_nanobot.app.SpawnTool", MagicMock(return_value=MagicMock())),
             patch("exoclaw_nanobot.app.SubagentManager", MagicMock(return_value=MagicMock())),
-            patch("exoclaw_nanobot.app.HeartbeatService", MagicMock(return_value=MagicMock(start=AsyncMock()))),
+            patch(
+                "exoclaw_nanobot.app.HeartbeatService",
+                MagicMock(return_value=MagicMock(start=AsyncMock())),
+            ),
             patch("exoclaw_nanobot.app.ReadFileTool", MagicMock(return_value=MagicMock())),
             patch("exoclaw_nanobot.app.WriteFileTool", MagicMock(return_value=MagicMock())),
             patch("exoclaw_nanobot.app.EditFileTool", MagicMock(return_value=MagicMock())),
@@ -330,7 +386,6 @@ class TestCreate:
         from exoclaw_tools_cron.service import CronService as RealCronService
 
         captured: dict[str, Any] = {}
-        original_init = RealCronService.__init__
 
         class CapturingCronService(RealCronService):
             pass
@@ -341,10 +396,9 @@ class TestCreate:
         fake_cron._timer_task = None
         fake_cron._running = False
 
-        original_set = object.__setattr__
-
         class CronCapture:
             """Minimal stand-in that captures .on_job assignment."""
+
             def __setattr__(self, name: str, value: Any) -> None:
                 if name == "on_job":
                     captured["on_job"] = value
@@ -353,7 +407,9 @@ class TestCreate:
         cron_capture = CronCapture()
 
         patches = self._make_patches(fake_bus, fake_loop)
-        patches.append(patch("exoclaw_nanobot.app.CronService", MagicMock(return_value=cron_capture)))
+        patches.append(
+            patch("exoclaw_nanobot.app.CronService", MagicMock(return_value=cron_capture))
+        )
 
         for p in patches:
             p.start()
@@ -477,17 +533,35 @@ class TestCreate:
         p.write_text(_json.dumps({"agents": {"defaults": {"maxTokens": 1111}}}))
 
         patches = [
-            patch("exoclaw_nanobot.app.LiteLLMProvider", MagicMock(return_value=MagicMock(get_default_model=MagicMock(return_value="x")))),
-            patch("exoclaw_nanobot.app.MessageBus", MagicMock(return_value=MagicMock(publish_outbound=AsyncMock()))),
+            patch(
+                "exoclaw_nanobot.app.LiteLLMProvider",
+                MagicMock(return_value=MagicMock(get_default_model=MagicMock(return_value="x"))),
+            ),
+            patch(
+                "exoclaw_nanobot.app.MessageBus",
+                MagicMock(return_value=MagicMock(publish_outbound=AsyncMock())),
+            ),
             patch("exoclaw_nanobot.app.DefaultConversation"),
-            patch("exoclaw_nanobot.app.AgentLoop", MagicMock(return_value=MagicMock(run=AsyncMock(), process_direct=AsyncMock()))),
-            patch("exoclaw_nanobot.app.CLIChannel", MagicMock(return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()))),
-            patch("exoclaw_nanobot.app.CronService", MagicMock(return_value=MagicMock(start=AsyncMock()))),
+            patch(
+                "exoclaw_nanobot.app.AgentLoop",
+                MagicMock(return_value=MagicMock(run=AsyncMock(), process_direct=AsyncMock())),
+            ),
+            patch(
+                "exoclaw_nanobot.app.CLIChannel",
+                MagicMock(return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())),
+            ),
+            patch(
+                "exoclaw_nanobot.app.CronService",
+                MagicMock(return_value=MagicMock(start=AsyncMock())),
+            ),
             patch("exoclaw_nanobot.app.CronTool", MagicMock(return_value=MagicMock())),
             patch("exoclaw_nanobot.app.MessageTool", MagicMock(return_value=MagicMock())),
             patch("exoclaw_nanobot.app.SpawnTool", MagicMock(return_value=MagicMock())),
             patch("exoclaw_nanobot.app.SubagentManager", MagicMock(return_value=MagicMock())),
-            patch("exoclaw_nanobot.app.HeartbeatService", MagicMock(return_value=MagicMock(start=AsyncMock()))),
+            patch(
+                "exoclaw_nanobot.app.HeartbeatService",
+                MagicMock(return_value=MagicMock(start=AsyncMock())),
+            ),
             patch("exoclaw_nanobot.app.ReadFileTool", MagicMock(return_value=MagicMock())),
             patch("exoclaw_nanobot.app.WriteFileTool", MagicMock(return_value=MagicMock())),
             patch("exoclaw_nanobot.app.EditFileTool", MagicMock(return_value=MagicMock())),

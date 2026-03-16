@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from exoclaw_nanobot.config.loader import (
     _migrate_config,
     get_config_path,
@@ -35,7 +34,9 @@ class TestLoadConfig:
         cfg = load_config(p)
         assert cfg.agents.defaults.max_tokens == 1234
 
-    def test_returns_default_on_invalid_json(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_returns_default_on_invalid_json(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         p = tmp_path / "config.json"
         p.write_text("not json!!!")
         cfg = load_config(p)
@@ -43,7 +44,9 @@ class TestLoadConfig:
         out = capsys.readouterr().out
         assert "Warning" in out
 
-    def test_returns_default_on_validation_error(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_returns_default_on_validation_error(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         p = tmp_path / "config.json"
         # agents.defaults.maxTokens should be int, not a dict
         p.write_text(json.dumps({"agents": {"defaults": {"maxTokens": {"bad": "value"}}}}))
@@ -89,8 +92,8 @@ class TestMigrateConfig:
         result = _migrate_config(data)
         tools = result["tools"]
         assert isinstance(tools, dict)
-        assert tools.get("restrictToWorkspace") is True
-        exec_cfg = tools.get("exec", {})
+        assert tools.get("restrictToWorkspace") is True  # type: ignore[arg-type]
+        exec_cfg = tools.get("exec", {})  # type: ignore[no-matching-overload]
         assert isinstance(exec_cfg, dict)
         assert "restrictToWorkspace" not in exec_cfg
 
@@ -99,7 +102,7 @@ class TestMigrateConfig:
         result = _migrate_config(data)
         tools = result["tools"]
         assert isinstance(tools, dict)
-        assert tools.get("restrictToWorkspace") is True
+        assert tools.get("restrictToWorkspace") is True  # type: ignore[arg-type]
 
     def test_missing_tools_key(self) -> None:
         data: dict[str, object] = {}
@@ -116,4 +119,4 @@ class TestMigrateConfig:
         result = _migrate_config(data)
         tools = result["tools"]
         assert isinstance(tools, dict)
-        assert tools.get("exec") == "not_a_dict"
+        assert tools.get("exec") == "not_a_dict"  # type: ignore[arg-type]

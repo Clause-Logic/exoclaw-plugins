@@ -1,0 +1,21 @@
+[tools]
+uv = "latest"
+
+[tasks.lint]
+description = "Type check with ty and lint with ruff (set PACKAGE=<name>)"
+run = [
+    "uv run ty check packages/$PACKAGE",
+    "uv run ruff check packages/$PACKAGE",
+]
+
+[tasks.format]
+description = "Format all code with ruff"
+run = "uv run ruff format ."
+
+[tasks.check-format]
+description = "Check formatting without writing changes"
+run = "uv run ruff format --check ."
+
+[tasks.test]
+description = "Run tests (set PACKAGE=<name>)"
+run = "uv run pytest packages/$PACKAGE"

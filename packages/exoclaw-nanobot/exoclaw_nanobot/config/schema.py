@@ -321,11 +321,9 @@ class Config(BaseSettings):
     def workspace_path(self) -> Path:
         return Path(self.agents.defaults.workspace).expanduser()
 
-    def _match_provider(
-        self, model: str | None = None
-    ) -> tuple[ProviderConfig | None, str | None]:
+    def _match_provider(self, model: str | None = None) -> tuple[ProviderConfig | None, str | None]:
         """Match provider config and its registry name. Returns (config, spec_name)."""
-        from exoclaw_nanobot.providers import PROVIDERS, find_by_name
+        from exoclaw_nanobot.providers import PROVIDERS
 
         forced = self.agents.defaults.provider
         if forced != "auto":

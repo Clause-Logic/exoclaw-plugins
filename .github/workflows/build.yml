@@ -1,0 +1,46 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      packages: ${{ steps.list.outputs.packages }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: List all packages
+        id: list
+        run: |
+          PACKAGES=$(ls packages/ | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "packages=$PACKAGES" >> "$GITHUB_OUTPUT"
+
+  validate:
+    needs: detect
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        package: ${{ fromJson(needs.detect.outputs.packages) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Check formatting
+        run: mise run check-format
+
+      - name: Lint
+        run: mise run lint
+        env:
+          PACKAGE: ${{ matrix.package }}
+
+      - name: Test
+        run: mise run test
+        env:
+          PACKAGE: ${{ matrix.package }}

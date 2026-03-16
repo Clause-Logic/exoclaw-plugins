@@ -2,14 +2,9 @@
 
 from __future__ import annotations
 
-import pytest
-
 from exoclaw_nanobot.config.schema import (
-    AgentDefaults,
     Config,
     MCPServerConfig,
-    ProviderConfig,
-    ToolsConfig,
 )
 
 
@@ -53,7 +48,7 @@ class TestConfigDefaults:
 
 
 def cfg_env_prefix() -> str:
-    from pydantic_settings import BaseSettings
+
     cfg = Config()
     return cfg.model_config.get("env_prefix", "")
 

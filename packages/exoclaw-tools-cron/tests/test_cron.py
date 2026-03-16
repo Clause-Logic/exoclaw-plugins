@@ -6,10 +6,9 @@ import asyncio
 import json
 import time
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
-
 from exoclaw_tools_cron.service import (
     CronService,
     _compute_next_run,
@@ -24,7 +23,6 @@ from exoclaw_tools_cron.types import (
     CronSchedule,
     CronStore,
 )
-
 
 # ---------------------------------------------------------------------------
 # Types
@@ -154,9 +152,7 @@ class TestComputeNextRun:
         assert result is None
 
     def test_cron_invalid_expr_returns_none(self) -> None:
-        result = _compute_next_run(
-            CronSchedule(kind="cron", expr="not-a-cron"), _now_ms()
-        )
+        result = _compute_next_run(CronSchedule(kind="cron", expr="not-a-cron"), _now_ms())
         assert result is None
 
     def test_unknown_kind_returns_none(self) -> None:
@@ -176,9 +172,7 @@ class TestValidateScheduleForAdd:
         _validate_schedule_for_add(CronSchedule(kind="every", every_ms=60000))
 
     def test_valid_cron_with_tz(self) -> None:
-        _validate_schedule_for_add(
-            CronSchedule(kind="cron", expr="0 9 * * *", tz="UTC")
-        )
+        _validate_schedule_for_add(CronSchedule(kind="cron", expr="0 9 * * *", tz="UTC"))
 
     def test_tz_on_non_cron_raises(self) -> None:
         with pytest.raises(ValueError, match="tz can only be used with cron"):
@@ -186,9 +180,7 @@ class TestValidateScheduleForAdd:
 
     def test_invalid_tz_raises(self) -> None:
         with pytest.raises(ValueError, match="unknown timezone"):
-            _validate_schedule_for_add(
-                CronSchedule(kind="cron", expr="0 9 * * *", tz="Not/Real")
-            )
+            _validate_schedule_for_add(CronSchedule(kind="cron", expr="0 9 * * *", tz="Not/Real"))
 
 
 # ---------------------------------------------------------------------------
@@ -221,7 +213,12 @@ class TestCronServiceLoadStore:
                     "enabled": True,
                     "schedule": {"kind": "every", "everyMs": 60000},
                     "payload": {"kind": "agent_turn", "message": "hi", "deliver": False},
-                    "state": {"nextRunAtMs": None, "lastRunAtMs": None, "lastStatus": None, "lastError": None},
+                    "state": {
+                        "nextRunAtMs": None,
+                        "lastRunAtMs": None,
+                        "lastStatus": None,
+                        "lastError": None,
+                    },
                     "createdAtMs": 0,
                     "updatedAtMs": 0,
                     "deleteAfterRun": False,
@@ -312,9 +309,7 @@ class TestCronServicePublicApi:
             )
 
     def test_list_jobs_enabled_only(self, service: CronService) -> None:
-        service.add_job(
-            name="a", schedule=CronSchedule(kind="every", every_ms=1000), message="a"
-        )
+        service.add_job(name="a", schedule=CronSchedule(kind="every", every_ms=1000), message="a")
         jobs = service.list_jobs()
         assert len(jobs) == 1
 
@@ -349,9 +344,7 @@ class TestCronServicePublicApi:
         job = service.add_job(
             name="upd", schedule=CronSchedule(kind="every", every_ms=1000), message="x"
         )
-        updated = service.update_job(
-            job.id, schedule=CronSchedule(kind="every", every_ms=5000)
-        )
+        updated = service.update_job(job.id, schedule=CronSchedule(kind="every", every_ms=5000))
         assert updated is not None
         assert updated.schedule.every_ms == 5000
 
@@ -391,9 +384,7 @@ class TestCronServicePublicApi:
             called.append(job.id)
 
         svc = CronService(store_path=service.store_path, on_job=on_job)
-        job = svc.add_job(
-            name="r", schedule=CronSchedule(kind="every", every_ms=1000), message="r"
-        )
+        job = svc.add_job(name="r", schedule=CronSchedule(kind="every", every_ms=1000), message="r")
         result = await svc.run_job(job.id)
         assert result is True
         assert job.id in called
@@ -413,9 +404,7 @@ class TestCronServicePublicApi:
             called.append(job.id)
 
         svc = CronService(store_path=service.store_path, on_job=on_job)
-        job = svc.add_job(
-            name="f", schedule=CronSchedule(kind="every", every_ms=1000), message="f"
-        )
+        job = svc.add_job(name="f", schedule=CronSchedule(kind="every", every_ms=1000), message="f")
         svc.enable_job(job.id, enabled=False)
         result = await svc.run_job(job.id, force=True)
         assert result is True
@@ -432,9 +421,7 @@ class TestCronServiceTimer:
         assert service._running is False
 
     async def test_start_with_jobs_arms_timer(self, service: CronService) -> None:
-        service.add_job(
-            name="t", schedule=CronSchedule(kind="every", every_ms=60000), message="t"
-        )
+        service.add_job(name="t", schedule=CronSchedule(kind="every", every_ms=60000), message="t")
         await service.start()
         assert service._timer_task is not None
         service.stop()
@@ -583,15 +570,11 @@ class TestCronToolExecuteAdd:
         assert "Created job" in result
 
     async def test_add_cron_expr(self, tool: CronTool) -> None:
-        result = await tool.execute(
-            action="add", message="daily", cron_expr="0 9 * * *", tz="UTC"
-        )
+        result = await tool.execute(action="add", message="daily", cron_expr="0 9 * * *", tz="UTC")
         assert "Created job" in result
 
     async def test_add_at(self, tool: CronTool) -> None:
-        result = await tool.execute(
-            action="add", message="once", at="2099-01-01T10:00:00"
-        )
+        result = await tool.execute(action="add", message="once", at="2099-01-01T10:00:00")
         assert "Created job" in result
 
     async def test_add_no_message_error(self, tool: CronTool) -> None:
@@ -610,9 +593,7 @@ class TestCronToolExecuteAdd:
         assert "Error" in result
 
     async def test_add_tz_without_cron_error(self, tool: CronTool) -> None:
-        result = await tool.execute(
-            action="add", message="hi", every_seconds=60, tz="UTC"
-        )
+        result = await tool.execute(action="add", message="hi", every_seconds=60, tz="UTC")
         assert "Error" in result
 
     async def test_add_invalid_tz_error(self, tool: CronTool) -> None:

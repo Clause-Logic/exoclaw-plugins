@@ -9,13 +9,14 @@ from typing import Any
 
 import json_repair
 import litellm
+from exoclaw.providers.types import LLMResponse, ResponseFormat, ToolCallRequest
 from litellm import acompletion
 from loguru import logger
 
-from exoclaw.providers.types import LLMResponse, ResponseFormat, ToolCallRequest
-
 # Standard chat-completion message keys.
-_ALLOWED_MSG_KEYS = frozenset({"role", "content", "tool_calls", "tool_call_id", "name", "reasoning_content"})
+_ALLOWED_MSG_KEYS = frozenset(
+    {"role", "content", "tool_calls", "tool_call_id", "name", "reasoning_content"}
+)
 _ANTHROPIC_EXTRA_KEYS = frozenset({"thinking_blocks"})
 _ALNUM = string.ascii_letters + string.digits
 
@@ -33,13 +34,16 @@ def _sanitize_empty_content(messages: list[dict[str, Any]]) -> list[dict[str, An
 
         if isinstance(content, str) and not content:
             clean = dict(msg)
-            clean["content"] = None if (msg.get("role") == "assistant" and msg.get("tool_calls")) else "(empty)"
+            clean["content"] = (
+                None if (msg.get("role") == "assistant" and msg.get("tool_calls")) else "(empty)"
+            )
             result.append(clean)
             continue
 
         if isinstance(content, list):
             filtered = [
-                item for item in content
+                item
+                for item in content
                 if not (
                     isinstance(item, dict)
                     and item.get("type") in ("text", "input_text", "output_text")
@@ -131,7 +135,7 @@ class LiteLLMProvider:
         if api_base:
             litellm.api_base = api_base
 
-        litellm.suppress_debug_info = True
+        litellm.suppress_debug_info = True  # type: ignore[assignment]
         litellm.drop_params = True
 
         if callbacks_env := os.environ.get("LITELLM_CALLBACKS"):
@@ -230,7 +234,7 @@ class LiteLLMProvider:
                     content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
                 text = str(content).replace("\n", "\\n")
                 if self._llm_log_truncate >= 0:
-                    text = text[:self._llm_log_truncate]
+                    text = text[: self._llm_log_truncate]
                 logger.info("  [{}] {}", role, text)
 
         try:
@@ -294,11 +298,13 @@ class LiteLLMProvider:
             if isinstance(args, str):
                 args = json_repair.loads(args)
 
-            tool_calls.append(ToolCallRequest(
-                id=_short_tool_id(),
-                name=tc.function.name,
-                arguments=args,
-            ))
+            tool_calls.append(
+                ToolCallRequest(
+                    id=_short_tool_id(),
+                    name=tc.function.name,
+                    arguments=args,  # type: ignore[arg-type]
+                )
+            )
 
         usage = {}
         if hasattr(response, "usage") and response.usage:

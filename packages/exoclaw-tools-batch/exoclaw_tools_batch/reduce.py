@@ -286,7 +286,7 @@ class ReduceTool(ToolBase):
 
                     # Build params with input_path injected
                     params = {**base_params, "input_path": chunk_path}
-                    return await self._registry.execute(tool_name, params)
+                    return await self._registry.execute(tool_name, params)  # type: ignore[union-attr]
 
             tasks = [_process_chunk(chunk) for chunk in chunks]
             results = await asyncio.gather(*tasks)

@@ -5,11 +5,8 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 from exoclaw.bus.events import InboundMessage
 from exoclaw_subagent.manager import SubagentManager
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -82,6 +79,7 @@ class TestSubagentManagerInit:
 
     def test_satisfies_spawn_manager_protocol(self) -> None:
         from exoclaw_tools_spawn.tool import SpawnManager
+
         mgr = _make_manager()
         assert isinstance(mgr, SpawnManager)
 
@@ -237,7 +235,7 @@ class TestRun:
         mock_loop = MagicMock()
         mock_loop.process_direct = AsyncMock(return_value="done")
 
-        with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop) as MockLoop:
+        with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop) as MockLoop:  # noqa: N806
             await mgr._run("t1", "task", "label", "cli", "user1", None)
 
         _, kwargs = MockLoop.call_args

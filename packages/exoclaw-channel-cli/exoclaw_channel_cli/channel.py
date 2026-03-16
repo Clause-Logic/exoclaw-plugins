@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from exoclaw.bus.events import InboundMessage, OutboundMessage
 from loguru import logger
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import HTML
@@ -18,8 +19,6 @@ from prompt_toolkit.patch_stdout import patch_stdout
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.text import Text
-
-from exoclaw.bus.events import InboundMessage, OutboundMessage
 
 if TYPE_CHECKING:
     from exoclaw.bus.protocol import Bus
@@ -42,6 +41,7 @@ def _flush_pending_tty_input() -> None:
 
     try:
         import termios
+
         termios.tcflush(fd, termios.TCIFLUSH)
         return
     except Exception:
@@ -64,6 +64,7 @@ def _restore_terminal() -> None:
         return
     try:
         import termios
+
         termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, _SAVED_TERM_ATTRS)
     except Exception:
         pass
@@ -75,6 +76,7 @@ def _init_prompt_session(history_dir: Path | None = None) -> None:
 
     try:
         import termios
+
         _SAVED_TERM_ATTRS = termios.tcgetattr(sys.stdin.fileno())
     except Exception:
         pass
@@ -142,7 +144,9 @@ class CLIChannel:
         self._running = True
 
         _init_prompt_session(self._history_dir)
-        console.print("exoclaw interactive mode (type [bold]exit[/bold] or [bold]Ctrl+C[/bold] to quit)\n")
+        console.print(
+            "exoclaw interactive mode (type [bold]exit[/bold] or [bold]Ctrl+C[/bold] to quit)\n"
+        )
 
         def _handle_signal(signum: int, frame: object) -> None:
             sig_name = signal.Signals(signum).name
@@ -198,12 +202,14 @@ class CLIChannel:
                     turn_done.clear()
                     turn_response.clear()
 
-                    await bus.publish_inbound(InboundMessage(
-                        channel=self.name,
-                        sender_id="user",
-                        chat_id=self._chat_id,
-                        content=user_input,
-                    ))
+                    await bus.publish_inbound(
+                        InboundMessage(
+                            channel=self.name,
+                            sender_id="user",
+                            chat_id=self._chat_id,
+                            content=user_input,
+                        )
+                    )
 
                     with console.status("[dim]thinking...[/dim]", spinner="dots"):
                         await turn_done.wait()

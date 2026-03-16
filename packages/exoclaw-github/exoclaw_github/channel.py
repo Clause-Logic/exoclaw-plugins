@@ -10,9 +10,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import httpx
-from loguru import logger
-
 from exoclaw.bus.events import InboundMessage, OutboundMessage
+from loguru import logger
 
 if TYPE_CHECKING:
     from exoclaw.bus.protocol import Bus
@@ -20,16 +19,16 @@ if TYPE_CHECKING:
 
 @dataclass
 class GitHubEvent:
-    kind: str                       # "issue", "pr", "dispatch"
-    number: int                     # issue/PR number; 0 for dispatch
-    sender: str                     # GitHub username
-    body: str                       # message body to send to the agent
-    repo: str                       # "owner/repo"
+    kind: str  # "issue", "pr", "dispatch"
+    number: int  # issue/PR number; 0 for dispatch
+    sender: str  # GitHub username
+    body: str  # message body to send to the agent
+    repo: str  # "owner/repo"
     title: str = ""
     reply_to_comment_id: int | None = None  # set for review comment replies
-    comment_id: int | None = None           # id of the triggering comment (for reactions)
-    comment_kind: str = "issue"             # "issue" or "pr_review"
-    head_sha: str | None = None             # PR head commit SHA (for checks)
+    comment_id: int | None = None  # id of the triggering comment (for reactions)
+    comment_kind: str = "issue"  # "issue" or "pr_review"
+    head_sha: str | None = None  # PR head commit SHA (for checks)
 
 
 class GitHubChannel:
@@ -224,22 +223,24 @@ class GitHubChannel:
         self._pending_event = event
         self._response_event = asyncio.Event()
 
-        await bus.publish_inbound(InboundMessage(
-            channel=self.name,
-            sender_id=event.sender,
-            chat_id=str(event.number),
-            content=event.body,
-            session_key_override=f"github:{event.kind}:{event.number}",
-            metadata={
-                "repo": event.repo,
-                "title": event.title,
-                "kind": event.kind,
-                "number": event.number,
-                "comment_id": event.comment_id,
-                "comment_kind": event.comment_kind,
-                "head_sha": event.head_sha,
-            },
-        ))
+        await bus.publish_inbound(
+            InboundMessage(
+                channel=self.name,
+                sender_id=event.sender,
+                chat_id=str(event.number),
+                content=event.body,
+                session_key_override=f"github:{event.kind}:{event.number}",
+                metadata={
+                    "repo": event.repo,
+                    "title": event.title,
+                    "kind": event.kind,
+                    "number": event.number,
+                    "comment_id": event.comment_id,
+                    "comment_kind": event.comment_kind,
+                    "head_sha": event.head_sha,
+                },
+            )
+        )
 
         logger.info("Waiting for response to {} #{}", event.kind, event.number)
         await self._response_event.wait()

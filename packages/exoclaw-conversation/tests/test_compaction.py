@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from exoclaw_conversation.context import (
     _COMPACTION_MARKER,
     _estimate_tokens,

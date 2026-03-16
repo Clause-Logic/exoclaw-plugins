@@ -7,10 +7,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from exoclaw.providers.types import LLMResponse, ToolCallRequest
-from exoclaw_channel_heartbeat.service import HeartbeatService, _HEARTBEAT_TOOL
-
+from exoclaw_channel_heartbeat.service import _HEARTBEAT_TOOL, HeartbeatService
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -273,9 +271,7 @@ class TestTriggerNow:
         result = await svc.trigger_now()
         assert result is None
 
-    async def test_run_returns_execute_result(
-        self, workspace: Path, heartbeat_file: Path
-    ) -> None:
+    async def test_run_returns_execute_result(self, workspace: Path, heartbeat_file: Path) -> None:
         provider = _make_provider(action="run", tasks="task")
         on_execute = AsyncMock(return_value="done")
         svc = HeartbeatService(
@@ -301,20 +297,17 @@ class TestTriggerNow:
 class TestRunLoop:
     async def test_cancelled_error_exits_cleanly(self, workspace: Path) -> None:
         provider = _make_provider()
-        svc = HeartbeatService(
-            workspace=workspace, provider=provider, model="m", interval_s=9999
-        )
+        svc = HeartbeatService(workspace=workspace, provider=provider, model="m", interval_s=9999)
         await svc.start()
         svc.stop()  # cancels the task
         # Give event loop a chance to process cancellation
         import asyncio
+
         await asyncio.sleep(0)
 
     async def test_run_loop_executes_tick(self, workspace: Path, heartbeat_file: Path) -> None:
         provider = _make_provider(action="skip")
-        svc = HeartbeatService(
-            workspace=workspace, provider=provider, model="m", interval_s=9999
-        )
+        svc = HeartbeatService(workspace=workspace, provider=provider, model="m", interval_s=9999)
         svc._running = True
         tick_calls: list[int] = []
 
@@ -331,9 +324,7 @@ class TestRunLoop:
 
     async def test_run_loop_cancelled_error_exits(self, workspace: Path) -> None:
         provider = _make_provider(action="skip")
-        svc = HeartbeatService(
-            workspace=workspace, provider=provider, model="m", interval_s=9999
-        )
+        svc = HeartbeatService(workspace=workspace, provider=provider, model="m", interval_s=9999)
         svc._running = True
 
         with patch("asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError)):
@@ -343,9 +334,7 @@ class TestRunLoop:
 
     async def test_run_loop_generic_exception_continues(self, workspace: Path) -> None:
         provider = _make_provider(action="skip")
-        svc = HeartbeatService(
-            workspace=workspace, provider=provider, model="m", interval_s=9999
-        )
+        svc = HeartbeatService(workspace=workspace, provider=provider, model="m", interval_s=9999)
         svc._running = True
         call_count = 0
 

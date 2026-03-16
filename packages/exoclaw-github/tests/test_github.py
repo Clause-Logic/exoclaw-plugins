@@ -4,20 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from typing import Any
-
 from exoclaw.bus.events import InboundMessage, OutboundMessage
 from exoclaw_github.channel import GitHubChannel, GitHubEvent
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _write_event(tmp_path: Path, data: Any) -> str:
     p = tmp_path / "event.json"
@@ -42,10 +40,16 @@ def _make_channel(
 # _parse_event: issues
 # ---------------------------------------------------------------------------
 
+
 def test_parse_issues_opened(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     data = {
         "action": "opened",
-        "issue": {"number": 42, "title": "Bug report", "body": "It crashes", "user": {"login": "alice"}},
+        "issue": {
+            "number": 42,
+            "title": "Bug report",
+            "body": "It crashes",
+            "user": {"login": "alice"},
+        },
     }
     path = _write_event(tmp_path, data)
     monkeypatch.setenv("GITHUB_EVENT_NAME", "issues")
@@ -61,7 +65,9 @@ def test_parse_issues_opened(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     assert event.body == "It crashes"
 
 
-def test_parse_issues_opened_skipped_when_disabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_parse_issues_opened_skipped_when_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     data = {
         "action": "opened",
         "issue": {"number": 1, "title": "T", "body": "B", "user": {"login": "alice"}},
@@ -92,6 +98,7 @@ def test_parse_issues_non_opened_ignored(tmp_path: Path, monkeypatch: pytest.Mon
 # _parse_event: issue_comment
 # ---------------------------------------------------------------------------
 
+
 def test_parse_issue_comment_with_trigger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     data = {
         "action": "created",
@@ -109,7 +116,9 @@ def test_parse_issue_comment_with_trigger(tmp_path: Path, monkeypatch: pytest.Mo
     assert event.sender == "bob"
 
 
-def test_parse_issue_comment_without_trigger_skipped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_parse_issue_comment_without_trigger_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     data = {
         "action": "created",
         "issue": {"number": 7, "title": "T"},
@@ -123,7 +132,9 @@ def test_parse_issue_comment_without_trigger_skipped(tmp_path: Path, monkeypatch
     assert _make_channel(trigger="@exoclaw")._parse_event() is None
 
 
-def test_parse_issue_comment_no_trigger_required(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_parse_issue_comment_no_trigger_required(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     data = {
         "action": "created",
         "issue": {"number": 3, "title": "T"},
@@ -143,10 +154,16 @@ def test_parse_issue_comment_no_trigger_required(tmp_path: Path, monkeypatch: py
 # _parse_event: pull_request
 # ---------------------------------------------------------------------------
 
+
 def test_parse_pr_opened_when_enabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     data = {
         "action": "opened",
-        "pull_request": {"number": 99, "title": "Add feature", "body": "Details", "user": {"login": "dave"}},
+        "pull_request": {
+            "number": 99,
+            "title": "Add feature",
+            "body": "Details",
+            "user": {"login": "dave"},
+        },
     }
     path = _write_event(tmp_path, data)
     monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
@@ -159,7 +176,9 @@ def test_parse_pr_opened_when_enabled(tmp_path: Path, monkeypatch: pytest.Monkey
     assert event.number == 99
 
 
-def test_parse_pr_opened_disabled_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_parse_pr_opened_disabled_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     data = {
         "action": "opened",
         "pull_request": {"number": 99, "title": "T", "body": "B", "user": {"login": "dave"}},
@@ -175,6 +194,7 @@ def test_parse_pr_opened_disabled_by_default(tmp_path: Path, monkeypatch: pytest
 # ---------------------------------------------------------------------------
 # _parse_event: workflow_dispatch
 # ---------------------------------------------------------------------------
+
 
 def test_parse_dispatch_with_message(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     data = {"inputs": {"message": "Run the daily summary"}}
@@ -206,6 +226,7 @@ def test_parse_dispatch_default_message(tmp_path: Path, monkeypatch: pytest.Monk
 # _parse_event: unsupported / missing
 # ---------------------------------------------------------------------------
 
+
 def test_unsupported_event_returns_none(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     path = _write_event(tmp_path, {})
     monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
@@ -226,6 +247,7 @@ def test_missing_event_path_returns_none(monkeypatch: pytest.MonkeyPatch) -> Non
 # start(): no event → returns immediately
 # ---------------------------------------------------------------------------
 
+
 async def test_start_no_event_returns_immediately(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GITHUB_EVENT_PATH", raising=False)
     bus = MagicMock()
@@ -237,6 +259,7 @@ async def test_start_no_event_returns_immediately(monkeypatch: pytest.MonkeyPatc
 # ---------------------------------------------------------------------------
 # start(): publishes inbound and waits; send() resolves and posts comment
 # ---------------------------------------------------------------------------
+
 
 async def test_start_publishes_inbound_and_send_resolves(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -283,16 +306,21 @@ async def test_start_publishes_inbound_and_send_resolves(
 # send(): progress messages are ignored
 # ---------------------------------------------------------------------------
 
+
 async def test_send_ignores_progress_messages() -> None:
     ch = _make_channel()
     ch._pending_event = GitHubEvent(kind="issue", number=1, sender="u", body="b", repo="r")
     ch._response_event = asyncio.Event()
 
     with patch.object(ch, "_post_comment", new_callable=AsyncMock) as mock_post:
-        await ch.send(OutboundMessage(
-            channel="github", chat_id="1", content="thinking...",
-            metadata={"_progress": True},
-        ))
+        await ch.send(
+            OutboundMessage(
+                channel="github",
+                chat_id="1",
+                content="thinking...",
+                metadata={"_progress": True},
+            )
+        )
         mock_post.assert_not_called()
 
     assert not ch._response_event.is_set()
@@ -301,6 +329,7 @@ async def test_send_ignores_progress_messages() -> None:
 # ---------------------------------------------------------------------------
 # send(): dispatch events log instead of posting
 # ---------------------------------------------------------------------------
+
 
 async def test_send_dispatch_logs_not_posts() -> None:
     ch = _make_channel()
@@ -317,6 +346,7 @@ async def test_send_dispatch_logs_not_posts() -> None:
 # ---------------------------------------------------------------------------
 # stop(): sets response event so start() unblocks
 # ---------------------------------------------------------------------------
+
 
 async def test_stop_unblocks_start(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     data = {
@@ -343,6 +373,7 @@ async def test_stop_unblocks_start(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 # ---------------------------------------------------------------------------
 # _parse_event: pull_request_review_comment
 # ---------------------------------------------------------------------------
+
 
 def test_parse_review_comment_with_trigger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     data = {
@@ -371,7 +402,9 @@ def test_parse_review_comment_with_trigger(tmp_path: Path, monkeypatch: pytest.M
     assert "42" in event.body
 
 
-def test_parse_review_comment_without_trigger_skipped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_parse_review_comment_without_trigger_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     data = {
         "action": "created",
         "pull_request": {"number": 12, "title": "My PR"},
@@ -395,10 +428,15 @@ def test_parse_review_comment_without_trigger_skipped(tmp_path: Path, monkeypatc
 # _post_comment: review comment uses pulls/comments reply endpoint
 # ---------------------------------------------------------------------------
 
+
 async def test_post_comment_reply_uses_review_endpoint() -> None:
     ch = _make_channel()
     event = GitHubEvent(
-        kind="pr", number=5, sender="u", body="b", repo="owner/repo",
+        kind="pr",
+        number=5,
+        sender="u",
+        body="b",
+        repo="owner/repo",
         reply_to_comment_id=999,
     )
     captured_url: list[str] = []
@@ -410,8 +448,10 @@ async def test_post_comment_reply_uses_review_endpoint() -> None:
     class FakeClient:
         async def __aenter__(self) -> "FakeClient":
             return self
+
         async def __aexit__(self, *_: object) -> None:
             pass
+
         async def post(self, url: str, **kwargs: object) -> FakeResponse:
             captured_url.append(url)
             return FakeResponse()
@@ -434,8 +474,10 @@ async def test_post_comment_issue_uses_issues_endpoint() -> None:
     class FakeClient:
         async def __aenter__(self) -> "FakeClient":
             return self
+
         async def __aexit__(self, *_: object) -> None:
             pass
+
         async def post(self, url: str, **kwargs: object) -> FakeResponse:
             captured_url.append(url)
             return FakeResponse()
@@ -449,6 +491,7 @@ async def test_post_comment_issue_uses_issues_endpoint() -> None:
 # ---------------------------------------------------------------------------
 # GitHubReviewTool
 # ---------------------------------------------------------------------------
+
 
 async def test_review_tool_submits_approve() -> None:
     from exoclaw_github.tools import GitHubReviewTool
@@ -464,8 +507,10 @@ async def test_review_tool_submits_approve() -> None:
     class FakeClient:
         async def __aenter__(self) -> "FakeClient":
             return self
+
         async def __aexit__(self, *_: object) -> None:
             pass
+
         async def post(self, url: str, json: dict[str, Any], **kwargs: object) -> FakeResponse:
             captured.append({"url": url, "json": json})
             return FakeResponse()
@@ -494,7 +539,10 @@ async def test_review_tool_on_inbound_captures_pr_number() -> None:
     tool = GitHubReviewTool(token="tok", repo="owner/repo")
     assert tool._pr_number is None
     msg = InboundMessage(
-        channel="github", sender_id="u", chat_id="42", content="hi",
+        channel="github",
+        sender_id="u",
+        chat_id="42",
+        content="hi",
         metadata={"kind": "pr", "number": 42},
     )
     tool.on_inbound(msg)

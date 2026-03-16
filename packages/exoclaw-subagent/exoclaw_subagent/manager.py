@@ -6,14 +6,13 @@ import asyncio
 import uuid
 from typing import Callable
 
-from loguru import logger
-
 from exoclaw.agent.conversation import Conversation
 from exoclaw.agent.loop import AgentLoop
 from exoclaw.agent.tools.protocol import Tool
 from exoclaw.bus.events import InboundMessage
 from exoclaw.bus.protocol import Bus
 from exoclaw.providers.protocol import LLMProvider
+from loguru import logger
 
 
 class SubagentManager:
@@ -98,7 +97,9 @@ class SubagentManager:
             logger.error("Subagent [{}] failed: {}", task_id, e)
 
         logger.info("Subagent [{}] {}", task_id, status)
-        await self._announce(label, task, result, status, origin_channel, origin_chat_id, session_key)
+        await self._announce(
+            label, task, result, status, origin_channel, origin_chat_id, session_key
+        )
 
     async def _announce(
         self,

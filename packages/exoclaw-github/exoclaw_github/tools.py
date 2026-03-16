@@ -7,6 +7,7 @@ import os
 from typing import TYPE_CHECKING, Any
 
 import httpx
+from exoclaw.agent.tools.protocol import ToolBase
 from loguru import logger
 
 
@@ -17,8 +18,6 @@ def _gh_headers(token: str) -> dict[str, str]:
         "X-GitHub-Api-Version": "2022-11-28",
     }
 
-
-from exoclaw.agent.tools.protocol import ToolBase
 
 if TYPE_CHECKING:
     from exoclaw.bus.events import InboundMessage
@@ -156,7 +155,7 @@ class GitHubLabelTool(ToolBase):
     def on_inbound(self, msg: "InboundMessage") -> None:
         number = msg.metadata.get("number")
         if number is not None:
-            self._number = int(number)
+            self._number = int(number)  # type: ignore[invalid-argument-type]
 
     @property
     def name(self) -> str:
@@ -164,7 +163,9 @@ class GitHubLabelTool(ToolBase):
 
     @property
     def description(self) -> str:
-        return "Add or remove labels on the current issue or PR. Also lists all available repo labels."
+        return (
+            "Add or remove labels on the current issue or PR. Also lists all available repo labels."
+        )
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -370,7 +371,9 @@ class GitHubIssueTool(ToolBase):
                 resp = await client.get(f"{base}/{number}", headers=_gh_headers(self._token))
                 resp.raise_for_status()
                 data = resp.json()
-            return f"#{data['number']} [{data['state']}] {data['title']}\n\n{data.get('body') or ''}"
+            return (
+                f"#{data['number']} [{data['state']}] {data['title']}\n\n{data.get('body') or ''}"
+            )
 
         if action in ("update", "close"):
             patch: dict[str, Any] = {}
@@ -406,7 +409,7 @@ class GitHubReactionTool(ToolBase):
     def on_inbound(self, msg: "InboundMessage") -> None:
         comment_id = msg.metadata.get("comment_id")
         if comment_id is not None:
-            self._comment_id = int(comment_id)
+            self._comment_id = int(comment_id)  # type: ignore[invalid-argument-type]
             self._comment_kind = str(msg.metadata.get("comment_kind", "issue"))
 
     @property
@@ -589,10 +592,7 @@ class GitHubChecksTool(ToolBase):
         if not runs:
             return f"No check runs found for {sha[:8]}"
 
-        lines = [
-            f"- {r['name']}: {r['status']} / {r.get('conclusion') or 'pending'}"
-            for r in runs
-        ]
+        lines = [f"- {r['name']}: {r['status']} / {r.get('conclusion') or 'pending'}" for r in runs]
         return f"Check runs for {sha[:8]}:\n" + "\n".join(lines)
 
 

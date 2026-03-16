@@ -3,10 +3,9 @@
 import os
 from typing import Any
 
+from exoclaw.agent.tools.protocol import ToolBase
 from litellm import acompletion
 from loguru import logger
-
-from exoclaw.agent.tools.protocol import ToolBase
 
 
 class OpenRouterSearchTool(ToolBase):

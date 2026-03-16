@@ -220,8 +220,8 @@ class FakeCondenser:
 def _make_tree_reduce(tmp_path: Path) -> ReduceTool:
     tool = ReduceTool(output_dir=str(tmp_path))
     reg = ToolRegistry()
-    reg.register(FakeCondenser())  # type: ignore[arg-type]
-    reg.register(tool)  # type: ignore[arg-type]
+    reg.register(FakeCondenser())
+    reg.register(tool)
     tool.set_registry(reg)
     return tool
 
@@ -309,7 +309,7 @@ async def test_tree_reduce_no_registry(tmp_path: Path) -> None:
 async def test_tree_reduce_tool_not_found(tmp_path: Path) -> None:
     reduce = ReduceTool(output_dir=str(tmp_path))
     reg = ToolRegistry()
-    reg.register(reduce)  # type: ignore[arg-type]
+    reg.register(reduce)
     reduce.set_registry(reg)
 
     f1 = _write_json(tmp_path / "a.json", {"results": list(range(50))})
