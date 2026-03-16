@@ -5,7 +5,9 @@ from pathlib import Path
 
 def cron() -> dict[str, str]:
     """Return the cron scheduling skill for agent context."""
+    skill_dir = Path(__file__).parent
     return {
         "name": "cron",
-        "content": (Path(__file__).parent / "SKILL.md").read_text(),
+        "content": (skill_dir / "SKILL.md").read_text(),
+        "path": str(skill_dir),
     }

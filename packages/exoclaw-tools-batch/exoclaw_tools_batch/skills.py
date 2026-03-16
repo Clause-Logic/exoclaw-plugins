@@ -5,7 +5,9 @@ from pathlib import Path
 
 def etl() -> dict[str, str]:
     """Return the ETL skill for agent context."""
+    skill_dir = Path(__file__).parent
     return {
         "name": "etl",
-        "content": (Path(__file__).parent / "SKILL.md").read_text(),
+        "content": (skill_dir / "SKILL.md").read_text(),
+        "path": str(skill_dir),
     }
