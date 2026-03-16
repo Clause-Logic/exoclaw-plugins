@@ -281,8 +281,8 @@ class TestCreate:
 
     async def test_create_with_mcp_servers(self) -> None:
         config = Config()
-        config.tools.mcp_servers = {
-            "test": config.tools.mcp_servers.__class__.__class__  # type: ignore[dict-item]
+        config.tools.mcp_servers = {  # type: ignore[assignment]
+            "test": config.tools.mcp_servers.__class__.__class__
         }
         # Use a fresh config with mcp server configured via dict
         from exoclaw_nanobot.config.schema import MCPServerConfig

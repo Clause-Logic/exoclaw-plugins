@@ -254,7 +254,7 @@ class TestConnectMCPServersStdio:
                 await connect_mcp_servers({"myserver": cfg}, registry, stack)
 
         assert len(registry.get_definitions()) == 1
-        assert registry.get_definitions()[0]["function"]["name"] == "mcp_myserver_tool1"
+        assert registry.get_definitions()[0]["function"]["name"] == "mcp_myserver_tool1"  # type: ignore[index]
 
     async def test_stdio_inferred_from_command(self) -> None:
         registry = ToolRegistry()
@@ -374,7 +374,7 @@ class TestConnectMCPServersErrorHandling:
         session, _ = _make_mcp_modules()
         call_count = 0
 
-        def transport_factory(*args, **kwargs):  # type: ignore[no-untyped-def]
+        def transport_factory(*args, **kwargs):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
@@ -409,13 +409,13 @@ class TestConnectMCPServersErrorHandling:
         session2, _ = _make_mcp_modules([td2a, td2b])
         sessions = iter([session1, session2])
 
-        def transport_factory(*args, **kwargs):  # type: ignore[no-untyped-def]
+        def transport_factory(*args, **kwargs):
             ctx = MagicMock()
             ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
             ctx.__aexit__ = AsyncMock(return_value=False)
             return ctx
 
-        def session_factory(*args, **kwargs):  # type: ignore[no-untyped-def]
+        def session_factory(*args, **kwargs):
             return next(sessions)
 
         with (

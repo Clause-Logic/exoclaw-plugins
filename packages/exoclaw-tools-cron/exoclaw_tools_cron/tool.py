@@ -32,7 +32,7 @@ class CronTool(ToolBase):
         from contextvars import Token
 
         if isinstance(token, Token):
-            self._in_cron_context.reset(token)
+            self._in_cron_context.reset(token)  # type: ignore[arg-type]
 
     @property
     def name(self) -> str:

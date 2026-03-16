@@ -92,8 +92,8 @@ class TestMigrateConfig:
         result = _migrate_config(data)
         tools = result["tools"]
         assert isinstance(tools, dict)
-        assert tools.get("restrictToWorkspace") is True
-        exec_cfg = tools.get("exec", {})
+        assert tools.get("restrictToWorkspace") is True  # type: ignore[arg-type]
+        exec_cfg = tools.get("exec", {})  # type: ignore[no-matching-overload]
         assert isinstance(exec_cfg, dict)
         assert "restrictToWorkspace" not in exec_cfg
 
@@ -102,7 +102,7 @@ class TestMigrateConfig:
         result = _migrate_config(data)
         tools = result["tools"]
         assert isinstance(tools, dict)
-        assert tools.get("restrictToWorkspace") is True
+        assert tools.get("restrictToWorkspace") is True  # type: ignore[arg-type]
 
     def test_missing_tools_key(self) -> None:
         data: dict[str, object] = {}
@@ -119,4 +119,4 @@ class TestMigrateConfig:
         result = _migrate_config(data)
         tools = result["tools"]
         assert isinstance(tools, dict)
-        assert tools.get("exec") == "not_a_dict"
+        assert tools.get("exec") == "not_a_dict"  # type: ignore[arg-type]

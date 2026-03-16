@@ -98,7 +98,6 @@ class TestSpawnToolExecute:
             origin_channel="cli",
             origin_chat_id="user1",
             session_key="cli:user1",
-            search=False,
         )
 
     async def test_spawn_with_label(self, tool: SpawnTool, manager: AsyncMock) -> None:
@@ -109,13 +108,7 @@ class TestSpawnToolExecute:
             origin_channel="cli",
             origin_chat_id="user1",
             session_key="cli:user1",
-            search=False,
         )
-
-    async def test_spawn_with_search(self, tool: SpawnTool, manager: AsyncMock) -> None:
-        await tool.execute(task="research topic", search=True)
-        call_kwargs = manager.spawn.call_args.kwargs
-        assert call_kwargs["search"] is True
 
     async def test_spawn_returns_manager_response(
         self, tool: SpawnTool, manager: AsyncMock

@@ -135,7 +135,7 @@ class LiteLLMProvider:
         if api_base:
             litellm.api_base = api_base
 
-        litellm.suppress_debug_info = True
+        litellm.suppress_debug_info = True  # type: ignore[assignment]
         litellm.drop_params = True
 
         if callbacks_env := os.environ.get("LITELLM_CALLBACKS"):
@@ -302,7 +302,7 @@ class LiteLLMProvider:
                 ToolCallRequest(
                     id=_short_tool_id(),
                     name=tc.function.name,
-                    arguments=args,
+                    arguments=args,  # type: ignore[arg-type]
                 )
             )
 

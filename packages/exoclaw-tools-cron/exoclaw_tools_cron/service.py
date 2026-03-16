@@ -32,7 +32,7 @@ def _compute_next_run(schedule: CronSchedule, now_ms: int) -> int | None:
         try:
             from zoneinfo import ZoneInfo
 
-            from croniter import croniter  # type: ignore[import-untyped]
+            from croniter import croniter
 
             # Use caller-provided reference time for deterministic scheduling
             base_time = now_ms / 1000

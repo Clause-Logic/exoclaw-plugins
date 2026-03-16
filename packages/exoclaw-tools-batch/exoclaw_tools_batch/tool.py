@@ -102,7 +102,7 @@ class BatchTool(ToolBase):
         async def _run_one(index: int, params: dict[str, Any]) -> dict[str, Any]:
             async with semaphore:
                 try:
-                    result = await self._registry.execute(tool, params)
+                    result = await self._registry.execute(tool, params)  # type: ignore[union-attr]
                     return {"index": index, "result": result}
                 except Exception as e:
                     return {"index": index, "error": str(e)}

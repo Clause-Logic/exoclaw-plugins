@@ -49,7 +49,7 @@ class TestRestoreTerminal:
     def test_with_saved_attrs(self) -> None:
         import exoclaw_channel_cli.channel as ch
 
-        ch._SAVED_TERM_ATTRS = [1, 2, 3]
+        ch._SAVED_TERM_ATTRS = [1, 2, 3]  # type: ignore[assignment]
         with patch("sys.stdin") as mock_stdin:
             mock_stdin.fileno.return_value = 0
             with patch("termios.tcsetattr") as mock_set:
@@ -60,7 +60,7 @@ class TestRestoreTerminal:
     def test_termios_exception_handled(self) -> None:
         import exoclaw_channel_cli.channel as ch
 
-        ch._SAVED_TERM_ATTRS = [1, 2, 3]
+        ch._SAVED_TERM_ATTRS = [1, 2, 3]  # type: ignore[assignment]
         with patch("termios.tcsetattr", side_effect=Exception("no tty")):
             _restore_terminal()
         ch._SAVED_TERM_ATTRS = None

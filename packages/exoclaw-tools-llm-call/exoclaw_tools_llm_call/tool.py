@@ -49,7 +49,7 @@ def _build_response_format(schema: dict[str, Any]) -> ResponseFormat:
     json_schema: dict[str, Any] = {"name": name, "schema": schema}
     if strict is not None:
         json_schema["strict"] = strict
-    return {"type": "json_schema", "json_schema": json_schema}
+    return {"type": "json_schema", "json_schema": json_schema}  # type: ignore[return-value]
 
 
 class LLMCallTool(ToolBase):

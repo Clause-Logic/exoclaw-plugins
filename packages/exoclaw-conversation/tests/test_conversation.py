@@ -598,7 +598,7 @@ class TestDefaultConversation:
             prompt=_make_mock_prompt(),
         )
         await conv.build_prompt("test:1", "hello", plugin_context=["extra"])
-        call_kwargs = conv.prompt.build_messages.call_args[1]
+        call_kwargs = conv.prompt.build_messages.call_args[1]  # type: ignore[union-attr]
         assert "extra" in call_kwargs["extra_context"]
 
     async def test_build_prompt_triggers_consolidation(self) -> None:

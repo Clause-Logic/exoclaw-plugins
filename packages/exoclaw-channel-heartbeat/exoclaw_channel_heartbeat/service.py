@@ -107,7 +107,7 @@ class HeartbeatService:
             return "skip", ""
 
         args = response.tool_calls[0].arguments
-        return args.get("action", "skip"), args.get("tasks", "")
+        return str(args.get("action", "skip")), str(args.get("tasks", ""))
 
     async def start(self) -> None:
         """Start the heartbeat service."""

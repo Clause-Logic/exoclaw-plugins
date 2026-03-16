@@ -133,7 +133,7 @@ class MemoryStore:
                     },
                     {"role": "user", "content": prompt},
                 ],
-                tools=_SAVE_MEMORY_TOOL,
+                tools=_SAVE_MEMORY_TOOL,  # type: ignore[arg-type]
                 model=self._model,
             )
 
