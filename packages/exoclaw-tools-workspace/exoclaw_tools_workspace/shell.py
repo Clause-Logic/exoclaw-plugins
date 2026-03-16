@@ -24,15 +24,15 @@ class ExecTool(ToolBase):
         self.timeout = timeout
         self.working_dir = working_dir
         self.deny_patterns = deny_patterns or [
-            r"\brm\s+-[rf]{1,2}\b",          # rm -r, rm -rf, rm -fr
-            r"\bdel\s+/[fq]\b",              # del /f, del /q
-            r"\brmdir\s+/s\b",               # rmdir /s
-            r"(?:^|[;&|]\s*)format\b",       # format (as standalone command only)
-            r"\b(mkfs|diskpart)\b",          # disk operations
-            r"\bdd\s+if=",                   # dd
-            r">\s*/dev/sd",                  # write to disk
+            r"\brm\s+-[rf]{1,2}\b",  # rm -r, rm -rf, rm -fr
+            r"\bdel\s+/[fq]\b",  # del /f, del /q
+            r"\brmdir\s+/s\b",  # rmdir /s
+            r"(?:^|[;&|]\s*)format\b",  # format (as standalone command only)
+            r"\b(mkfs|diskpart)\b",  # disk operations
+            r"\bdd\s+if=",  # dd
+            r">\s*/dev/sd",  # write to disk
             r"\b(shutdown|reboot|poweroff)\b",  # system power
-            r":\(\)\s*\{.*\};\s*:",          # fork bomb
+            r":\(\)\s*\{.*\};\s*:",  # fork bomb
         ]
         self.allow_patterns = allow_patterns or []
         self.restrict_to_workspace = restrict_to_workspace
@@ -51,16 +51,13 @@ class ExecTool(ToolBase):
         return {
             "type": "object",
             "properties": {
-                "command": {
-                    "type": "string",
-                    "description": "The shell command to execute"
-                },
+                "command": {"type": "string", "description": "The shell command to execute"},
                 "working_dir": {
                     "type": "string",
-                    "description": "Optional working directory for the command"
-                }
+                    "description": "Optional working directory for the command",
+                },
             },
-            "required": ["command"]
+            "required": ["command"],
         }
 
     async def execute(self, command: str, working_dir: str | None = None, **kwargs: Any) -> str:
@@ -83,10 +80,7 @@ class ExecTool(ToolBase):
             )
 
             try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(),
-                    timeout=self.timeout
-                )
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=self.timeout)
             except asyncio.TimeoutError:
                 process.kill()
                 try:

@@ -22,6 +22,7 @@ from exoclaw.bus.queue import MessageBus
 # Module-level helpers
 # ---------------------------------------------------------------------------
 
+
 class TestFlushPendingTtyInput:
     def test_non_tty_returns(self) -> None:
         _flush_pending_tty_input()
@@ -43,11 +44,13 @@ class TestFlushPendingTtyInput:
 class TestRestoreTerminal:
     def test_no_saved_attrs(self) -> None:
         import exoclaw_channel_cli.channel as ch
+
         ch._SAVED_TERM_ATTRS = None
         _restore_terminal()
 
     def test_with_saved_attrs(self) -> None:
         import exoclaw_channel_cli.channel as ch
+
         ch._SAVED_TERM_ATTRS = [1, 2, 3]
         with patch("sys.stdin") as mock_stdin:
             mock_stdin.fileno.return_value = 0
@@ -58,6 +61,7 @@ class TestRestoreTerminal:
 
     def test_termios_exception_handled(self) -> None:
         import exoclaw_channel_cli.channel as ch
+
         ch._SAVED_TERM_ATTRS = [1, 2, 3]
         with patch("termios.tcsetattr", side_effect=Exception("no tty")):
             _restore_terminal()
@@ -78,6 +82,7 @@ class TestPrintResponse:
 # ---------------------------------------------------------------------------
 # CLIChannel
 # ---------------------------------------------------------------------------
+
 
 class TestCLIChannel:
     def test_name(self) -> None:
@@ -100,8 +105,10 @@ class TestCLIChannel:
         ch = CLIChannel()
         bus = MessageBus()
         with patch("exoclaw_channel_cli.channel._init_prompt_session"):
-            with patch("exoclaw_channel_cli.channel._read_interactive_input_async",
-                       side_effect=KeyboardInterrupt):
+            with patch(
+                "exoclaw_channel_cli.channel._read_interactive_input_async",
+                side_effect=KeyboardInterrupt,
+            ):
                 with patch("exoclaw_channel_cli.channel._restore_terminal"):
                     await ch.start(bus)
         assert not ch._running
@@ -110,8 +117,9 @@ class TestCLIChannel:
         ch = CLIChannel()
         bus = MessageBus()
         with patch("exoclaw_channel_cli.channel._init_prompt_session"):
-            with patch("exoclaw_channel_cli.channel._read_interactive_input_async",
-                       side_effect=EOFError):
+            with patch(
+                "exoclaw_channel_cli.channel._read_interactive_input_async", side_effect=EOFError
+            ):
                 with patch("exoclaw_channel_cli.channel._restore_terminal"):
                     await ch.start(bus)
         assert not ch._running
@@ -120,8 +128,9 @@ class TestCLIChannel:
         ch = CLIChannel()
         bus = MessageBus()
         with patch("exoclaw_channel_cli.channel._init_prompt_session"):
-            with patch("exoclaw_channel_cli.channel._read_interactive_input_async",
-                       return_value="exit"):
+            with patch(
+                "exoclaw_channel_cli.channel._read_interactive_input_async", return_value="exit"
+            ):
                 with patch("exoclaw_channel_cli.channel._flush_pending_tty_input"):
                     with patch("exoclaw_channel_cli.channel._restore_terminal"):
                         await ch.start(bus)
@@ -136,8 +145,9 @@ class TestCLIChannel:
             return next(inputs)
 
         with patch("exoclaw_channel_cli.channel._init_prompt_session"):
-            with patch("exoclaw_channel_cli.channel._read_interactive_input_async",
-                       side_effect=_fake_input):
+            with patch(
+                "exoclaw_channel_cli.channel._read_interactive_input_async", side_effect=_fake_input
+            ):
                 with patch("exoclaw_channel_cli.channel._flush_pending_tty_input"):
                     with patch("exoclaw_channel_cli.channel._restore_terminal"):
                         await ch.start(bus)
@@ -158,12 +168,12 @@ class TestCLIChannel:
             return OutboundMessage(channel="cli", chat_id="test", content="response")
 
         with patch("exoclaw_channel_cli.channel._init_prompt_session"):
-            with patch("exoclaw_channel_cli.channel._read_interactive_input_async",
-                       side_effect=_fake_input):
+            with patch(
+                "exoclaw_channel_cli.channel._read_interactive_input_async", side_effect=_fake_input
+            ):
                 with patch("exoclaw_channel_cli.channel._flush_pending_tty_input"):
                     with patch("exoclaw_channel_cli.channel._restore_terminal"):
-                        with patch.object(bus, "consume_outbound",
-                                          side_effect=_instant_outbound):
+                        with patch.object(bus, "consume_outbound", side_effect=_instant_outbound):
                             await ch.start(bus)
 
         assert not bus.inbound.empty()
@@ -193,6 +203,7 @@ class TestExitCommands:
 # Additional coverage: _flush_pending_tty_input, _init_prompt_session,
 # _read_interactive_input_async
 # ---------------------------------------------------------------------------
+
 
 class TestFlushPendingTtyInputExtra:
     def test_isatty_true_termios_succeeds(self) -> None:
@@ -232,6 +243,7 @@ class TestInitPromptSession:
     def test_creates_session(self) -> None:
         from exoclaw_channel_cli.channel import _init_prompt_session
         import exoclaw_channel_cli.channel as ch
+
         with patch("termios.tcgetattr", return_value=[1, 2, 3]):
             _init_prompt_session()
         assert ch._PROMPT_SESSION is not None
@@ -241,6 +253,7 @@ class TestInitPromptSession:
     def test_termios_exception_handled(self) -> None:
         from exoclaw_channel_cli.channel import _init_prompt_session
         import exoclaw_channel_cli.channel as ch
+
         with patch("termios.tcgetattr", side_effect=Exception("no tty")):
             _init_prompt_session()
         ch._PROMPT_SESSION = None
@@ -251,6 +264,7 @@ class TestReadInteractiveInputAsync:
     async def test_raises_without_session(self) -> None:
         from exoclaw_channel_cli.channel import _read_interactive_input_async
         import exoclaw_channel_cli.channel as ch
+
         ch._PROMPT_SESSION = None
         with pytest.raises(RuntimeError):
             await _read_interactive_input_async()
@@ -258,6 +272,7 @@ class TestReadInteractiveInputAsync:
     async def test_eof_becomes_keyboard_interrupt(self) -> None:
         from exoclaw_channel_cli.channel import _read_interactive_input_async
         import exoclaw_channel_cli.channel as ch
+
         mock_session = MagicMock()
         mock_session.prompt_async = AsyncMock(side_effect=EOFError)
         ch._PROMPT_SESSION = mock_session

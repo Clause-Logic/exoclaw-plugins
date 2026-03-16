@@ -24,6 +24,7 @@ from exoclaw_tools_workspace.shell import ExecTool
 # _resolve_path
 # ---------------------------------------------------------------------------
 
+
 class TestResolvePath:
     def test_absolute_path(self, tmp_path: Path) -> None:
         result = _resolve_path(str(tmp_path))
@@ -47,6 +48,7 @@ class TestResolvePath:
 # ---------------------------------------------------------------------------
 # ReadFileTool
 # ---------------------------------------------------------------------------
+
 
 class TestReadFileTool:
     async def test_read_existing_file(self, tmp_path: Path) -> None:
@@ -97,6 +99,7 @@ class TestReadFileTool:
 # WriteFileTool
 # ---------------------------------------------------------------------------
 
+
 class TestWriteFileTool:
     async def test_write_file(self, tmp_path: Path) -> None:
         tool = WriteFileTool(workspace=tmp_path)
@@ -122,6 +125,7 @@ class TestWriteFileTool:
 # ---------------------------------------------------------------------------
 # EditFileTool
 # ---------------------------------------------------------------------------
+
 
 class TestEditFileTool:
     async def test_edit_file(self, tmp_path: Path) -> None:
@@ -171,6 +175,7 @@ class TestEditFileTool:
 # ListDirTool
 # ---------------------------------------------------------------------------
 
+
 class TestListDirTool:
     async def test_list_dir(self, tmp_path: Path) -> None:
         (tmp_path / "file.txt").write_text("x")
@@ -211,6 +216,7 @@ class TestListDirTool:
 # ---------------------------------------------------------------------------
 # ExecTool
 # ---------------------------------------------------------------------------
+
 
 class TestExecTool:
     async def test_basic_command(self) -> None:
@@ -288,15 +294,18 @@ class TestExecTool:
 # WebSearchTool / WebFetchTool
 # ---------------------------------------------------------------------------
 
+
 class TestWebSearchTool:
     async def test_no_api_key(self) -> None:
         from exoclaw_tools_workspace.web import WebSearchTool
+
         tool = WebSearchTool()
         result = await tool.execute("test query")
         assert "Error" in result or "BRAVE_API_KEY" in result
 
     async def test_search_via_model(self) -> None:
         from exoclaw_tools_workspace.web import WebSearchTool
+
         provider = MagicMock()
         resp = MagicMock()
         resp.content = "result1\nresult2"
@@ -307,6 +316,7 @@ class TestWebSearchTool:
 
     async def test_search_via_model_error(self) -> None:
         from exoclaw_tools_workspace.web import WebSearchTool
+
         provider = MagicMock()
         provider.chat = AsyncMock(side_effect=Exception("boom"))
         tool = WebSearchTool(provider=provider, search_model="gpt-4o")
@@ -316,10 +326,13 @@ class TestWebSearchTool:
     async def test_brave_search_success(self) -> None:
         from exoclaw_tools_workspace.web import WebSearchTool
         import httpx
+
         mock_resp = MagicMock()
-        mock_resp.json.return_value = {"web": {"results": [
-            {"title": "Test", "url": "https://example.com", "description": "desc"}
-        ]}}
+        mock_resp.json.return_value = {
+            "web": {
+                "results": [{"title": "Test", "url": "https://example.com", "description": "desc"}]
+            }
+        }
         mock_resp.raise_for_status = MagicMock()
 
         tool = WebSearchTool(api_key="test-key")
@@ -332,6 +345,7 @@ class TestWebSearchTool:
 
     async def test_brave_no_results(self) -> None:
         from exoclaw_tools_workspace.web import WebSearchTool
+
         mock_resp = MagicMock()
         mock_resp.json.return_value = {"web": {"results": []}}
         mock_resp.raise_for_status = MagicMock()
@@ -346,11 +360,13 @@ class TestWebSearchTool:
 
     def test_name_description(self) -> None:
         from exoclaw_tools_workspace.web import WebSearchTool
+
         t = WebSearchTool()
         assert t.name == "web_search"
 
     def test_api_key_from_env(self, monkeypatch: Any) -> None:
         from exoclaw_tools_workspace.web import WebSearchTool
+
         monkeypatch.setenv("BRAVE_API_KEY", "env-key")
         t = WebSearchTool()
         assert t.api_key == "env-key"
@@ -359,6 +375,7 @@ class TestWebSearchTool:
 class TestWebFetchTool:
     async def test_invalid_url_scheme(self) -> None:
         from exoclaw_tools_workspace.web import WebFetchTool
+
         tool = WebFetchTool()
         result = await tool.execute("ftp://example.com")
         data = json.loads(result)
@@ -366,6 +383,7 @@ class TestWebFetchTool:
 
     async def test_invalid_url_no_domain(self) -> None:
         from exoclaw_tools_workspace.web import WebFetchTool
+
         tool = WebFetchTool()
         result = await tool.execute("http://")
         data = json.loads(result)
@@ -373,6 +391,7 @@ class TestWebFetchTool:
 
     async def test_fetch_html(self) -> None:
         from exoclaw_tools_workspace.web import WebFetchTool
+
         mock_resp = MagicMock()
         mock_resp.headers = {"content-type": "text/html"}
         mock_resp.text = "<html><body><h1>Title</h1><p>Content</p></body></html>"
@@ -391,6 +410,7 @@ class TestWebFetchTool:
 
     async def test_fetch_json(self) -> None:
         from exoclaw_tools_workspace.web import WebFetchTool
+
         mock_resp = MagicMock()
         mock_resp.headers = {"content-type": "application/json"}
         mock_resp.json.return_value = {"key": "value"}
@@ -411,6 +431,7 @@ class TestWebFetchTool:
     async def test_fetch_error(self) -> None:
         from exoclaw_tools_workspace.web import WebFetchTool
         import httpx
+
         tool = WebFetchTool()
         with patch("exoclaw_tools_workspace.web.httpx.AsyncClient") as mock_client:
             mock_client.return_value.__aenter__ = AsyncMock(return_value=mock_client.return_value)
@@ -422,6 +443,7 @@ class TestWebFetchTool:
 
     async def test_truncates_long_content(self) -> None:
         from exoclaw_tools_workspace.web import WebFetchTool
+
         mock_resp = MagicMock()
         mock_resp.headers = {"content-type": "text/plain"}
         mock_resp.text = "x" * 100000
@@ -440,12 +462,14 @@ class TestWebFetchTool:
 
     def test_name(self) -> None:
         from exoclaw_tools_workspace.web import WebFetchTool
+
         assert WebFetchTool().name == "web_fetch"
 
 
 # ---------------------------------------------------------------------------
 # Additional coverage: filesystem edge cases, shell workspace restriction
 # ---------------------------------------------------------------------------
+
 
 class TestResolvepathPermissionError:
     def test_permission_error_from_resolve(self, tmp_path: Path) -> None:
@@ -501,6 +525,7 @@ class TestExecToolExtra:
 class TestWebSearchToolExtra:
     async def test_no_web_key_in_response(self) -> None:
         from exoclaw_tools_workspace.web import WebSearchTool
+
         mock_resp = MagicMock()
         mock_resp.json.return_value = {}
         mock_resp.raise_for_status = MagicMock()
@@ -516,6 +541,7 @@ class TestWebSearchToolExtra:
 class TestWebFetchToolExtra:
     async def test_fetch_raw_text(self) -> None:
         from exoclaw_tools_workspace.web import WebFetchTool
+
         mock_resp = MagicMock()
         mock_resp.headers = {"content-type": "text/plain"}
         mock_resp.text = "raw content here"
@@ -536,6 +562,7 @@ class TestWebFetchToolExtra:
 # ---------------------------------------------------------------------------
 # Tool property coverage and exception paths
 # ---------------------------------------------------------------------------
+
 
 class TestToolProperties:
     def test_read_file_description_and_params(self) -> None:
