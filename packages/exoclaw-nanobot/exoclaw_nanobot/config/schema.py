@@ -294,6 +294,10 @@ class MCPServerConfig(Base):
     tool_timeout: int = 30
 
 
+class SkillsConfig(Base):
+    packages: list[str] = Field(default_factory=list)
+
+
 class ToolsConfig(Base):
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
@@ -309,6 +313,7 @@ class Config(BaseSettings):
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    skills: SkillsConfig = Field(default_factory=SkillsConfig)
 
     model_config = SettingsConfigDict(env_prefix="NANOBOT_", env_nested_delimiter="__")
 

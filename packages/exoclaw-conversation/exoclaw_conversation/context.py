@@ -117,9 +117,10 @@ class ContextBuilder:
         workspace: Path,
         memory: MemoryBackend | None = None,
         context_window: int = 128_000,
+        skill_packages: list[str] | None = None,
     ):
         self.workspace = workspace
-        self.skills = SkillsLoader(workspace)
+        self.skills = SkillsLoader(workspace, skill_packages=skill_packages)
         self.memory: MemoryBackend = memory if memory is not None else MemoryStore(workspace)
         self.context_window = context_window
 

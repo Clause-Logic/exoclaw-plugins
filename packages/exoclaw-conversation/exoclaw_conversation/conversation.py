@@ -65,6 +65,7 @@ class DefaultConversation:
         provider: LLMProvider,
         model: str,
         memory_window: int = 100,
+        skill_packages: list[str] | None = None,
     ) -> DefaultConversation:
         """Construct with the standard file-backed implementations."""
         from .context import ContextBuilder
@@ -75,7 +76,7 @@ class DefaultConversation:
         return cls(
             history=SessionManager(workspace),
             memory=memory,
-            prompt=ContextBuilder(workspace, memory=memory),
+            prompt=ContextBuilder(workspace, memory=memory, skill_packages=skill_packages),
             memory_window=memory_window,
         )
 

@@ -202,6 +202,7 @@ async def create(
         provider=provider,
         model=model,
         memory_window=config.agents.defaults.memory_window,
+        skill_packages=config.skills.packages or None,
     )
 
     # Workspace tools

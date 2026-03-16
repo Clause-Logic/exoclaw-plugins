@@ -634,7 +634,7 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-conversation"
-version = "0.1.1"
+version = "0.2.0"
 source = { editable = "packages/exoclaw-conversation" }
 dependencies = [
     { name = "exoclaw" },
@@ -730,7 +730,7 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-provider-litellm"
-version = "0.1.1"
+version = "0.2.0"
 source = { editable = "packages/exoclaw-provider-litellm" }
 dependencies = [
     { name = "exoclaw" },
@@ -775,7 +775,7 @@ requires-dist = [{ name = "exoclaw", specifier = ">=0.1.0" }]
 
 [[package]]
 name = "exoclaw-tools-cron"
-version = "0.1.3"
+version = "0.2.0"
 source = { editable = "packages/exoclaw-tools-cron" }
 dependencies = [
     { name = "croniter" },
@@ -837,7 +837,7 @@ requires-dist = [{ name = "exoclaw", specifier = ">=0.1.0" }]
 
 [[package]]
 name = "exoclaw-tools-spawn"
-version = "0.1.3"
+version = "0.2.0"
 source = { editable = "packages/exoclaw-tools-spawn" }
 dependencies = [
     { name = "exoclaw" },
@@ -848,7 +848,7 @@ requires-dist = [{ name = "exoclaw", specifier = ">=0.1.0" }]
 
 [[package]]
 name = "exoclaw-tools-workspace"
-version = "0.1.1"
+version = "0.2.0"
 source = { editable = "packages/exoclaw-tools-workspace" }
 dependencies = [
     { name = "exoclaw" },
