@@ -46,3 +46,11 @@ class PromptBuilder(Protocol):
         chat_id: str | None = None,
         extra_context: str | None = None,
     ) -> list[dict[str, Any]]: ...
+
+    def get_active_optional_tools(self) -> set[str]:
+        """Return optional tool names activated by the current turn's skills.
+
+        Optional hook — implementations that don't need skill-scoped tools
+        can omit this method; the default returns an empty set.
+        """
+        return set()

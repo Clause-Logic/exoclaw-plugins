@@ -166,6 +166,10 @@ class DefaultConversation:
         """Return metadata for all known sessions."""
         return self.history.list_sessions()
 
+    def active_tools(self) -> set[str]:
+        """Return optional tool names activated by the current turn's skills."""
+        return self.prompt.get_active_optional_tools()
+
     async def _consolidate_memory(self, session: Session, archive_all: bool = False) -> bool:
         """Delegate to MemoryBackend. Returns True on success."""
         return await self.memory.consolidate(

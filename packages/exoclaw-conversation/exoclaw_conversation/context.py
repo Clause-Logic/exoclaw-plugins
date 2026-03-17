@@ -123,6 +123,7 @@ class ContextBuilder:
         self.skills = SkillsLoader(workspace, skill_packages=skill_packages)
         self.memory: MemoryBackend = memory if memory is not None else MemoryStore(workspace)
         self.context_window = context_window
+        self._active_optional_tools: set[str] = set()
 
     def build_system_prompt(
         self,
@@ -146,6 +147,7 @@ class ContextBuilder:
         always_skills = self.skills.get_always_skills()
         extra_skills = [s for s in (skill_names or []) if s not in always_skills]
         active_skills = always_skills + extra_skills
+        self._active_optional_tools = self.skills.get_tools_for_skills(active_skills)
         if active_skills:
             active_content = self.skills.load_skills_for_context(active_skills)
             if active_content:
@@ -165,6 +167,15 @@ Skills with available="false" need dependencies installed first - you can try in
 {skills_summary}""")
 
         return "\n\n---\n\n".join(parts)
+
+    def get_active_optional_tools(self) -> set[str]:
+        """Return the optional tool names activated by the current turn's skills.
+
+        Updated every time :meth:`build_system_prompt` is called.  Pass this
+        method as ``optional_tools_fn`` when constructing ``AgentLoop`` so the
+        loop surfaces the right tools per turn without knowing about skills.
+        """
+        return self._active_optional_tools
 
     def _get_identity(self) -> str:
         """Get the core identity section."""
