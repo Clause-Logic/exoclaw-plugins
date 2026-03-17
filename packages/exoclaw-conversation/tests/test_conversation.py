@@ -6,7 +6,7 @@ import asyncio
 import json
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
 
 from exoclaw_conversation.context import _RUNTIME_CONTEXT_TAG, ContextBuilder
 from exoclaw_conversation.conversation import _RUNTIME_CONTEXT_TAG as CONV_TAG
@@ -991,3 +991,171 @@ class TestDefaultConversationExtra:
         )
         result = await conv.clear("test:1")
         assert result is False
+
+
+# ---------------------------------------------------------------------------
+# active_tools() unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestActiveTools:
+    def _make_skill(self, workspace: Path, name: str, content: str) -> None:
+        skill_dir = workspace / "skills" / name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(content)
+
+    def test_active_tools_empty_without_tools_frontmatter(self, tmp_path: Path) -> None:
+        """Always-active skill with no tools: key contributes nothing."""
+        self._make_skill(
+            tmp_path,
+            "plain",
+            '---\nmetadata: {"exoclaw": {"always": true}}\n---\n# skill',
+        )
+        builder = ContextBuilder(tmp_path)
+        builder.build_system_prompt()
+        assert builder.get_active_optional_tools() == set()
+
+    def test_active_tools_returned_from_always_skill(self, tmp_path: Path) -> None:
+        """Always-active skill with tools: frontmatter surfaces those names."""
+        self._make_skill(
+            tmp_path,
+            "sentry",
+            '---\ntools: mcp_sentry_list_issues, mcp_sentry_resolve_issue\nmetadata: {"exoclaw": {"always": true}}\n---\n# Sentry skill',
+        )
+        builder = ContextBuilder(tmp_path)
+        builder.build_system_prompt()
+        tools = builder.get_active_optional_tools()
+        assert "mcp_sentry_list_issues" in tools
+        assert "mcp_sentry_resolve_issue" in tools
+
+    def test_default_conversation_active_tools_no_skills(self, tmp_path: Path) -> None:
+        """Returns empty set when workspace has no skills."""
+        provider = MagicMock()
+        provider.get_default_model.return_value = "test-model"
+        conv = DefaultConversation.create(tmp_path, provider, "test-model")
+        assert conv.active_tools() == set()
+
+    def test_default_conversation_active_tools_with_always_skill(self, tmp_path: Path) -> None:
+        """Reflects tools from always-active skill after build_system_prompt fires."""
+        self._make_skill(
+            tmp_path,
+            "sentry",
+            '---\ntools: mcp_sentry_list_issues\nmetadata: {"exoclaw": {"always": true}}\n---\n# Sentry skill',
+        )
+        provider = MagicMock()
+        provider.get_default_model.return_value = "test-model"
+        conv = DefaultConversation.create(tmp_path, provider, "test-model")
+        # Trigger skill resolution the same way AgentLoop does — via build_prompt
+        conv.prompt.build_system_prompt()  # type: ignore[attr-defined]
+        assert "mcp_sentry_list_issues" in conv.active_tools()
+
+    def test_default_conversation_active_tools_delegates_to_prompt(self) -> None:
+        """Delegates to prompt.get_active_optional_tools() when present."""
+        p = MagicMock(spec=["build_messages", "get_active_optional_tools"])
+        p.build_messages.return_value = [{"role": "system", "content": "s"}, {"role": "user", "content": "h"}]
+        p.get_active_optional_tools.return_value = {"my_tool", "other_tool"}
+        conv = DefaultConversation(
+            history=_make_mock_history(), memory=_make_mock_memory(), prompt=p
+        )
+        assert conv.active_tools() == {"my_tool", "other_tool"}
+
+
+# ---------------------------------------------------------------------------
+# active_tools() integration tests — real AgentLoop + real DefaultConversation
+# ---------------------------------------------------------------------------
+
+
+def _make_provider_response() -> MagicMock:
+    r = MagicMock()
+    r.has_tool_calls = False
+    r.content = "done"
+    r.finish_reason = "stop"
+    r.tool_calls = []
+    r.reasoning_content = None
+    r.thinking_blocks = None
+    return r
+
+
+def _make_optional_tool(name: str) -> MagicMock:
+    t = MagicMock()
+    t.name = name
+    t.description = f"Tool {name}"
+    t.parameters = {"type": "object", "properties": {}}
+    return t
+
+
+class TestActiveToolsLoopIntegration:
+    """Real AgentLoop + real DefaultConversation — no mocking of the loop."""
+
+    def _make_skill(self, workspace: Path, name: str, content: str) -> None:
+        skill_dir = workspace / "skills" / name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(content)
+
+    async def test_optional_tool_surfaced_when_skill_active(self, tmp_path: Path) -> None:
+        """Optional tool appears in the tool list sent to the LLM when declared by an always-active skill."""
+        from exoclaw.agent.loop import AgentLoop
+        from exoclaw.agent.tools.registry import ToolRegistry
+        from exoclaw.bus.queue import MessageBus
+
+        self._make_skill(
+            tmp_path,
+            "sentry",
+            '---\ntools: spy_tool\nmetadata: {"exoclaw": {"always": true}}\n---\n# Sentry skill',
+        )
+
+        memory_provider = MagicMock()
+        memory_provider.get_default_model.return_value = "test-model"
+        conv = DefaultConversation.create(tmp_path, memory_provider, "test-model")
+
+        registry = ToolRegistry()
+        registry.register(_make_optional_tool("spy_tool"), optional=True)
+
+        tools_seen: list[list[dict[str, object]]] = []
+
+        async def _chat(**kwargs: object) -> MagicMock:
+            tools_seen.append(list(kwargs.get("tools") or []))  # type: ignore[arg-type]
+            return _make_provider_response()
+
+        provider = MagicMock()
+        provider.get_default_model.return_value = "test-model"
+        provider.chat = AsyncMock(side_effect=_chat)
+
+        bus = MessageBus()
+        loop = AgentLoop(bus=bus, provider=provider, conversation=conv, registry=registry)
+        await loop.process_direct("hello", session_key="test:main", channel="cli", chat_id="main")
+
+        assert tools_seen, "provider.chat was never called"
+        tool_names = [t["function"]["name"] for t in tools_seen[0]]  # type: ignore[index]
+        assert "spy_tool" in tool_names
+
+    async def test_optional_tool_hidden_when_no_skill_declares_it(self, tmp_path: Path) -> None:
+        """Optional tool absent from LLM tool list when no skill declares it."""
+        from exoclaw.agent.loop import AgentLoop
+        from exoclaw.agent.tools.registry import ToolRegistry
+        from exoclaw.bus.queue import MessageBus
+
+        memory_provider = MagicMock()
+        memory_provider.get_default_model.return_value = "test-model"
+        conv = DefaultConversation.create(tmp_path, memory_provider, "test-model")
+
+        registry = ToolRegistry()
+        registry.register(_make_optional_tool("spy_tool"), optional=True)
+
+        tools_seen: list[list[dict[str, object]]] = []
+
+        async def _chat(**kwargs: object) -> MagicMock:
+            tools_seen.append(list(kwargs.get("tools") or []))  # type: ignore[arg-type]
+            return _make_provider_response()
+
+        provider = MagicMock()
+        provider.get_default_model.return_value = "test-model"
+        provider.chat = AsyncMock(side_effect=_chat)
+
+        bus = MessageBus()
+        loop = AgentLoop(bus=bus, provider=provider, conversation=conv, registry=registry)
+        await loop.process_direct("hello", session_key="test:main", channel="cli", chat_id="main")
+
+        assert tools_seen, "provider.chat was never called"
+        tool_names = [t["function"]["name"] for t in tools_seen[0]]  # type: ignore[index]
+        assert "spy_tool" not in tool_names
