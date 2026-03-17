@@ -236,10 +236,22 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         channel: str | None = None,
         chat_id: str | None = None,
         extra_context: str | None = None,
+        turn_context: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Build the complete message list for an LLM call."""
         runtime_ctx = self._build_runtime_context(channel, chat_id)
-        user_content = self._build_user_content(current_message, media)
+
+        # Prepend turn_context to the user message so the system prompt stays
+        # stable across turns and benefits from prompt caching. Unlike
+        # plugin_context (which goes into the system prompt via extra_context),
+        # turn_context is per-turn volatile data (e.g. A-MEM retrieved notes)
+        # that belongs alongside the user message, not in the cached prefix.
+        effective_message = current_message
+        if turn_context:
+            ctx_block = "\n\n".join(turn_context)
+            effective_message = f"{ctx_block}\n\n{current_message}"
+
+        user_content = self._build_user_content(effective_message, media)
 
         # Merge runtime context and user content into a single user message
         # to avoid consecutive same-role messages that some providers reject.
