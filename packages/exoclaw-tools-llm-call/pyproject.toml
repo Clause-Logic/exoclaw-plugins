@@ -1,6 +1,6 @@
 [project]
 name = "exoclaw-tools-llm-call"
-version = "0.1.0"
+version = "0.2.0"
 description = "Single-shot LLM call tool with Jinja2 templating for exoclaw"
 readme = "README.md"
 requires-python = ">=3.11"

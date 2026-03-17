@@ -1,6 +1,6 @@
 [project]
 name = "exoclaw-tools-batch"
-version = "0.1.2"
+version = "0.2.0"
 description = "Batch/map tool for running tools against multiple inputs concurrently"
 readme = "README.md"
 requires-python = ">=3.11"

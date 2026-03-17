@@ -1,6 +1,6 @@
 [project]
 name = "exoclaw-openrouter-search"
-version = "0.1.0"
+version = "0.2.0"
 description = "Web search tool for exoclaw using OpenRouter's web search plugin"
 requires-python = ">=3.11"
 dependencies = [
