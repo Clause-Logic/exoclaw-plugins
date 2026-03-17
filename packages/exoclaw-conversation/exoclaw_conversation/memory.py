@@ -90,7 +90,9 @@ class MemoryStore:
         if archive_all:
             old_messages = session.messages
             keep_count = 0
-            logger.info("memory_consolidation_started", messages=len(session.messages), mode="archive_all")
+            logger.info(
+                "memory_consolidation_started", messages=len(session.messages), mode="archive_all"
+            )
         else:
             keep_count = memory_window // 2
             if len(session.messages) <= keep_count:
@@ -100,7 +102,9 @@ class MemoryStore:
             old_messages = session.messages[session.last_consolidated : -keep_count]
             if not old_messages:
                 return True
-            logger.info("memory_consolidation_started", to_consolidate=len(old_messages), keep=keep_count)
+            logger.info(
+                "memory_consolidation_started", to_consolidate=len(old_messages), keep=keep_count
+            )
 
         lines = []
         for m in old_messages:
@@ -153,7 +157,11 @@ class MemoryStore:
                     logger.warning("memory_consolidation_skipped", reason="unexpected_args_list")
                     return False
             if not isinstance(args, dict):
-                logger.warning("memory_consolidation_skipped", reason="unexpected_args_type", args_type=type(args).__name__)
+                logger.warning(
+                    "memory_consolidation_skipped",
+                    reason="unexpected_args_type",
+                    args_type=type(args).__name__,
+                )
                 return False
 
             if entry := args.get("history_entry"):
@@ -167,7 +175,11 @@ class MemoryStore:
                     self.write_long_term(update)
 
             session.last_consolidated = 0 if archive_all else len(session.messages) - keep_count
-            logger.info("memory_consolidated", messages=len(session.messages), last_consolidated=session.last_consolidated)
+            logger.info(
+                "memory_consolidated",
+                messages=len(session.messages),
+                last_consolidated=session.last_consolidated,
+            )
             return True
         except Exception:
             logger.exception("memory_consolidation_failed")

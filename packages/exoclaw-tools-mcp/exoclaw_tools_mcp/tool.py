@@ -128,7 +128,9 @@ async def connect_mcp_servers(
                     streamable_http_client(cfg.url, http_client=http_client)
                 )
             else:
-                logger.warning("mcp_server_unknown_transport", server=name, transport=transport_type)
+                logger.warning(
+                    "mcp_server_unknown_transport", server=name, transport=transport_type
+                )
                 continue
 
             session = await stack.enter_async_context(ClientSession(read, write))
