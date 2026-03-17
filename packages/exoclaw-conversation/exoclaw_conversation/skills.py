@@ -314,6 +314,27 @@ class SkillsLoader:
                     break
         return results
 
+    def get_tools_for_skills(self, skill_names: list[str]) -> set[str]:
+        """Return the union of tool names declared by the given skills.
+
+        Skills list required optional tools in their frontmatter:
+
+            tools: mcp_sentry_get_issues, mcp_sentry_resolve_issue
+
+        The value is a comma-separated list of tool names.  Skills that
+        don't declare a ``tools`` key contribute nothing.
+        """
+        result: set[str] = set()
+        for name in skill_names:
+            meta = self.get_skill_metadata(name) or {}
+            raw = meta.get("tools", "")
+            if raw:
+                for tool_name in raw.split(","):
+                    stripped = tool_name.strip()
+                    if stripped:
+                        result.add(stripped)
+        return result
+
     def get_always_skills(self) -> list[str]:
         """Get skills marked as always=true that meet requirements."""
         result = []
