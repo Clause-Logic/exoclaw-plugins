@@ -575,14 +575,14 @@ wheels = [
 
 [[package]]
 name = "exoclaw"
-version = "0.4.0"
+version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "loguru" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4b/1f/ba0eb2217abb375f663136b7ec2e02018cceddfd91b64928a4c1c435586b/exoclaw-0.4.0.tar.gz", hash = "sha256:ca19ba7d9bb71420594c760c84d04f414c7c131bf1a98fa556c29607b15c475e", size = 20478, upload-time = "2026-03-15T19:33:30.542Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e8/a3/58336851d322da11abe7a191b079b29f4563fec4cbc930c2c259710846a3/exoclaw-0.5.0.tar.gz", hash = "sha256:a3a15b7539a35c874641bf7d2c90664b1c39860b0ad1506d53da5badb1461e67", size = 21116, upload-time = "2026-03-17T12:43:09.089Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d3/58/d536e68eebafc19020ffab5caaaa2dfcbc839bebcd2eefb477523a82eddc/exoclaw-0.4.0-py3-none-any.whl", hash = "sha256:308bc19e4de1fb8be183f8bf7e416c335a88c18d2f7fc730acc9df1806b14661", size = 21025, upload-time = "2026-03-15T19:33:29.504Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/6b/6f4b0d9a49bc1cd6c9db3c367318cb7d0737473d0e23f8068b8606c77f41/exoclaw-0.5.0-py3-none-any.whl", hash = "sha256:54336c1939603568ae98f344f0ab51e72e94185cf43db7bf40ba1753043cb142", size = 21760, upload-time = "2026-03-17T12:43:09.788Z" },
 ]
 
 [[package]]
@@ -636,7 +636,7 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-conversation"
-version = "0.2.3"
+version = "0.4.0"
 source = { editable = "packages/exoclaw-conversation" }
 dependencies = [
     { name = "exoclaw" },
@@ -646,7 +646,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", specifier = ">=0.1.0" },
+    { name = "exoclaw", specifier = ">=0.5.0" },
     { name = "loguru", specifier = ">=0.7.3,<1.0.0" },
     { name = "rich", specifier = ">=14.0.0,<15.0.0" },
 ]
@@ -732,7 +732,7 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-provider-litellm"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "packages/exoclaw-provider-litellm" }
 dependencies = [
     { name = "exoclaw" },

@@ -10,6 +10,8 @@ from exoclaw.providers.types import LLMResponse
 from exoclaw_provider_litellm.provider import (
     _ALLOWED_MSG_KEYS,
     LiteLLMProvider,
+    _apply_anthropic_cache_control_to_system,
+    _apply_anthropic_cache_control_to_tools,
     _is_anthropic,
     _normalize_tool_call_id,
     _sanitize_empty_content,
@@ -146,6 +148,84 @@ class TestSanitizeRequestMessages:
         msgs = [{"role": "assistant", "tool_calls": [{"id": "1"}]}]
         result = _sanitize_request_messages(msgs, _ALLOWED_MSG_KEYS)
         assert result[0]["content"] is None
+
+
+# ---------------------------------------------------------------------------
+# _apply_anthropic_cache_control_to_system
+# ---------------------------------------------------------------------------
+
+
+class TestApplyAnthropicCacheControlToSystem:
+    def test_string_content_converted_to_list_with_cache_control(self) -> None:
+        messages = [{"role": "system", "content": "You are helpful."}]
+        result = _apply_anthropic_cache_control_to_system(messages)
+        sys_content = result[0]["content"]
+        assert isinstance(sys_content, list)
+        assert sys_content[0]["type"] == "text"
+        assert sys_content[0]["text"] == "You are helpful."
+        assert sys_content[0]["cache_control"] == {"type": "ephemeral"}
+
+    def test_list_content_stamps_last_block(self) -> None:
+        messages = [
+            {
+                "role": "system",
+                "content": [
+                    {"type": "text", "text": "part1"},
+                    {"type": "text", "text": "part2"},
+                ],
+            }
+        ]
+        result = _apply_anthropic_cache_control_to_system(messages)
+        sys_content = result[0]["content"]
+        assert "cache_control" not in sys_content[0]
+        assert sys_content[1]["cache_control"] == {"type": "ephemeral"}
+
+    def test_non_system_messages_unchanged(self) -> None:
+        messages = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello"},
+        ]
+        result = _apply_anthropic_cache_control_to_system(messages)
+        assert result == messages
+
+    def test_no_system_message(self) -> None:
+        messages = [{"role": "user", "content": "hi"}]
+        result = _apply_anthropic_cache_control_to_system(messages)
+        assert result == messages
+
+    def test_original_not_mutated(self) -> None:
+        messages = [{"role": "system", "content": "stable prompt"}]
+        _apply_anthropic_cache_control_to_system(messages)
+        assert isinstance(messages[0]["content"], str)
+
+
+# ---------------------------------------------------------------------------
+# _apply_anthropic_cache_control_to_tools
+# ---------------------------------------------------------------------------
+
+
+class TestApplyAnthropicCacheControlToTools:
+    def test_stamps_last_tool(self) -> None:
+        tools = [
+            {"type": "function", "function": {"name": "tool_a"}},
+            {"type": "function", "function": {"name": "tool_b"}},
+        ]
+        result = _apply_anthropic_cache_control_to_tools(tools)
+        assert "cache_control" not in result[0]
+        assert result[1]["cache_control"] == {"type": "ephemeral"}
+
+    def test_single_tool(self) -> None:
+        tools = [{"type": "function", "function": {"name": "tool_a"}}]
+        result = _apply_anthropic_cache_control_to_tools(tools)
+        assert result[0]["cache_control"] == {"type": "ephemeral"}
+
+    def test_empty_tools(self) -> None:
+        assert _apply_anthropic_cache_control_to_tools([]) == []
+
+    def test_original_not_mutated(self) -> None:
+        tools = [{"type": "function", "function": {"name": "tool_a"}}]
+        _apply_anthropic_cache_control_to_tools(tools)
+        assert "cache_control" not in tools[0]
 
 
 # ---------------------------------------------------------------------------
@@ -360,3 +440,39 @@ class TestLiteLLMProviderExtra:
             await p.chat([{"role": "user", "content": "hi"}], temperature=0.0)
         kwargs = mock.call_args[1]
         assert kwargs["temperature"] == 0.0
+
+    async def test_chat_anthropic_injects_cache_control_on_system(self) -> None:
+        p = LiteLLMProvider()
+        msgs = [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": "hi"},
+        ]
+        with patch("exoclaw_provider_litellm.provider.acompletion", new_callable=AsyncMock) as mock:
+            mock.return_value = _make_litellm_response()
+            await p.chat(msgs, model="claude-opus-4-5")
+        sent_msgs = mock.call_args[1]["messages"]
+        sys_msg = next(m for m in sent_msgs if m["role"] == "system")
+        assert isinstance(sys_msg["content"], list)
+        assert sys_msg["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+    async def test_chat_anthropic_injects_cache_control_on_tools(self) -> None:
+        p = LiteLLMProvider()
+        tools = [{"type": "function", "function": {"name": "exec"}}]
+        with patch("exoclaw_provider_litellm.provider.acompletion", new_callable=AsyncMock) as mock:
+            mock.return_value = _make_litellm_response()
+            await p.chat([{"role": "user", "content": "hi"}], model="claude-opus-4-5", tools=tools)
+        sent_tools = mock.call_args[1]["tools"]
+        assert sent_tools[-1]["cache_control"] == {"type": "ephemeral"}
+
+    async def test_chat_non_anthropic_no_cache_control(self) -> None:
+        p = LiteLLMProvider()
+        msgs = [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": "hi"},
+        ]
+        with patch("exoclaw_provider_litellm.provider.acompletion", new_callable=AsyncMock) as mock:
+            mock.return_value = _make_litellm_response()
+            await p.chat(msgs, model="gpt-4o")
+        sent_msgs = mock.call_args[1]["messages"]
+        sys_msg = next(m for m in sent_msgs if m["role"] == "system")
+        assert isinstance(sys_msg["content"], str)

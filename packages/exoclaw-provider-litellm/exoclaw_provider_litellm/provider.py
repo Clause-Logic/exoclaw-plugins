@@ -100,6 +100,53 @@ def _is_anthropic(model: str) -> bool:
     return "claude" in lower or lower.startswith("anthropic/")
 
 
+def _apply_anthropic_cache_control_to_system(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Stamp cache_control on the system message content for Anthropic prompt caching.
+
+    Anthropic requires explicit cache_control markers — caching is never automatic.
+    Converts string system content to a list block and stamps the last block with
+    cache_control: {type: ephemeral} so the stable system prompt is cached.
+    """
+    result = []
+    for msg in messages:
+        if msg.get("role") == "system":
+            content = msg.get("content")
+            new_msg = dict(msg)
+            if isinstance(content, str):
+                new_msg["content"] = [
+                    {"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}
+                ]
+            elif isinstance(content, list) and content:
+                new_content = list(content)
+                last = dict(new_content[-1])
+                last["cache_control"] = {"type": "ephemeral"}
+                new_content[-1] = last
+                new_msg["content"] = new_content
+            result.append(new_msg)
+        else:
+            result.append(msg)
+    return result
+
+
+def _apply_anthropic_cache_control_to_tools(
+    tools: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Stamp cache_control on the last tool definition for Anthropic prompt caching.
+
+    Tool definitions are stable across turns so marking the last one causes
+    Anthropic to cache the entire tool block.
+    """
+    if not tools:
+        return tools
+    result = list(tools)
+    last = dict(result[-1])
+    last["cache_control"] = {"type": "ephemeral"}
+    result[-1] = last
+    return result
+
+
 class LiteLLMProvider:
     """
     LLM provider using LiteLLM for multi-provider support.
@@ -184,7 +231,8 @@ class LiteLLMProvider:
     ) -> LLMResponse:
         """Send a chat completion request via LiteLLM."""
         resolved_model = model or self.default_model
-        extra_keys = _ANTHROPIC_EXTRA_KEYS if _is_anthropic(resolved_model) else frozenset()
+        is_anthropic = _is_anthropic(resolved_model)
+        extra_keys = _ANTHROPIC_EXTRA_KEYS if is_anthropic else frozenset()
 
         max_tokens = max(1, max_tokens)
 
@@ -216,6 +264,11 @@ class LiteLLMProvider:
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
+
+        if is_anthropic:
+            kwargs["messages"] = _apply_anthropic_cache_control_to_system(kwargs["messages"])
+            if "tools" in kwargs:
+                kwargs["tools"] = _apply_anthropic_cache_control_to_tools(kwargs["tools"])
 
         if self._llm_logging:
             logger.info(
