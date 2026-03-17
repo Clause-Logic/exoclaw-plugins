@@ -6,7 +6,7 @@ import asyncio
 import json
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, call
+from unittest.mock import AsyncMock, MagicMock
 
 from exoclaw_conversation.context import _RUNTIME_CONTEXT_TAG, ContextBuilder
 from exoclaw_conversation.conversation import _RUNTIME_CONTEXT_TAG as CONV_TAG
