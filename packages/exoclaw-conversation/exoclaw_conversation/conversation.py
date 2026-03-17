@@ -89,6 +89,7 @@ class DefaultConversation:
         chat_id: str | None = None,
         media: list[str] | None = None,
         plugin_context: list[str] | None = None,
+        turn_context: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Return the full messages list to send to the LLM."""
         session = self.history.get_or_create(session_id)
@@ -125,6 +126,7 @@ class DefaultConversation:
             channel=channel,
             chat_id=chat_id,
             extra_context=extra_context,
+            turn_context=turn_context or None,
         )
 
     async def record(
