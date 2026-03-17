@@ -7,8 +7,10 @@ import os
 from typing import TYPE_CHECKING, Any
 
 import httpx
+import structlog
 from exoclaw.agent.tools.protocol import ToolBase
-from loguru import logger
+
+logger = structlog.get_logger()
 
 
 def _gh_headers(token: str) -> dict[str, str]:
@@ -135,7 +137,7 @@ class GitHubReviewTool(ToolBase):
             resp.raise_for_status()
 
         n_inline = len(comments) if comments else 0
-        logger.info("Submitted {} review on PR #{} ({} inline comments)", event, number, n_inline)
+        logger.info("github_review_submitted", action=event, pr=number, inline_comments=n_inline)
         detail = f" with {n_inline} inline comment(s)" if n_inline else ""
         return f"Submitted {event} review on PR #{number}{detail}"
 

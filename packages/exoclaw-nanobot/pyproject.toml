@@ -5,7 +5,7 @@ description = "Full-stack exoclaw bundle — config, provider registry, and one-
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "exoclaw>=0.1.0",
+    "exoclaw>=0.6.0",
     "exoclaw-conversation",
     "exoclaw-provider-litellm",
     "exoclaw-channel-cli",
@@ -18,7 +18,7 @@ dependencies = [
     "exoclaw-subagent",
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
-    "loguru>=0.7.3,<1.0.0",
+    "structlog>=25.0.0",
 ]
 
 [project.scripts]

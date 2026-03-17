@@ -5,15 +5,17 @@ from contextlib import AsyncExitStack
 from typing import Any
 
 import httpx
+import structlog
 from exoclaw.agent.tools.protocol import ToolBase
 from exoclaw.agent.tools.registry import ToolRegistry
-from loguru import logger
 from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
 from exoclaw_tools_mcp.config import MCPServerConfig
+
+logger = structlog.get_logger()
 
 
 class MCPToolWrapper(ToolBase):
@@ -55,7 +57,7 @@ class MCPToolWrapper(ToolBase):
                 timeout=self._tool_timeout,
             )
         except asyncio.TimeoutError:
-            logger.warning("MCP tool '{}' timed out after {}s", self._name, self._tool_timeout)
+            logger.warning("mcp_tool_timeout", tool=self._name, timeout_s=self._tool_timeout)
             return f"(MCP tool call timed out after {self._tool_timeout}s)"
 
         parts = []
@@ -85,7 +87,7 @@ async def connect_mcp_servers(
                         "sse" if cfg.url.rstrip("/").endswith("/sse") else "streamableHttp"
                     )
                 else:
-                    logger.warning("MCP server '{}': no command or url configured, skipping", name)
+                    logger.warning("mcp_server_no_transport", server=name)
                     continue
 
             if transport_type == "stdio":
@@ -126,7 +128,9 @@ async def connect_mcp_servers(
                     streamable_http_client(cfg.url, http_client=http_client)
                 )
             else:
-                logger.warning("MCP server '{}': unknown transport type '{}'", name, transport_type)
+                logger.warning(
+                    "mcp_server_unknown_transport", server=name, transport=transport_type
+                )
                 continue
 
             session = await stack.enter_async_context(ClientSession(read, write))
@@ -136,8 +140,8 @@ async def connect_mcp_servers(
             for tool_def in tools.tools:
                 wrapper = MCPToolWrapper(session, name, tool_def, tool_timeout=cfg.tool_timeout)
                 registry.register(wrapper)
-                logger.debug("MCP: registered tool '{}' from server '{}'", wrapper.name, name)
+                logger.debug("mcp_tool_registered", tool=wrapper.name, server=name)
 
-            logger.info("MCP server '{}': connected, {} tools registered", name, len(tools.tools))
+            logger.info("mcp_server_connected", server=name, tools=len(tools.tools))
         except Exception as e:
-            logger.error("MCP server '{}': failed to connect: {}", name, e)
+            logger.error("mcp_server_connect_failed", server=name, error=e)

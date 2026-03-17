@@ -4,9 +4,9 @@ version = "0.1.0"
 description = "Web search tool for exoclaw using OpenRouter's web search plugin"
 requires-python = ">=3.11"
 dependencies = [
-    "exoclaw>=0.2.1",
+    "exoclaw>=0.6.0",
     "litellm>=1.0.0",
-    "loguru>=0.7.3,<1.0.0",
+    "structlog>=25.0.0",
 ]
 
 [build-system]

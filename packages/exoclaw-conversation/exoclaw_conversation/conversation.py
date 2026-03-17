@@ -7,10 +7,12 @@ import weakref
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from loguru import logger
+import structlog
 
 from .protocols import HistoryStore, MemoryBackend, PromptBuilder
 from .session.manager import Session
+
+logger = structlog.get_logger()
 
 if TYPE_CHECKING:
     from exoclaw.providers.protocol import LLMProvider
@@ -154,7 +156,7 @@ class DefaultConversation:
                     if not success:
                         return False
         except Exception:
-            logger.exception("clear() archival failed for {}", session_id)
+            logger.exception("session_clear_failed", session_id=session_id)
             return False
         finally:
             self._consolidating.discard(session_id)

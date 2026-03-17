@@ -14,8 +14,10 @@ import asyncio
 import sys
 from typing import TYPE_CHECKING
 
+import structlog
 from exoclaw.bus.events import InboundMessage, OutboundMessage
-from loguru import logger
+
+logger = structlog.get_logger()
 
 if TYPE_CHECKING:
     from exoclaw.bus.protocol import Bus
@@ -61,7 +63,7 @@ class PipeChannel:
                     if not text:
                         continue
 
-                    logger.debug("pipe input: {}", text)
+                    logger.debug("pipe_input", text=text)
 
                     self._turn_done.clear()
 
@@ -86,7 +88,7 @@ class PipeChannel:
         """Signal shutdown."""
         self._running = False
         self._turn_done.set()  # Unblock if waiting
-        logger.info("PipeChannel stopping")
+        logger.info("pipe_stopping")
 
     async def send(self, msg: OutboundMessage) -> None:
         """Called by nanobot's outbound dispatcher with agent responses."""

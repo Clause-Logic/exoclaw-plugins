@@ -10,8 +10,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import httpx
+import structlog
 from exoclaw.bus.events import InboundMessage, OutboundMessage
-from loguru import logger
+
+logger = structlog.get_logger()
 
 if TYPE_CHECKING:
     from exoclaw.bus.protocol import Bus
@@ -74,7 +76,7 @@ class GitHubChannel:
         repo = os.environ.get("GITHUB_REPOSITORY", "")
 
         if not event_path or not Path(event_path).exists():
-            logger.warning("GITHUB_EVENT_PATH not set or file missing")
+            logger.warning("github_event_path_missing")
             return None
 
         with open(event_path) as f:
@@ -91,7 +93,7 @@ class GitHubChannel:
         elif event_name == "workflow_dispatch":
             return self._parse_dispatch_event(data, repo)
         else:
-            logger.info("Unsupported event type: {}", event_name)
+            logger.info("github_event_unsupported", event_name=event_name)
             return None
 
     def _parse_issues_event(self, data: dict[str, Any], repo: str) -> GitHubEvent | None:
@@ -116,7 +118,7 @@ class GitHubChannel:
         comment = data["comment"]
         body = comment.get("body", "")
         if self._trigger and self._trigger not in body:
-            logger.info("Comment missing trigger '{}', skipping", self._trigger)
+            logger.info("github_trigger_missing", trigger=self._trigger)
             return None
         issue = data["issue"]
         return GitHubEvent(
@@ -153,7 +155,7 @@ class GitHubChannel:
         comment = data["comment"]
         body = comment.get("body", "")
         if self._trigger and self._trigger not in body:
-            logger.info("Review comment missing trigger '{}', skipping", self._trigger)
+            logger.info("github_review_trigger_missing", trigger=self._trigger)
             return None
         pr = data["pull_request"]
         path = comment.get("path", "")
@@ -189,7 +191,7 @@ class GitHubChannel:
 
     async def _post_comment(self, event: GitHubEvent, content: str) -> None:
         if event.kind == "dispatch":
-            logger.info("Response (dispatch): {}", content)
+            logger.info("github_dispatch_response", content=content)
             return
 
         if event.reply_to_comment_id is not None:
@@ -208,7 +210,7 @@ class GitHubChannel:
         async with httpx.AsyncClient() as client:
             resp = await client.post(url, json={"body": content}, headers=headers)
             resp.raise_for_status()
-        logger.info("Posted comment to {}/{}", event.repo, event.number)
+        logger.info("github_comment_posted", repo=event.repo, number=event.number)
 
     # ------------------------------------------------------------------
     # Channel protocol
@@ -217,7 +219,7 @@ class GitHubChannel:
     async def start(self, bus: Bus) -> None:
         event = self._parse_event()
         if event is None:
-            logger.info("No actionable GitHub event — exiting")
+            logger.info("github_no_event")
             return
 
         self._pending_event = event
@@ -242,7 +244,7 @@ class GitHubChannel:
             )
         )
 
-        logger.info("Waiting for response to {} #{}", event.kind, event.number)
+        logger.info("github_waiting_response", kind=event.kind, number=event.number)
         await self._response_event.wait()
 
     async def stop(self) -> None:
