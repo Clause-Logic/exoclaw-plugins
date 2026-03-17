@@ -132,9 +132,6 @@ class LiteLLMProvider:
             os.environ.setdefault("ANTHROPIC_API_KEY", api_key)
             os.environ.setdefault("OPENROUTER_API_KEY", api_key)
 
-        if api_base:
-            litellm.api_base = api_base
-
         litellm.suppress_debug_info = True  # type: ignore[assignment]
         litellm.drop_params = True
 
