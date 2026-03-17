@@ -7,8 +7,8 @@ import os
 from typing import TYPE_CHECKING, Any
 
 import httpx
-from exoclaw.agent.tools.protocol import ToolBase
 import structlog
+from exoclaw.agent.tools.protocol import ToolBase
 
 logger = structlog.get_logger()
 

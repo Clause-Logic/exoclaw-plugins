@@ -3,9 +3,9 @@
 import os
 from typing import Any
 
+import structlog
 from exoclaw.agent.tools.protocol import ToolBase
 from litellm import acompletion
-import structlog
 
 logger = structlog.get_logger()
 

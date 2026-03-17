@@ -10,9 +10,9 @@ from typing import Any, Callable, Coroutine
 
 import structlog
 
-logger = structlog.get_logger()
-
 from exoclaw_tools_cron.types import CronJob, CronJobState, CronPayload, CronSchedule, CronStore
+
+logger = structlog.get_logger()
 
 
 def _now_ms() -> int:

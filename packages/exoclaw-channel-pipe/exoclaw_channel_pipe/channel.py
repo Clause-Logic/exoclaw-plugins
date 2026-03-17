@@ -14,8 +14,8 @@ import asyncio
 import sys
 from typing import TYPE_CHECKING
 
-from exoclaw.bus.events import InboundMessage, OutboundMessage
 import structlog
+from exoclaw.bus.events import InboundMessage, OutboundMessage
 
 logger = structlog.get_logger()
 

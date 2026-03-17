@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import httpx
-from exoclaw.bus.events import InboundMessage, OutboundMessage
 import structlog
+from exoclaw.bus.events import InboundMessage, OutboundMessage
 
 logger = structlog.get_logger()
 

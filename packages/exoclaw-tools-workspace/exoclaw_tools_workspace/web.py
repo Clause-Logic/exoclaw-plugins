@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 import httpx
-from exoclaw.agent.tools.protocol import ToolBase
 import structlog
+from exoclaw.agent.tools.protocol import ToolBase
 
 logger = structlog.get_logger()
 

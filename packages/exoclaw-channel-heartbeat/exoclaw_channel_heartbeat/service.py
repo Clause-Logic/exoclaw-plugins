@@ -6,8 +6,8 @@ import asyncio
 from pathlib import Path
 from typing import Any, Callable, Coroutine
 
-from exoclaw.providers import LLMProvider
 import structlog
+from exoclaw.providers import LLMProvider
 
 logger = structlog.get_logger()
 

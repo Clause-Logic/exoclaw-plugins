@@ -7,6 +7,7 @@ from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+import structlog
 from exoclaw.agent.loop import AgentLoop
 from exoclaw.agent.tools.registry import ToolRegistry
 from exoclaw.bus.events import OutboundMessage
@@ -31,12 +32,11 @@ from exoclaw_tools_workspace.filesystem import (
 )
 from exoclaw_tools_workspace.shell import ExecTool
 from exoclaw_tools_workspace.web import WebFetchTool, WebSearchTool
-import structlog
-
-logger = structlog.get_logger()
 
 from exoclaw_nanobot.config.loader import load_config
 from exoclaw_nanobot.config.schema import Config
+
+logger = structlog.get_logger()
 
 
 class ExoclawNanobot:

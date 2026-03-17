@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-logger = structlog.get_logger()
-
 from .helpers import ensure_dir
+
+logger = structlog.get_logger()
 
 if TYPE_CHECKING:
     from exoclaw.providers.protocol import LLMProvider

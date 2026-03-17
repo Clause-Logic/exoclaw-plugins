@@ -8,9 +8,9 @@ from typing import Any
 
 import structlog
 
-logger = structlog.get_logger()
-
 from ..helpers import ensure_dir, safe_filename
+
+logger = structlog.get_logger()
 
 
 @dataclass

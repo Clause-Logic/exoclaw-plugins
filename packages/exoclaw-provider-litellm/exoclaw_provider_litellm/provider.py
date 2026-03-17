@@ -9,9 +9,9 @@ from typing import Any
 
 import json_repair
 import litellm
+import structlog
 from exoclaw.providers.types import LLMResponse, ResponseFormat, ToolCallRequest
 from litellm import acompletion
-import structlog
 
 logger = structlog.get_logger()
 

@@ -9,10 +9,10 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-logger = structlog.get_logger()
-
 from .protocols import HistoryStore, MemoryBackend, PromptBuilder
 from .session.manager import Session
+
+logger = structlog.get_logger()
 
 if TYPE_CHECKING:
     from exoclaw.providers.protocol import LLMProvider
