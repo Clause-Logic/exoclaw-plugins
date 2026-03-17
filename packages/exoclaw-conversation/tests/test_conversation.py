@@ -1052,7 +1052,10 @@ class TestActiveTools:
     def test_default_conversation_active_tools_delegates_to_prompt(self) -> None:
         """Delegates to prompt.get_active_optional_tools() when present."""
         p = MagicMock(spec=["build_messages", "get_active_optional_tools"])
-        p.build_messages.return_value = [{"role": "system", "content": "s"}, {"role": "user", "content": "h"}]
+        p.build_messages.return_value = [
+            {"role": "system", "content": "s"},
+            {"role": "user", "content": "h"},
+        ]
         p.get_active_optional_tools.return_value = {"my_tool", "other_tool"}
         conv = DefaultConversation(
             history=_make_mock_history(), memory=_make_mock_memory(), prompt=p
