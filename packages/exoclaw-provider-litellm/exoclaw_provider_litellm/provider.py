@@ -121,8 +121,8 @@ def _apply_anthropic_cache_control_to_system(
                     {"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}
                 ]
             elif isinstance(content, list) and content:
-                new_content = list(content)
-                last = dict(new_content[-1])
+                new_content: list[Any] = list(content)
+                last: dict[str, Any] = {**new_content[-1]}
                 last["cache_control"] = {"type": "ephemeral"}
                 new_content[-1] = last
                 new_msg["content"] = new_content
