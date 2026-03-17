@@ -5,12 +5,12 @@ description = "GitHub Actions channel for exoclaw"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "exoclaw>=0.1.0",
+    "exoclaw>=0.6.0",
     "exoclaw-conversation>=0.1.0",
     "exoclaw-provider-litellm>=0.1.0",
     "exoclaw-tools-workspace>=0.1.0",
     "httpx>=0.28.0,<1.0.0",
-    "loguru>=0.7.3,<1.0.0",
+    "structlog>=25.0.0",
 ]
 
 [project.scripts]

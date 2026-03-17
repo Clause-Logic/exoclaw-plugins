@@ -11,7 +11,9 @@ import json_repair
 import litellm
 from exoclaw.providers.types import LLMResponse, ResponseFormat, ToolCallRequest
 from litellm import acompletion
-from loguru import logger
+import structlog
+
+logger = structlog.get_logger()
 
 # Standard chat-completion message keys.
 _ALLOWED_MSG_KEYS = frozenset(
@@ -272,10 +274,10 @@ class LiteLLMProvider:
 
         if self._llm_logging:
             logger.info(
-                "LLM request: model={} messages={} tools={}",
-                resolved_model,
-                len(kwargs["messages"]),
-                len(tools) if tools else 0,
+                "llm_request",
+                model=resolved_model,
+                messages=len(kwargs["messages"]),
+                tools=len(tools) if tools else 0,
             )
             for msg in kwargs["messages"]:
                 role = msg.get("role", "?")
@@ -285,7 +287,7 @@ class LiteLLMProvider:
                 text = str(content).replace("\n", "\\n")
                 if self._llm_log_truncate >= 0:
                     text = text[: self._llm_log_truncate]
-                logger.info("  [{}] {}", role, text)
+                logger.info("llm_request_msg", role=role, text=text)
 
         try:
             t0 = time.monotonic()
@@ -305,16 +307,16 @@ class LiteLLMProvider:
                         cached_tokens = getattr(usage, "cache_read_input_tokens", 0) or 0
                 cache_created = getattr(usage, "cache_creation_input_tokens", 0) if usage else 0
                 logger.info(
-                    "LLM response: model={} tokens={}+{}={} cached={} cache_created={} duration={:.2f}s finish={} tools={}",
-                    resolved_model,
-                    usage.prompt_tokens if usage else "?",
-                    usage.completion_tokens if usage else "?",
-                    usage.total_tokens if usage else "?",
-                    cached_tokens,
-                    cache_created,
-                    elapsed,
-                    choice.finish_reason,
-                    [tc.function.name for tc in tool_calls],
+                    "llm_response",
+                    model=resolved_model,
+                    prompt_tokens=usage.prompt_tokens if usage else "?",
+                    completion_tokens=usage.completion_tokens if usage else "?",
+                    total_tokens=usage.total_tokens if usage else "?",
+                    cached_tokens=cached_tokens,
+                    cache_created=cache_created,
+                    duration_s=round(elapsed, 2),
+                    finish=choice.finish_reason,
+                    tools=[tc.function.name for tc in tool_calls],
                 )
 
             return self._parse_response(response)

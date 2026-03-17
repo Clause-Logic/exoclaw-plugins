@@ -12,7 +12,9 @@ from exoclaw.agent.tools.protocol import Tool
 from exoclaw.bus.events import InboundMessage
 from exoclaw.bus.protocol import Bus
 from exoclaw.providers.protocol import LLMProvider
-from loguru import logger
+import structlog
+
+logger = structlog.get_logger()
 
 
 class SubagentManager:
@@ -65,7 +67,7 @@ class SubagentManager:
 
         bg_task.add_done_callback(_cleanup)
 
-        logger.info("Spawned subagent [{}]: {}", task_id, display_label)
+        logger.info("subagent_spawned", id=task_id, label=display_label)
         return f"Subagent [{display_label}] started (id: {task_id}). I'll notify you when it completes."
 
     async def _run(
@@ -78,7 +80,7 @@ class SubagentManager:
         session_key: str | None,
     ) -> None:
         """Execute the subagent and announce the result."""
-        logger.info("Subagent [{}] starting: {}", task_id, label)
+        logger.info("subagent_starting", id=task_id, label=label)
         status = "completed"
 
         try:
@@ -94,9 +96,9 @@ class SubagentManager:
         except Exception as e:
             result = f"Error: {e}"
             status = "failed"
-            logger.error("Subagent [{}] failed: {}", task_id, e)
+            logger.error("subagent_failed", id=task_id, error=e)
 
-        logger.info("Subagent [{}] {}", task_id, status)
+        logger.info("subagent_done", id=task_id, status=status)
         await self._announce(
             label, task, result, status, origin_channel, origin_chat_id, session_key
         )

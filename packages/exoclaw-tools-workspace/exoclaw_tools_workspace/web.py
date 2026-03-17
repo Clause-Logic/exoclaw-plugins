@@ -9,7 +9,9 @@ from urllib.parse import urlparse
 
 import httpx
 from exoclaw.agent.tools.protocol import ToolBase
-from loguru import logger
+import structlog
+
+logger = structlog.get_logger()
 
 if TYPE_CHECKING:
     from exoclaw.providers.protocol import LLMProvider
@@ -91,7 +93,7 @@ class WebSearchTool(ToolBase):
 
     async def _search_via_model(self, query: str, count: int | None) -> str:
         n = min(max(count or self.max_results, 1), 10)
-        logger.debug("WebSearch: using search model {}", self._search_model)
+        logger.debug("web_search_model", model=self._search_model)
         try:
             response = await self._provider.chat(  # type: ignore[union-attr]
                 messages=[
@@ -106,7 +108,7 @@ class WebSearchTool(ToolBase):
             )
             return response.content or f"No results for: {query}"
         except Exception as e:
-            logger.error("WebSearch model error: {}", e)
+            logger.error("web_search_model_error", error=e)
             return f"Error: {e}"
 
     async def _search_via_brave(self, query: str, count: int | None) -> str:
@@ -115,7 +117,7 @@ class WebSearchTool(ToolBase):
 
         try:
             n = min(max(count or self.max_results, 1), 10)
-            logger.debug("WebSearch: {}", "proxy enabled" if self.proxy else "direct connection")
+            logger.debug("web_search_brave", proxy=bool(self.proxy))
             async with httpx.AsyncClient(proxy=self.proxy) as client:
                 r = await client.get(
                     "https://api.search.brave.com/res/v1/web/search",
@@ -136,10 +138,10 @@ class WebSearchTool(ToolBase):
                     lines.append(f"   {desc}")
             return "\n".join(lines)
         except httpx.ProxyError as e:
-            logger.error("WebSearch proxy error: {}", e)
+            logger.error("web_search_proxy_error", error=e)
             return f"Proxy error: {e}"
         except Exception as e:
-            logger.error("WebSearch error: {}", e)
+            logger.error("web_search_error", error=e)
             return f"Error: {e}"
 
 
@@ -179,7 +181,7 @@ class WebFetchTool(ToolBase):
             )
 
         try:
-            logger.debug("WebFetch: {}", "proxy enabled" if self.proxy else "direct connection")
+            logger.debug("web_fetch", proxy=bool(self.proxy))
             async with httpx.AsyncClient(
                 follow_redirects=True,
                 max_redirects=MAX_REDIRECTS,
@@ -222,10 +224,10 @@ class WebFetchTool(ToolBase):
                 ensure_ascii=False,
             )
         except httpx.ProxyError as e:
-            logger.error("WebFetch proxy error for {}: {}", url, e)
+            logger.error("web_fetch_proxy_error", url=url, error=e)
             return json.dumps({"error": f"Proxy error: {e}", "url": url}, ensure_ascii=False)
         except Exception as e:
-            logger.error("WebFetch error for {}: {}", url, e)
+            logger.error("web_fetch_error", url=url, error=e)
             return json.dumps({"error": str(e), "url": url}, ensure_ascii=False)
 
     def _to_markdown(self, html_content: str) -> str:

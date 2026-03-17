@@ -6,7 +6,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from loguru import logger
+import structlog
+
+logger = structlog.get_logger()
 
 from ..helpers import ensure_dir, safe_filename
 
@@ -140,7 +142,7 @@ class SessionManager:
                 last_consolidated=last_consolidated,
             )
         except Exception as e:
-            logger.warning("Failed to load session {}: {}", key, e)
+            logger.warning("session_load_failed", session_key=key, error=e)
             return None
 
     def save(self, session: Session) -> None:

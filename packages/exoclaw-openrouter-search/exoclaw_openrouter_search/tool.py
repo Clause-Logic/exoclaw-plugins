@@ -5,7 +5,9 @@ from typing import Any
 
 from exoclaw.agent.tools.protocol import ToolBase
 from litellm import acompletion
-from loguru import logger
+import structlog
+
+logger = structlog.get_logger()
 
 
 class OpenRouterSearchTool(ToolBase):
@@ -60,7 +62,7 @@ class OpenRouterSearchTool(ToolBase):
             if not model.startswith("openrouter/"):
                 model = f"openrouter/{model}"
 
-            logger.debug("OpenRouterSearch: querying {} for: {}", model, query)
+            logger.debug("openrouter_search", model=model, query=query)
 
             response = await acompletion(
                 model=model,
@@ -74,5 +76,5 @@ class OpenRouterSearchTool(ToolBase):
             return content
 
         except Exception as e:
-            logger.error("OpenRouterSearch error: {}", e)
+            logger.error("openrouter_search_error", error=e)
             return f"Error: {e}"

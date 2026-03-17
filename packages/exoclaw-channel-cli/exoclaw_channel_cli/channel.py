@@ -11,7 +11,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from exoclaw.bus.events import InboundMessage, OutboundMessage
-from loguru import logger
+import structlog
+
+logger = structlog.get_logger()
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
@@ -233,7 +235,7 @@ class CLIChannel:
     async def stop(self) -> None:
         """Signal the REPL loop to exit."""
         self._running = False
-        logger.info("CLIChannel stopping")
+        logger.info("channel_stopping")
 
     async def send(self, msg: OutboundMessage) -> None:
         """Print an outbound message to stdout."""

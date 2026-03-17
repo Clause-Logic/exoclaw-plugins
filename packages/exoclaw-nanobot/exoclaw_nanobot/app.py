@@ -31,7 +31,9 @@ from exoclaw_tools_workspace.filesystem import (
 )
 from exoclaw_tools_workspace.shell import ExecTool
 from exoclaw_tools_workspace.web import WebFetchTool, WebSearchTool
-from loguru import logger
+import structlog
+
+logger = structlog.get_logger()
 
 from exoclaw_nanobot.config.loader import load_config
 from exoclaw_nanobot.config.schema import Config
@@ -97,13 +99,13 @@ class ExoclawNanobot:
                     if not t.cancelled():
                         exc = t.exception()
                         if exc is not None:
-                            logger.error("Channel task failed, triggering shutdown: {!r}", exc)
+                            logger.error("channel_task_failed", error=repr(exc))
         finally:
             for ch in self._extra_channels:
                 try:
                     await ch.stop()
                 except Exception as e:
-                    logger.warning("Error stopping channel {}: {}", ch, e)
+                    logger.warning("channel_stop_error", channel=ch, error=e)
             for t in tasks:
                 t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -122,9 +124,9 @@ class ExoclawNanobot:
                     try:
                         await ch.send(msg)
                     except Exception as e:
-                        logger.error("Error sending to {}: {}", msg.channel, e)
+                        logger.error("outbound_send_error", channel=msg.channel, error=e)
                 else:
-                    logger.warning("No channel for outbound message to: {}", msg.channel)
+                    logger.warning("outbound_no_channel", channel=msg.channel)
             except asyncio.TimeoutError:
                 continue
             except asyncio.CancelledError:
@@ -269,7 +271,7 @@ async def create(
         mcp_registry = ToolRegistry()
         await connect_mcp_servers(mcp_cfgs, mcp_registry, mcp_stack)
         tools.extend(mcp_registry._tools.values())
-        logger.info("MCP: {} tools registered", len(mcp_registry._tools))
+        logger.info("mcp_tools_registered", tools=len(mcp_registry._tools))
 
     if extra_tools:
         tools.extend(extra_tools)

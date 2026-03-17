@@ -6,7 +6,9 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from loguru import logger
+import structlog
+
+logger = structlog.get_logger()
 
 from .helpers import ensure_dir
 
@@ -88,7 +90,7 @@ class MemoryStore:
         if archive_all:
             old_messages = session.messages
             keep_count = 0
-            logger.info("Memory consolidation (archive_all): {} messages", len(session.messages))
+            logger.info("memory_consolidation_started", messages=len(session.messages), mode="archive_all")
         else:
             keep_count = memory_window // 2
             if len(session.messages) <= keep_count:
@@ -98,9 +100,7 @@ class MemoryStore:
             old_messages = session.messages[session.last_consolidated : -keep_count]
             if not old_messages:
                 return True
-            logger.info(
-                "Memory consolidation: {} to consolidate, {} keep", len(old_messages), keep_count
-            )
+            logger.info("memory_consolidation_started", to_consolidate=len(old_messages), keep=keep_count)
 
         lines = []
         for m in old_messages:
@@ -121,7 +121,7 @@ class MemoryStore:
 {chr(10).join(lines)}"""
 
         if self._provider is None or self._model is None:
-            logger.warning("MemoryStore: consolidate() called without provider/model, skipping")
+            logger.warning("memory_consolidation_skipped", reason="no_provider")
             return False
 
         try:
@@ -138,7 +138,7 @@ class MemoryStore:
             )
 
             if not response.has_tool_calls:
-                logger.warning("Memory consolidation: LLM did not call save_memory, skipping")
+                logger.warning("memory_consolidation_skipped", reason="no_tool_call")
                 return False
 
             args = response.tool_calls[0].arguments
@@ -150,14 +150,10 @@ class MemoryStore:
                 if args and isinstance(args[0], dict):
                     args = args[0]
                 else:
-                    logger.warning(
-                        "Memory consolidation: unexpected arguments as empty or non-dict list"
-                    )
+                    logger.warning("memory_consolidation_skipped", reason="unexpected_args_list")
                     return False
             if not isinstance(args, dict):
-                logger.warning(
-                    "Memory consolidation: unexpected arguments type {}", type(args).__name__
-                )
+                logger.warning("memory_consolidation_skipped", reason="unexpected_args_type", args_type=type(args).__name__)
                 return False
 
             if entry := args.get("history_entry"):
@@ -171,12 +167,8 @@ class MemoryStore:
                     self.write_long_term(update)
 
             session.last_consolidated = 0 if archive_all else len(session.messages) - keep_count
-            logger.info(
-                "Memory consolidation done: {} messages, last_consolidated={}",
-                len(session.messages),
-                session.last_consolidated,
-            )
+            logger.info("memory_consolidated", messages=len(session.messages), last_consolidated=session.last_consolidated)
             return True
         except Exception:
-            logger.exception("Memory consolidation failed")
+            logger.exception("memory_consolidation_failed")
             return False
