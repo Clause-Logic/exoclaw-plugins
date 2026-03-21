@@ -5,7 +5,7 @@ description = "LiteLLM provider for exoclaw"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "exoclaw>=0.6.0",
+    "exoclaw>=0.8.0",
     "litellm>=1.0.0",
     "json-repair>=0.1.0",
     "structlog>=25.0.0",

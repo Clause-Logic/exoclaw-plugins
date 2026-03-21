@@ -10,7 +10,12 @@ from typing import Any
 import json_repair
 import litellm
 import structlog
-from exoclaw.providers.types import LLMResponse, ResponseFormat, ToolCallRequest
+from exoclaw.providers.types import (
+    ContextWindowExceededError,
+    LLMResponse,
+    ResponseFormat,
+    ToolCallRequest,
+)
 from litellm import acompletion
 
 logger = structlog.get_logger()
@@ -320,6 +325,8 @@ class LiteLLMProvider:
                 )
 
             return self._parse_response(response)
+        except litellm.ContextWindowExceededError:
+            raise ContextWindowExceededError("Prompt exceeds model context window")
         except Exception as e:
             return LLMResponse(
                 content=f"Error calling LLM: {str(e)}",

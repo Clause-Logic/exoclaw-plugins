@@ -5,7 +5,7 @@ description = "Full-stack exoclaw bundle — config, provider registry, and one-
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "exoclaw>=0.7.0",
+    "exoclaw>=0.8.0",
     "exoclaw-loop-detection",
     "exoclaw-conversation",
     "exoclaw-provider-litellm",

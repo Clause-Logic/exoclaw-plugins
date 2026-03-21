@@ -315,6 +315,22 @@ async def create(
 
         on_tool_calls = _record_tool_calls
 
+    # Context overflow recovery — compact messages when context window is exceeded
+    async def _on_context_overflow(
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]] | None:
+        from exoclaw_conversation.context import drop_oldest_half
+
+        compacted = drop_oldest_half(messages)
+        if len(compacted) < len(messages):
+            logger.info(
+                "context_overflow_compacted",
+                before=len(messages),
+                after=len(compacted),
+            )
+            return compacted
+        return None
+
     # Agent loop
     agent_loop = AgentLoop(
         bus=bus,
@@ -332,6 +348,7 @@ async def create(
         on_post_turn=on_post_turn,
         on_max_iterations=on_max_iterations,
         on_tool_calls=on_tool_calls,
+        on_context_overflow=_on_context_overflow,
     )
 
     # Wire cron jobs to run silently via process_direct.

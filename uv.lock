@@ -576,14 +576,14 @@ wheels = [
 
 [[package]]
 name = "exoclaw"
-version = "0.7.0"
+version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "structlog" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6b/85/e953e8bcea57da3b65c70adf5b754b5b1c4d5117d097944088af7f4b3c4f/exoclaw-0.7.0.tar.gz", hash = "sha256:15f1905d089c9fbdea60ec3841e12ad1e3fa0d387bb6c1644d85c41718233983", size = 22073, upload-time = "2026-03-21T15:46:45.022Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f0/3a/97294388f4f58947bc70f3127687a34211e34627f9ab9a3a39953a48f225/exoclaw-0.8.0.tar.gz", hash = "sha256:41dcfcf3a7e74d388eafd8ce8064f9ed188f8768bd964a1fee233a6a4b5fc821", size = 22395, upload-time = "2026-03-21T17:46:01.94Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/27/56/6910f264148263f5e8dd7d809a691d9cba9d5687d4838cfa75f4a2d06d58/exoclaw-0.7.0-py3-none-any.whl", hash = "sha256:2fabff2b5bf1292c502b3b409a39b51e3af65ae21963ddf4455d7b09b39318e8", size = 22854, upload-time = "2026-03-21T15:46:44.136Z" },
+    { url = "https://files.pythonhosted.org/packages/6c/bc/901e7083bd2473a4e5cda6a6b9c368cfbd9df8df45a6669e6cf38b05b1e5/exoclaw-0.8.0-py3-none-any.whl", hash = "sha256:a366123ea078a48b679eade05f7b6f46f239e2f6c798d23123ba99acffa62480", size = 23229, upload-time = "2026-03-21T17:46:00.833Z" },
 ]
 
 [[package]]
@@ -688,7 +688,7 @@ requires-dist = [{ name = "exoclaw", specifier = ">=0.7.0" }]
 
 [[package]]
 name = "exoclaw-nanobot"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "packages/exoclaw-nanobot" }
 dependencies = [
     { name = "exoclaw" },
@@ -710,7 +710,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", specifier = ">=0.7.0" },
+    { name = "exoclaw", specifier = ">=0.8.0" },
     { name = "exoclaw-channel-cli", editable = "packages/exoclaw-channel-cli" },
     { name = "exoclaw-channel-heartbeat", editable = "packages/exoclaw-channel-heartbeat" },
     { name = "exoclaw-conversation", editable = "packages/exoclaw-conversation" },
@@ -757,7 +757,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", specifier = ">=0.6.0" },
+    { name = "exoclaw", specifier = ">=0.8.0" },
     { name = "json-repair", specifier = ">=0.1.0" },
     { name = "litellm", specifier = ">=1.0.0" },
     { name = "structlog", specifier = ">=25.0.0" },
