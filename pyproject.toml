@@ -16,6 +16,7 @@ exoclaw-github = { workspace = true }
 exoclaw-tools-batch = { workspace = true }
 exoclaw-tools-llm-call = { workspace = true }
 exoclaw-channel-pipe = { workspace = true }
+exoclaw-loop-detection = { workspace = true }
 
 [dependency-groups]
 dev = [
