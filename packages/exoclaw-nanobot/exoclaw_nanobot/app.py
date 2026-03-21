@@ -14,7 +14,11 @@ from exoclaw.bus.events import OutboundMessage
 from exoclaw.bus.queue import MessageBus
 from exoclaw_channel_cli.channel import CLIChannel
 from exoclaw_channel_heartbeat.service import HeartbeatService
+from exoclaw_conversation.context import ContextBuilder
 from exoclaw_conversation.conversation import DefaultConversation
+from exoclaw_conversation.memory import MemoryStore
+from exoclaw_conversation.session.manager import SessionManager
+from exoclaw_conversation.summarizing_policy import SummarizingConsolidationPolicy
 from exoclaw_loop_detection import LoopDetectionConfig, LoopDetectionPolicy
 from exoclaw_provider_litellm.provider import LiteLLMProvider
 from exoclaw_subagent.manager import SubagentManager
@@ -199,12 +203,14 @@ async def create(
 
     bus = MessageBus()
 
-    conversation = DefaultConversation.create(
-        workspace=workspace,
-        provider=provider,
-        model=model,
+    memory_store = MemoryStore(workspace, provider, model)
+    consolidation_policy = SummarizingConsolidationPolicy(memory=memory_store)
+    conversation = DefaultConversation(
+        history=SessionManager(workspace),
+        memory=memory_store,
+        prompt=ContextBuilder(workspace, memory=memory_store, skill_packages=config.skills.packages or None),
         memory_window=config.agents.defaults.memory_window,
-        skill_packages=config.skills.packages or None,
+        consolidation_policy=consolidation_policy,
     )
 
     # Workspace tools

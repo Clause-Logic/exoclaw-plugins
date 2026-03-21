@@ -637,7 +637,7 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-conversation"
-version = "0.5.0"
+version = "0.6.0"
 source = { editable = "packages/exoclaw-conversation" }
 dependencies = [
     { name = "exoclaw" },

@@ -125,6 +125,14 @@ class DefaultConversation:
         if plugin_context:
             extra_context = "\n\n".join(plugin_context)
 
+        # Inject per-session summary from consolidation policy (if present)
+        effective_turn_context = list(turn_context or [])
+        summary = session.metadata.get("summary")
+        if summary:
+            effective_turn_context.insert(
+                0, f"## Previous Session Summary\n{summary}"
+            )
+
         return self.prompt.build_messages(
             history=history,
             current_message=message,
@@ -132,7 +140,7 @@ class DefaultConversation:
             channel=channel,
             chat_id=chat_id,
             extra_context=extra_context,
-            turn_context=turn_context or None,
+            turn_context=effective_turn_context or None,
         )
 
     async def record(
