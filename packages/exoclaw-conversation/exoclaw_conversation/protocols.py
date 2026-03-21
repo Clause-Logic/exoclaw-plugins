@@ -33,6 +33,39 @@ class MemoryBackend(Protocol):
 
 
 @runtime_checkable
+class ConsolidationPolicy(Protocol):
+    """Pluggable consolidation strategy.
+
+    Controls *when* and *how* old messages are consolidated. The default
+    behaviour (no policy) delegates to MemoryBackend.consolidate() which
+    runs a single LLM call to produce MEMORY.md + HISTORY.md updates.
+
+    Implement this protocol to add custom behaviour at consolidation
+    boundaries — per-session summaries, task-tracker sync, daily notes,
+    multi-stage summarization, or anything else.
+    """
+
+    async def should_consolidate(
+        self,
+        session: "Session",
+        *,
+        memory_window: int,
+    ) -> bool:
+        """Return True when consolidation should run."""
+        ...
+
+    async def consolidate(
+        self,
+        session: "Session",
+        *,
+        archive_all: bool = False,
+        memory_window: int = 50,
+    ) -> bool:
+        """Run consolidation. Returns True on success."""
+        ...
+
+
+@runtime_checkable
 class PromptBuilder(Protocol):
     """Protocol for assembling the LLM message list."""
 

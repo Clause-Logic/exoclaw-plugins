@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from .protocols import HistoryStore, MemoryBackend, PromptBuilder
+from .protocols import ConsolidationPolicy, HistoryStore, MemoryBackend, PromptBuilder
 from .session.manager import Session
 
 logger = structlog.get_logger()
@@ -48,11 +48,13 @@ class DefaultConversation:
         memory: MemoryBackend,
         prompt: PromptBuilder,
         memory_window: int = 100,
+        consolidation_policy: ConsolidationPolicy | None = None,
     ):
         self.history = history
         self.memory = memory
         self.prompt = prompt
         self.memory_window = memory_window
+        self._consolidation_policy = consolidation_policy
 
         self._consolidating: set[str] = set()
         self._consolidation_tasks: set[asyncio.Task[Any]] = set()
@@ -68,6 +70,7 @@ class DefaultConversation:
         model: str,
         memory_window: int = 100,
         skill_packages: list[str] | None = None,
+        consolidation_policy: ConsolidationPolicy | None = None,
     ) -> DefaultConversation:
         """Construct with the standard file-backed implementations."""
         from .context import ContextBuilder
@@ -80,6 +83,7 @@ class DefaultConversation:
             memory=memory,
             prompt=ContextBuilder(workspace, memory=memory, skill_packages=skill_packages),
             memory_window=memory_window,
+            consolidation_policy=consolidation_policy,
         )
 
     async def build_prompt(
@@ -96,9 +100,9 @@ class DefaultConversation:
         """Return the full messages list to send to the LLM."""
         session = self.history.get_or_create(session_id)
 
-        # Trigger background consolidation when history is long
-        unconsolidated = len(session.messages) - session.last_consolidated
-        if unconsolidated >= self.memory_window and session_id not in self._consolidating:
+        # Trigger background consolidation when policy says so (or default: history is long)
+        should = await self._should_consolidate(session)
+        if should and session_id not in self._consolidating:
             self._consolidating.add(session_id)
             lock = self._consolidation_locks.setdefault(session_id, asyncio.Lock())
 
@@ -174,8 +178,23 @@ class DefaultConversation:
         """Return optional tool names activated by the current turn's skills."""
         return self.prompt.get_active_optional_tools()
 
+    async def _should_consolidate(self, session: Session) -> bool:
+        """Check whether consolidation should run."""
+        if self._consolidation_policy is not None:
+            return await self._consolidation_policy.should_consolidate(
+                session, memory_window=self.memory_window
+            )
+        unconsolidated = len(session.messages) - session.last_consolidated
+        return unconsolidated >= self.memory_window
+
     async def _consolidate_memory(self, session: Session, archive_all: bool = False) -> bool:
-        """Delegate to MemoryBackend. Returns True on success."""
+        """Delegate to ConsolidationPolicy if present, otherwise MemoryBackend."""
+        if self._consolidation_policy is not None:
+            return await self._consolidation_policy.consolidate(
+                session,
+                archive_all=archive_all,
+                memory_window=self.memory_window,
+            )
         return await self.memory.consolidate(
             session,
             archive_all=archive_all,
