@@ -231,6 +231,7 @@ class SubagentManager:
             chat_id=f"{state.origin_channel}:{state.origin_chat_id}",
             content=content,
             session_key_override=state.session_key,
+            metadata={"session_key": state.session_key} if state.session_key else {},
         )
         logger.info("batch_announced", batch=batch, results=len(state.results))
         await self._bus.publish_inbound(msg)
@@ -268,6 +269,7 @@ class SubagentManager:
             chat_id=f"{origin_channel}:{origin_chat_id}",
             content=content,
             session_key_override=session_key,
+            metadata={"session_key": session_key} if session_key else {},
         )
         await self._bus.publish_inbound(msg)
 
