@@ -695,6 +695,7 @@ dependencies = [
     { name = "exoclaw-channel-cli" },
     { name = "exoclaw-channel-heartbeat" },
     { name = "exoclaw-conversation" },
+    { name = "exoclaw-loop-detection" },
     { name = "exoclaw-provider-litellm" },
     { name = "exoclaw-subagent" },
     { name = "exoclaw-tools-cron" },
@@ -709,10 +710,11 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", specifier = ">=0.6.0" },
+    { name = "exoclaw", specifier = ">=0.7.0" },
     { name = "exoclaw-channel-cli", editable = "packages/exoclaw-channel-cli" },
     { name = "exoclaw-channel-heartbeat", editable = "packages/exoclaw-channel-heartbeat" },
     { name = "exoclaw-conversation", editable = "packages/exoclaw-conversation" },
+    { name = "exoclaw-loop-detection", editable = "packages/exoclaw-loop-detection" },
     { name = "exoclaw-provider-litellm", editable = "packages/exoclaw-provider-litellm" },
     { name = "exoclaw-subagent", editable = "packages/exoclaw-subagent" },
     { name = "exoclaw-tools-cron", editable = "packages/exoclaw-tools-cron" },

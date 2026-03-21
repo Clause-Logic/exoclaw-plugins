@@ -213,6 +213,16 @@ class ChannelsConfig(Base):
     responses_api: ResponsesApiConfig = Field(default_factory=ResponsesApiConfig)
 
 
+class LoopDetectionDefaults(Base):
+    enabled: bool = True
+    history_size: int = 30
+    warning_threshold: int = 10
+    critical_threshold: int = 20
+    global_circuit_breaker: int = 200
+    detect_repeat: bool = True
+    detect_ping_pong: bool = True
+
+
 class AgentDefaults(Base):
     workspace: str = "~/.nanobot/workspace"
     model: str = "anthropic/claude-opus-4-5"
@@ -225,6 +235,7 @@ class AgentDefaults(Base):
     web_search_options: dict[str, str] | None = None
     search_model: str | None = None
     model_fallbacks: list[str] = Field(default_factory=list)
+    loop_detection: LoopDetectionDefaults = Field(default_factory=LoopDetectionDefaults)
 
 
 class AgentsConfig(Base):

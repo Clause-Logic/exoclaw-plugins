@@ -15,6 +15,7 @@ from exoclaw.bus.queue import MessageBus
 from exoclaw_channel_cli.channel import CLIChannel
 from exoclaw_channel_heartbeat.service import HeartbeatService
 from exoclaw_conversation.conversation import DefaultConversation
+from exoclaw_loop_detection import LoopDetectionConfig, LoopDetectionPolicy
 from exoclaw_provider_litellm.provider import LiteLLMProvider
 from exoclaw_subagent.manager import SubagentManager
 from exoclaw_tools_cron.service import CronService
@@ -276,6 +277,32 @@ async def create(
     if extra_tools:
         tools.extend(extra_tools)
 
+    # Iteration policy (loop detection)
+    ld = config.agents.defaults.loop_detection
+    iteration_policy: LoopDetectionPolicy | None = None
+    if ld.enabled:
+        iteration_policy = LoopDetectionPolicy(
+            LoopDetectionConfig(
+                history_size=ld.history_size,
+                warning_threshold=ld.warning_threshold,
+                critical_threshold=ld.critical_threshold,
+                global_circuit_breaker=ld.global_circuit_breaker,
+                detect_repeat=ld.detect_repeat,
+                detect_ping_pong=ld.detect_ping_pong,
+            )
+        )
+
+    # Hook: record tool calls into the iteration policy for pattern detection
+    on_tool_calls = None
+    if iteration_policy is not None:
+        _policy = iteration_policy
+
+        async def _record_tool_calls(tool_calls: list[Any]) -> None:
+            for tc in tool_calls:
+                _policy.record(tc.name, tc.arguments)
+
+        on_tool_calls = _record_tool_calls
+
     # Agent loop
     agent_loop = AgentLoop(
         bus=bus,
@@ -287,10 +314,12 @@ async def create(
         max_tokens=config.agents.defaults.max_tokens,
         reasoning_effort=config.agents.defaults.reasoning_effort,
         tools=tools,
+        iteration_policy=iteration_policy,
         on_pre_context=on_pre_context,
         on_pre_tool=on_pre_tool,
         on_post_turn=on_post_turn,
         on_max_iterations=on_max_iterations,
+        on_tool_calls=on_tool_calls,
     )
 
     # Wire cron jobs to run silently via process_direct.
