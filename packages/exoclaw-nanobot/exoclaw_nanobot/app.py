@@ -257,6 +257,7 @@ async def create(
         ),
         model=model,
         max_iterations=config.agents.defaults.max_tool_iterations,
+        workspace=workspace,
     )
     tools.append(SpawnTool(manager=subagent_mgr))
 

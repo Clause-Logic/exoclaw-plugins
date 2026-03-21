@@ -264,7 +264,7 @@ class TestAnnounce:
     async def test_announce_content_structure(self) -> None:
         bus = _make_bus()
         mgr = _make_manager(bus=bus)
-        await mgr._announce("label", "the task", "the result", "completed", "cli", "u1", "cli:u1")
+        await mgr._announce("label", "the task", "the result", None, "completed", "cli", "u1", "cli:u1")
 
         msg: InboundMessage = bus.publish_inbound.call_args[0][0]
         assert "label" in msg.content
@@ -276,7 +276,7 @@ class TestAnnounce:
     async def test_announce_chat_id_format(self) -> None:
         bus = _make_bus()
         mgr = _make_manager(bus=bus)
-        await mgr._announce("l", "t", "r", "completed", "slack", "C123", None)
+        await mgr._announce("l", "t", "r", None, "completed", "slack", "C123", None)
 
         msg: InboundMessage = bus.publish_inbound.call_args[0][0]
         assert msg.chat_id == "slack:C123"

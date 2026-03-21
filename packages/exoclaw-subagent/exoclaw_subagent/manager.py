@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from pathlib import Path
 from typing import Callable
 
 import structlog
@@ -17,13 +18,19 @@ from exoclaw.providers.protocol import LLMProvider
 logger = structlog.get_logger()
 
 
+def _safe_filename(label: str) -> str:
+    """Convert a label to a safe filename."""
+    return "".join(c if c.isalnum() or c in "-_" else "-" for c in label).strip("-")
+
+
 class SubagentManager:
     """
     Concrete implementation of the SpawnManager protocol.
 
     Spawns background subagents by nesting a fresh AgentLoop via
-    process_direct — no bespoke loop needed. Results are announced
-    back to the main agent as system InboundMessages on the bus.
+    process_direct — no bespoke loop needed. Results are written to
+    disk and announced back to the main agent as system InboundMessages
+    on the bus with a file path reference (not inline content).
 
     Compatible with exoclaw-tools-spawn's SpawnManager protocol.
     """
@@ -36,6 +43,7 @@ class SubagentManager:
         tools: list[Tool] | None = None,
         model: str | None = None,
         max_iterations: int = 15,
+        workspace: Path | None = None,
     ):
         self._provider = provider
         self._bus = bus
@@ -44,6 +52,10 @@ class SubagentManager:
         self._model = model
         self._max_iterations = max_iterations
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
+        self._results_dir: Path | None = None
+        if workspace is not None:
+            self._results_dir = workspace / "subagents"
+            self._results_dir.mkdir(parents=True, exist_ok=True)
 
     async def spawn(
         self,
@@ -99,28 +111,61 @@ class SubagentManager:
             logger.error("subagent_failed", id=task_id, error=e)
 
         logger.info("subagent_done", id=task_id, status=status)
+
+        # Write result to disk so it survives compaction (skip for errors)
+        result_path = None
+        if status == "completed":
+            result_path = self._write_result(task_id, label, task, result, status)
+
         await self._announce(
-            label, task, result, status, origin_channel, origin_chat_id, session_key
+            label, task, result, result_path, status, origin_channel, origin_chat_id, session_key
         )
+
+    def _write_result(
+        self,
+        task_id: str,
+        label: str,
+        task: str,
+        result: str,
+        status: str,
+    ) -> str | None:
+        """Write subagent result to disk. Returns the file path, or None if no workspace."""
+        if self._results_dir is None:
+            return None
+        filename = f"{_safe_filename(label)}-{task_id}.md"
+        path = self._results_dir / filename
+        content = f"# Subagent: {label}\n\n**Status:** {status}\n\n## Task\n\n{task}\n\n## Result\n\n{result}\n"
+        path.write_text(content, encoding="utf-8")
+        logger.info("subagent_result_written", path=str(path))
+        return str(path)
 
     async def _announce(
         self,
         label: str,
         task: str,
         result: str,
+        result_path: str | None,
         status: str,
         origin_channel: str,
         origin_chat_id: str,
         session_key: str | None,
     ) -> None:
         """Publish the subagent result back to the main agent via the bus."""
-        content = (
-            f"[Subagent '{label}' {status}]\n\n"
-            f"Task: {task}\n\n"
-            f"Result:\n{result}\n\n"
-            "Summarize this naturally for the user. Keep it brief (1-2 sentences). "
-            "Do not mention technical details like 'subagent' or task IDs."
-        )
+        if result_path:
+            content = (
+                f"[Subagent '{label}' {status}]\n\n"
+                f"Task: {task}\n\n"
+                f"Result saved to: {result_path}\n\n"
+                "Read the file to see the full result, then summarize for the user."
+            )
+        else:
+            # No workspace or error — include result inline
+            content = (
+                f"[Subagent '{label}' {status}]\n\n"
+                f"Task: {task}\n\n"
+                f"Result:\n{result}\n\n"
+                "Summarize this naturally for the user."
+            )
         msg = InboundMessage(
             channel="system",
             sender_id="subagent",
