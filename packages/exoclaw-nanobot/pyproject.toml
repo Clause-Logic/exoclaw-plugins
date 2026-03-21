@@ -1,6 +1,6 @@
 [project]
 name = "exoclaw-nanobot"
-version = "0.8.0"
+version = "0.8.1"
 description = "Full-stack exoclaw bundle — config, provider registry, and one-line wiring"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -14,9 +14,9 @@ dependencies = [
     "exoclaw-tools-workspace",
     "exoclaw-tools-cron",
     "exoclaw-tools-message",
-    "exoclaw-tools-spawn",
+    "exoclaw-tools-spawn>=0.4.0",
     "exoclaw-tools-mcp",
-    "exoclaw-subagent",
+    "exoclaw-subagent>=0.4.0",
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
     "structlog>=25.0.0",
