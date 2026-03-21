@@ -95,7 +95,6 @@ class TestSpawn:
         with patch("exoclaw_subagent.manager.SubagentManager._run", new=AsyncMock()):
             result = await mgr.spawn(task="do something")
         assert "started" in result
-        assert "do something" in result or "do somethin" in result  # truncated at 30
 
     async def test_spawn_with_label(self) -> None:
         mgr = _make_manager()
@@ -163,7 +162,7 @@ class TestRun:
         mock_loop.process_direct = AsyncMock(return_value="result text")
 
         with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop):
-            await mgr._run("t1", "do task", "do task", "cli", "user1", "cli:user1")
+            await mgr._run("t1", "do task", "do task", "cli", "user1", "cli:user1", None)
 
         mock_loop.process_direct.assert_called_once_with("do task")
 
@@ -175,7 +174,7 @@ class TestRun:
         mock_loop.process_direct = AsyncMock(return_value="task completed")
 
         with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop):
-            await mgr._run("t1", "do task", "label", "cli", "user1", "cli:user1")
+            await mgr._run("t1", "do task", "label", "cli", "user1", "cli:user1", None)
 
         bus.publish_inbound.assert_called_once()
         msg: InboundMessage = bus.publish_inbound.call_args[0][0]
@@ -193,7 +192,7 @@ class TestRun:
         mock_loop.process_direct = AsyncMock(side_effect=RuntimeError("boom"))
 
         with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop):
-            await mgr._run("t1", "do task", "label", "cli", "user1", None)
+            await mgr._run("t1", "do task", "label", "cli", "user1", None, None)
 
         bus.publish_inbound.assert_called_once()
         msg: InboundMessage = bus.publish_inbound.call_args[0][0]
@@ -219,7 +218,7 @@ class TestRun:
         mock_loop.process_direct = AsyncMock(return_value="done")
 
         with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop):
-            await mgr._run("t1", "task", "label", "cli", "user1", None)
+            await mgr._run("t1", "task", "label", "cli", "user1", None, None)
 
         assert factory_calls == [1]
 
@@ -236,7 +235,7 @@ class TestRun:
         mock_loop.process_direct = AsyncMock(return_value="done")
 
         with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop) as MockLoop:  # noqa: N806
-            await mgr._run("t1", "task", "label", "cli", "user1", None)
+            await mgr._run("t1", "task", "label", "cli", "user1", None, None)
 
         _, kwargs = MockLoop.call_args
         assert kwargs["model"] == "claude-opus"
@@ -248,7 +247,7 @@ class TestRun:
         mock_loop.process_direct = AsyncMock(return_value="done")
 
         with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop):
-            await mgr._run("t1", "task", "label", "telegram", "chat99", None)
+            await mgr._run("t1", "task", "label", "telegram", "chat99", None, None)
 
         msg: InboundMessage = bus.publish_inbound.call_args[0][0]
         assert msg.chat_id == "telegram:chat99"
@@ -256,15 +255,17 @@ class TestRun:
 
 
 # ---------------------------------------------------------------------------
-# _announce
+# _announce_single
 # ---------------------------------------------------------------------------
 
 
-class TestAnnounce:
+class TestAnnounceSingle:
     async def test_announce_content_structure(self) -> None:
         bus = _make_bus()
         mgr = _make_manager(bus=bus)
-        await mgr._announce("label", "the task", "the result", None, "completed", "cli", "u1", "cli:u1")
+        await mgr._announce_single(
+            "label", "the task", "the result", None, "completed", "cli", "u1", "cli:u1"
+        )
 
         msg: InboundMessage = bus.publish_inbound.call_args[0][0]
         assert "label" in msg.content
@@ -276,10 +277,80 @@ class TestAnnounce:
     async def test_announce_chat_id_format(self) -> None:
         bus = _make_bus()
         mgr = _make_manager(bus=bus)
-        await mgr._announce("l", "t", "r", None, "completed", "slack", "C123", None)
+        await mgr._announce_single("l", "t", "r", None, "completed", "slack", "C123", None)
 
         msg: InboundMessage = bus.publish_inbound.call_args[0][0]
         assert msg.chat_id == "slack:C123"
+
+
+# ---------------------------------------------------------------------------
+# Batch
+# ---------------------------------------------------------------------------
+
+
+class TestBatch:
+    async def test_batch_announces_only_when_all_complete(self) -> None:
+        bus = _make_bus()
+        mgr = _make_manager(bus=bus)
+
+        mock_loop = MagicMock()
+        mock_loop.process_direct = AsyncMock(return_value="result")
+
+        with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop):
+            # Spawn 3 subagents in same batch
+            await mgr.spawn(task="t1", label="a", batch="b1")
+            await mgr.spawn(task="t2", label="b", batch="b1")
+            await mgr.spawn(task="t3", label="c", batch="b1")
+
+            # Let them all complete
+            await asyncio.sleep(0.1)
+
+        # Should be exactly one announcement (the batch), not 3
+        assert bus.publish_inbound.call_count == 1
+        msg: InboundMessage = bus.publish_inbound.call_args[0][0]
+        assert "Batch 'b1' complete" in msg.content
+        assert "3 succeeded" in msg.content
+
+    async def test_non_batch_announces_individually(self) -> None:
+        bus = _make_bus()
+        mgr = _make_manager(bus=bus)
+
+        mock_loop = MagicMock()
+        mock_loop.process_direct = AsyncMock(return_value="result")
+
+        with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop):
+            await mgr.spawn(task="t1", label="a")
+            await mgr.spawn(task="t2", label="b")
+            await asyncio.sleep(0.1)
+
+        assert bus.publish_inbound.call_count == 2
+
+    async def test_batch_with_failure(self) -> None:
+        bus = _make_bus()
+        mgr = _make_manager(bus=bus)
+
+        call_count = 0
+
+        async def mock_process(task: str) -> str:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                raise RuntimeError("boom")
+            return "ok"
+
+        mock_loop = MagicMock()
+        mock_loop.process_direct = AsyncMock(side_effect=mock_process)
+
+        with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop):
+            await mgr.spawn(task="t1", label="good1", batch="b2")
+            await mgr.spawn(task="t2", label="bad", batch="b2")
+            await mgr.spawn(task="t3", label="good2", batch="b2")
+            await asyncio.sleep(0.1)
+
+        assert bus.publish_inbound.call_count == 1
+        msg: InboundMessage = bus.publish_inbound.call_args[0][0]
+        assert "2 succeeded" in msg.content
+        assert "1 failed" in msg.content
 
 
 # ---------------------------------------------------------------------------

@@ -22,7 +22,7 @@ class TestSpawnManagerProtocol:
                 origin_channel: str = "cli",
                 origin_chat_id: str = "direct",
                 session_key: str | None = None,
-                search: bool = False,
+                batch: str | None = None,
             ) -> str:
                 return "done"
 
@@ -98,6 +98,7 @@ class TestSpawnToolExecute:
             origin_channel="cli",
             origin_chat_id="user1",
             session_key="cli:user1",
+            batch=None,
         )
 
     async def test_spawn_with_label(self, tool: SpawnTool, manager: AsyncMock) -> None:
@@ -108,6 +109,7 @@ class TestSpawnToolExecute:
             origin_channel="cli",
             origin_chat_id="user1",
             session_key="cli:user1",
+            batch=None,
         )
 
     async def test_spawn_returns_manager_response(

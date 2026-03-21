@@ -16,6 +16,7 @@ class SpawnManager(Protocol):
         origin_channel: str = "cli",
         origin_chat_id: str = "direct",
         session_key: str | None = None,
+        batch: str | None = None,
     ) -> str: ...
 
 
@@ -59,6 +60,12 @@ class SpawnTool(ToolBase):
                     "type": "string",
                     "description": "Optional short label for the task (for display)",
                 },
+                "batch": {
+                    "type": "string",
+                    "description": "Optional batch ID. When set, results are held until all "
+                    "subagents with the same batch ID complete, then announced together. "
+                    "Use the same batch value for related parallel tasks.",
+                },
             },
             "required": ["task"],
         }
@@ -68,6 +75,7 @@ class SpawnTool(ToolBase):
         ctx: ToolContext,
         task: str,
         label: str | None = None,
+        batch: str | None = None,
         **kwargs: Any,
     ) -> str:
         """Spawn a subagent, routing the result back to the caller's session."""
@@ -77,12 +85,14 @@ class SpawnTool(ToolBase):
             origin_channel=ctx.channel,
             origin_chat_id=ctx.chat_id,
             session_key=ctx.session_key,
+            batch=batch,
         )
 
     async def execute(
         self,
         task: str,
         label: str | None = None,
+        batch: str | None = None,
         **kwargs: Any,
     ) -> str:
         """Spawn a subagent to execute the given task."""
@@ -92,4 +102,5 @@ class SpawnTool(ToolBase):
             origin_channel=self._origin_channel,
             origin_chat_id=self._origin_chat_id,
             session_key=self._session_key,
+            batch=batch,
         )
