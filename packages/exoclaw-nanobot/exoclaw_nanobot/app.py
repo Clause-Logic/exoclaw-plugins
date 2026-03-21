@@ -292,10 +292,22 @@ async def create(
             )
         )
 
-    # Hook: record tool calls into the iteration policy for pattern detection
+    # Hook: record tool calls into the iteration policy for pattern detection,
+    # and reset history at the start of each turn so prior sessions don't bleed.
     on_tool_calls = None
     if iteration_policy is not None:
         _policy = iteration_policy
+        _orig_pre_context = on_pre_context
+
+        async def _reset_then_pre_context(
+            content: str, session_key: str, channel: str, chat_id: str
+        ) -> str:
+            _policy.reset()
+            if _orig_pre_context:
+                return await _orig_pre_context(content, session_key, channel, chat_id)
+            return ""
+
+        on_pre_context = _reset_then_pre_context
 
         async def _record_tool_calls(tool_calls: list[Any]) -> None:
             for tc in tool_calls:
