@@ -147,8 +147,14 @@ class SubagentManager:
             await self._record_batch_completion(batch, label, status, result_path, result)
         else:
             await self._announce_single(
-                label, task, result, result_path, status,
-                origin_channel, origin_chat_id, session_key,
+                label,
+                task,
+                result,
+                result_path,
+                status,
+                origin_channel,
+                origin_chat_id,
+                session_key,
             )
 
     def _write_result(
@@ -188,14 +194,18 @@ class SubagentManager:
             return
 
         state.completed += 1
-        state.results.append({
-            "label": label,
-            "status": status,
-            "path": result_path or "(no file)",
-        })
+        state.results.append(
+            {
+                "label": label,
+                "status": status,
+                "path": result_path or "(no file)",
+            }
+        )
         logger.info(
-            "batch_progress", batch=batch,
-            completed=state.completed, total=state.total,
+            "batch_progress",
+            batch=batch,
+            completed=state.completed,
+            total=state.total,
         )
 
         if state.completed >= state.total:

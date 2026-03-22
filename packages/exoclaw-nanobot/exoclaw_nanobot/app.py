@@ -208,7 +208,9 @@ async def create(
     conversation = DefaultConversation(
         history=SessionManager(workspace),
         memory=memory_store,
-        prompt=ContextBuilder(workspace, memory=memory_store, skill_packages=config.skills.packages or None),
+        prompt=ContextBuilder(
+            workspace, memory=memory_store, skill_packages=config.skills.packages or None
+        ),
         memory_window=config.agents.defaults.memory_window,
         consolidation_policy=consolidation_policy,
     )

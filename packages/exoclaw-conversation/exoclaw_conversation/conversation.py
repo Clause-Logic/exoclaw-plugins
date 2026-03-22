@@ -129,9 +129,7 @@ class DefaultConversation:
         effective_turn_context = list(turn_context or [])
         summary = session.metadata.get("summary")
         if summary:
-            effective_turn_context.insert(
-                0, f"## Previous Session Summary\n{summary}"
-            )
+            effective_turn_context.insert(0, f"## Previous Session Summary\n{summary}")
 
         return self.prompt.build_messages(
             history=history,
