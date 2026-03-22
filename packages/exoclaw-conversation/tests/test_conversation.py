@@ -78,6 +78,26 @@ class TestSession:
         assert s.messages[0]["role"] == "user"
         assert s.messages[0]["content"] == "hello"
 
+    def test_add_message_total_messages_no_double_count(self) -> None:
+        """add_message must not double-count total_messages (off-by-one regression)."""
+        s = Session(key="test")
+        assert s.total_messages == 0
+        s.add_message("user", "one")
+        assert s.total_messages == 1
+        s.add_message("assistant", "two")
+        assert s.total_messages == 2
+        assert len(s.messages) == 2
+
+    def test_add_message_total_with_offset(self) -> None:
+        """add_message with pre-existing offset must track total correctly."""
+        s = Session(key="test")
+        s._messages_offset = 100
+        s._total_messages = 105
+        s.messages = [{"role": "user", "content": str(i)} for i in range(5)]
+        s.add_message("user", "new")
+        assert s.total_messages == 106
+        assert len(s.messages) == 6
+
     def test_get_history_empty(self) -> None:
         s = Session(key="test")
         assert s.get_history() == []
@@ -181,6 +201,41 @@ class TestSessionManager:
         assert len(msgs) == 2
         assert msgs[0]["content"] == "1"
         assert msgs[1]["content"] == "2"
+
+    def test_save_append_is_append_only(self, tmp_path: Path) -> None:
+        """save_append must not read the full file — only append."""
+        mgr = SessionManager(tmp_path)
+        s = mgr.get_or_create("ch:123")
+        s.add_message("user", "first")
+        mgr.save(s)
+
+        # Append a second message
+        new_msg = {"role": "assistant", "content": "second", "timestamp": "2026-01-01T00:00"}
+        s.messages.append(new_msg)
+        mgr.save_append(s, [new_msg])
+
+        # Reload and verify both messages present
+        mgr2 = SessionManager(tmp_path)
+        s2 = mgr2.get_or_create("ch:123")
+        assert s2.total_messages == 2
+        assert s2.messages[0]["content"] == "first"
+        assert s2.messages[1]["content"] == "second"
+
+    def test_load_skips_consolidated_lines(self, tmp_path: Path) -> None:
+        """_load must not hold consolidated messages in memory."""
+        mgr = SessionManager(tmp_path)
+        s = mgr.get_or_create("ch:big")
+        for i in range(100):
+            s.add_message("user" if i % 2 == 0 else "assistant", f"msg-{i}")
+        s.last_consolidated = 90
+        mgr.save(s)
+
+        mgr2 = SessionManager(tmp_path)
+        s2 = mgr2.get_or_create("ch:big")
+        # Only 10 unconsolidated messages in RAM
+        assert len(s2.messages) == 10
+        assert s2.messages[0]["content"] == "msg-90"
+        assert s2.total_messages == 100
 
     def test_invalidate(self, tmp_path: Path) -> None:
         mgr = SessionManager(tmp_path)

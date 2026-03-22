@@ -301,8 +301,9 @@ class DefaultConversation:
                     entry["content"] = filtered
 
             entry.setdefault("timestamp", datetime.now().isoformat())
+            new_total = session.total_messages + 1
             session.messages.append(entry)
-            session.total_messages += 1
+            session._total_messages = new_total
             prepared.append(entry)
 
         session.updated_at = datetime.now()

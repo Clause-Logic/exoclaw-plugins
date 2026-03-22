@@ -100,7 +100,13 @@ class MemoryStore:
                 return True
             if total - session.last_consolidated <= 0:
                 return True
-            old_messages = session.messages[session.last_consolidated : -keep_count]
+            # Translate absolute last_consolidated to relative index within
+            # session.messages (which may start at _messages_offset for
+            # disk-backed sessions).
+            offset = getattr(session, "_messages_offset", 0)
+            rel_start = max(session.last_consolidated - offset, 0)
+            rel_end = len(session.messages) - keep_count
+            old_messages = session.messages[rel_start:rel_end] if rel_end > rel_start else []
             if not old_messages:
                 return True
 

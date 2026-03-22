@@ -2,7 +2,6 @@
 
 import json
 import weakref
-from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -56,9 +55,10 @@ class Session:
 
     def add_message(self, role: str, content: str, **kwargs: Any) -> None:
         """Add a message to the session."""
+        new_total = self.total_messages + 1
         msg = {"role": role, "content": content, "timestamp": datetime.now().isoformat(), **kwargs}
         self.messages.append(msg)
-        self._total_messages = self.total_messages + 1
+        self._total_messages = new_total
         self.updated_at = datetime.now()
 
     def get_history(self, max_messages: int = 500) -> list[dict[str, Any]]:
@@ -103,7 +103,9 @@ class SessionManager:
 
     Only the unconsolidated tail of each session is loaded into RAM.
     Saves append new messages to the JSONL file rather than rewriting it.
-    Sessions are NOT cached — each get_or_create() loads from disk.
+    Sessions are weakly cached: get_or_create() returns an existing
+    in-memory Session while any caller holds a reference; once
+    garbage-collected, the next call reloads from disk.
     """
 
     def __init__(self, workspace: Path):
@@ -152,12 +154,7 @@ class SessionManager:
             created_at = None
             last_consolidated = 0
             total_messages = 0
-
-            # First pass: read metadata line, count messages, collect tail
-            # We use a deque as a sliding window to avoid loading all messages.
-            # After reading metadata we know last_consolidated, but we must
-            # read through the file to count total and collect the tail.
-            all_msg_lines: deque[str] = deque()
+            tail_lines: list[str] = []
 
             with open(path, encoding="utf-8") as f:
                 for line in f:
@@ -178,12 +175,12 @@ class SessionManager:
                             last_consolidated = data.get("last_consolidated", 0)
                             continue
 
+                    # Skip consolidated messages — only keep the tail
+                    if total_messages >= last_consolidated:
+                        tail_lines.append(line)
                     total_messages += 1
-                    all_msg_lines.append(line)
 
-            # Only parse the unconsolidated tail
-            unconsolidated_lines = list(all_msg_lines)[last_consolidated:]
-            messages = [json.loads(line) for line in unconsolidated_lines]
+            messages = [json.loads(line) for line in tail_lines]
 
             session = Session(
                 key=key,
@@ -253,41 +250,33 @@ class SessionManager:
                 f.write(json.dumps(msg, ensure_ascii=False) + "\n")
 
     def save_append(self, session: Session, new_messages: list[dict[str, Any]]) -> None:
-        """Append new messages to the JSONL file and update the metadata line.
+        """Append new messages to the JSONL file.
 
-        Much cheaper than save() for normal turn recording — avoids
-        rewriting the entire file.
+        O(new_messages) — does not read or rewrite existing content.
+        Creates the file with a metadata header if it doesn't exist.
+        Metadata is updated separately via save_metadata().
         """
         path = self._get_session_path(session.key)
 
-        # Update metadata line (first line) by rewriting just that line
-        # Read existing content, replace first line, append new messages
-        if path.exists():
-            with open(path, encoding="utf-8") as f:
-                lines = f.readlines()
+        if not path.exists():
+            # New file — write metadata header first
+            with open(path, "w", encoding="utf-8") as f:
+                meta = {
+                    "_type": "metadata",
+                    "key": session.key,
+                    "created_at": session.created_at.isoformat(),
+                    "updated_at": session.updated_at.isoformat(),
+                    "metadata": session.metadata,
+                    "last_consolidated": session.last_consolidated,
+                }
+                f.write(json.dumps(meta, ensure_ascii=False) + "\n")
+                for msg in new_messages:
+                    f.write(json.dumps(msg, ensure_ascii=False) + "\n")
         else:
-            lines = []
-
-        metadata_line = {
-            "_type": "metadata",
-            "key": session.key,
-            "created_at": session.created_at.isoformat(),
-            "updated_at": session.updated_at.isoformat(),
-            "metadata": session.metadata,
-            "last_consolidated": session.last_consolidated,
-        }
-
-        # Replace or insert metadata as first line
-        meta_str = json.dumps(metadata_line, ensure_ascii=False) + "\n"
-        if lines and "_type" in lines[0]:
-            lines[0] = meta_str
-        else:
-            lines.insert(0, meta_str)
-
-        with open(path, "w", encoding="utf-8") as f:
-            f.writelines(lines)
-            for msg in new_messages:
-                f.write(json.dumps(msg, ensure_ascii=False) + "\n")
+            # Append only — no rewrite
+            with open(path, "a", encoding="utf-8") as f:
+                for msg in new_messages:
+                    f.write(json.dumps(msg, ensure_ascii=False) + "\n")
 
     def save_metadata(self, session: Session) -> None:
         """Update only the metadata line (first line) of the JSONL file.
