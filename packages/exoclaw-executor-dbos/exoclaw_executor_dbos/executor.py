@@ -117,7 +117,7 @@ class DBOSExecutor:
         _Refs.provider = provider
         tools_json = json.dumps(tools) if tools else None
         result = await _chat_step(
-            messages=list(messages),  # type: ignore[arg-type]
+            messages=list(messages),
             tools_json=tools_json,
             model=model,
             temperature=temperature,
@@ -139,7 +139,7 @@ class DBOSExecutor:
         ctx_data = dataclasses.asdict(ctx) if ctx else None
         return await _tool_step(
             name=name,
-            params=dict(params),  # type: ignore[arg-type]
+            params=dict(params),
             ctx_data=ctx_data,
         )
 

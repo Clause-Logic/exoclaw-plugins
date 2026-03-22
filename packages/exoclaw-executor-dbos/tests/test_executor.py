@@ -1,11 +1,11 @@
 """Basic tests for exoclaw-executor-dbos."""
 
+from exoclaw.providers.types import LLMResponse, ToolCallRequest
 from exoclaw_executor_dbos.executor import (
     DBOSExecutor,
     _dict_to_response,
     _response_to_dict,
 )
-from exoclaw.providers.types import LLMResponse, ToolCallRequest
 
 
 class TestSerialization:
