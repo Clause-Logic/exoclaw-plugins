@@ -26,6 +26,12 @@ class TestSpawnManagerProtocol:
             ) -> str:
                 return "done"
 
+            def get_status(self) -> dict:
+                return {}
+
+            def list_results(self, limit: int = 20) -> list[dict[str, str]]:
+                return []
+
         assert isinstance(MyManager(), SpawnManager)
 
     def test_missing_spawn_fails_protocol(self) -> None:
@@ -65,7 +71,7 @@ class TestSpawnToolProperties:
         p = tool.parameters
         assert p["type"] == "object"
         assert "task" in p["properties"]
-        assert p["required"] == ["task"]
+        assert "action" in p["properties"]
 
 
 class TestSpawnToolSetContext:

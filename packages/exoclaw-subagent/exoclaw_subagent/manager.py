@@ -287,6 +287,42 @@ class SubagentManager:
         """Return the number of currently running subagents."""
         return len(self._running_tasks)
 
+    def get_status(self) -> dict:
+        """Return status of all subagents: running, batches, and completed results on disk."""
+        running = []
+        for task_id, task in self._running_tasks.items():
+            running.append({"id": task_id, "done": task.done()})
+
+        batches = {}
+        for batch_id, state in self._batches.items():
+            batches[batch_id] = {
+                "total": state.total,
+                "completed": state.completed,
+                "results": state.results,
+            }
+
+        completed = []
+        if self._results_dir and self._results_dir.exists():
+            for f in sorted(
+                self._results_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True
+            ):
+                completed.append({"path": str(f), "name": f.stem})
+
+        return {"running": running, "batches": batches, "completed": completed}
+
+    def list_results(self, limit: int = 20) -> list[dict[str, str]]:
+        """List completed subagent result files from disk."""
+        if not self._results_dir or not self._results_dir.exists():
+            return []
+        results = []
+        for f in sorted(
+            self._results_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True
+        ):
+            if len(results) >= limit:
+                break
+            results.append({"path": str(f), "name": f.stem})
+        return results
+
     async def cancel_by_session(self, session_key: str) -> int:
         """Cancel running subagents. Returns count cancelled."""
         cancelled = 0
