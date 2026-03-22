@@ -1,0 +1,15 @@
+[project]
+name = "exoclaw-executor-dbos"
+version = "0.1.0"
+description = "DBOS-backed durable executor for exoclaw — turns and tool calls survive restarts"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "exoclaw>=0.9.0",
+    "dbos>=1.0.0",
+    "structlog>=24.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
