@@ -1,5 +1,6 @@
 """Spawn tool for creating background subagents."""
 
+import json
 from typing import Any, Protocol, runtime_checkable
 
 from exoclaw.agent.tools.protocol import ToolBase, ToolContext
@@ -18,6 +19,9 @@ class SpawnManager(Protocol):
         session_key: str | None = None,
         batch: str | None = None,
     ) -> str: ...
+
+    def get_status(self) -> dict: ...
+    def list_results(self, limit: int = 20) -> list[dict[str, str]]: ...
 
 
 class SpawnTool(ToolBase):
@@ -44,7 +48,8 @@ class SpawnTool(ToolBase):
         return (
             "Spawn a subagent to handle a task in the background. "
             "Use this for complex or time-consuming tasks that can run independently. "
-            "The subagent will complete the task and report back when done."
+            "The subagent will complete the task and report back when done. "
+            "Set action to 'status' to check running subagents, or 'results' to list completed results."
         )
 
     @property
@@ -52,9 +57,16 @@ class SpawnTool(ToolBase):
         return {
             "type": "object",
             "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["spawn", "status", "results"],
+                    "description": "Action to perform. 'spawn' (default) to start a subagent, "
+                    "'status' to check running subagents and batch progress, "
+                    "'results' to list completed subagent result files.",
+                },
                 "task": {
                     "type": "string",
-                    "description": "The task for the subagent to complete",
+                    "description": "The task for the subagent to complete (required for 'spawn')",
                 },
                 "label": {
                     "type": "string",
@@ -67,18 +79,25 @@ class SpawnTool(ToolBase):
                     "Use the same batch value for related parallel tasks.",
                 },
             },
-            "required": ["task"],
+            "required": [],
         }
 
     async def execute_with_context(
         self,
         ctx: ToolContext,
-        task: str,
+        action: str = "spawn",
+        task: str | None = None,
         label: str | None = None,
         batch: str | None = None,
         **kwargs: Any,
     ) -> str:
-        """Spawn a subagent, routing the result back to the caller's session."""
+        """Execute spawn tool with context."""
+        if action == "status":
+            return json.dumps(self._manager.get_status(), indent=2)
+        if action == "results":
+            return json.dumps(self._manager.list_results(), indent=2)
+        if not task:
+            return "Error: 'task' is required for spawn action."
         return await self._manager.spawn(
             task=task,
             label=label,
@@ -90,12 +109,19 @@ class SpawnTool(ToolBase):
 
     async def execute(
         self,
-        task: str,
+        action: str = "spawn",
+        task: str | None = None,
         label: str | None = None,
         batch: str | None = None,
         **kwargs: Any,
     ) -> str:
-        """Spawn a subagent to execute the given task."""
+        """Execute spawn tool."""
+        if action == "status":
+            return json.dumps(self._manager.get_status(), indent=2)
+        if action == "results":
+            return json.dumps(self._manager.list_results(), indent=2)
+        if not task:
+            return "Error: 'task' is required for spawn action."
         return await self._manager.spawn(
             task=task,
             label=label,
