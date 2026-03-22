@@ -20,6 +20,7 @@ from exoclaw_conversation.conversation import DefaultConversation
 from exoclaw_conversation.memory import MemoryStore
 from exoclaw_conversation.session.manager import SessionManager
 from exoclaw_conversation.summarizing_policy import SummarizingConsolidationPolicy
+from exoclaw_executor_dbos import DBOSExecutor, init_dbos, recover, set_turn_context
 from exoclaw_loop_detection import LoopDetectionConfig, LoopDetectionPolicy
 from exoclaw_provider_litellm.provider import LiteLLMProvider
 from exoclaw_subagent.manager import SubagentManager
@@ -193,6 +194,9 @@ async def create(
     workspace = config.workspace_path
     workspace.mkdir(parents=True, exist_ok=True)
 
+    # Initialize DBOS for durable execution (SQLite in workspace)
+    init_dbos(db_path=workspace / "exoclaw.sqlite")
+
     model = config.agents.defaults.model
     prov = config.get_provider(model)
     provider = LiteLLMProvider(
@@ -344,11 +348,15 @@ async def create(
             return compacted
         return None
 
+    # Durable executor — every LLM call and tool execution is checkpointed
+    executor = DBOSExecutor()
+
     # Agent loop
     agent_loop = AgentLoop(
         bus=bus,
         provider=provider,
         conversation=conversation,
+        executor=executor,
         model=model,
         max_iterations=config.agents.defaults.max_tool_iterations,
         temperature=config.agents.defaults.temperature,
@@ -408,6 +416,18 @@ async def create(
         interval_s=config.gateway.heartbeat.interval_s,
         enabled=config.gateway.heartbeat.enabled,
     )
+
+    # Set turn context for DBOS — must happen before recover()
+    set_turn_context(
+        provider=provider,
+        conversation=conversation,
+        tools=tools,
+        on_tool_calls=on_tool_calls,
+        on_pre_tool=on_pre_tool,
+    )
+
+    # Recover any turns that were in progress when the process last died
+    recover()
 
     return ExoclawNanobot(
         config=config,
