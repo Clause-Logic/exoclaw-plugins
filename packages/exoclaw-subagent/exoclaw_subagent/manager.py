@@ -303,7 +303,9 @@ class SubagentManager:
 
         completed = []
         if self._results_dir and self._results_dir.exists():
-            for f in sorted(self._results_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
+            for f in sorted(
+                self._results_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True
+            ):
                 completed.append({"path": str(f), "name": f.stem})
 
         return {"running": running, "batches": batches, "completed": completed}
@@ -313,7 +315,9 @@ class SubagentManager:
         if not self._results_dir or not self._results_dir.exists():
             return []
         results = []
-        for f in sorted(self._results_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
+        for f in sorted(
+            self._results_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True
+        ):
             if len(results) >= limit:
                 break
             results.append({"path": str(f), "name": f.stem})
