@@ -1,8 +1,7 @@
 """DBOS initialization and recovery for exoclaw.
 
-Call init_dbos() once at app startup, before any turns run.
-It initializes DBOS with SQLite and recovers any incomplete
-workflows from a previous run.
+Call init_dbos() once at app startup to initialize DBOS with SQLite.
+Call recover() after set_turn_context() to resume incomplete workflows.
 """
 
 from __future__ import annotations
@@ -16,11 +15,11 @@ logger = structlog.get_logger()
 
 
 def init_dbos(db_path: str | Path = "exoclaw.sqlite") -> None:
-    """Initialize DBOS and recover pending workflows.
+    """Initialize DBOS with SQLite.
 
-    Args:
-        db_path: Path to the SQLite database. Defaults to exoclaw.sqlite
-                 in the current directory.
+    Call this once at startup, before any turns run.
+    Does NOT trigger recovery — call recover() separately after
+    set_turn_context() has been called.
     """
     DBOS(
         config={
@@ -31,9 +30,14 @@ def init_dbos(db_path: str | Path = "exoclaw.sqlite") -> None:
     DBOS.launch()
     logger.info("dbos_initialized", db_path=str(db_path))
 
-    # Recover any turns that were in progress when the process died.
-    # DBOS replays completed steps and continues from the next one.
-    recover = getattr(DBOS, "recover_pending_workflows", None)
-    if recover is not None:
-        recover()
+
+def recover() -> None:
+    """Recover incomplete workflows from a previous run.
+
+    Must be called AFTER set_turn_context() so that recovered
+    workflows have access to provider/conversation/tools.
+    """
+    recover_fn = getattr(DBOS, "recover_pending_workflows", None)
+    if recover_fn is not None:
+        recover_fn()
     logger.info("dbos_recovery_complete")

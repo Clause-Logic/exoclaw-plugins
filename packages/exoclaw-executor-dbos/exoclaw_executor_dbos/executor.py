@@ -17,21 +17,18 @@ Usage in nanobot wiring:
 
 from __future__ import annotations
 
+import contextvars
 import dataclasses
 import json
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-import structlog
 from dbos import DBOS
 from exoclaw.agent.conversation import Conversation
 from exoclaw.agent.tools.protocol import ToolContext
 from exoclaw.agent.tools.registry import ToolRegistry
 from exoclaw.providers.protocol import LLMProvider
 from exoclaw.providers.types import LLMResponse, ToolCallRequest
-
-logger = structlog.get_logger()
-
 
 # ── Serialization helpers ────────────────────────────────────────────────────
 
@@ -41,22 +38,25 @@ def _response_to_dict(resp: LLMResponse) -> dict[str, Any]:
 
 
 def _dict_to_response(d: dict[str, Any]) -> LLMResponse:
+    d = dict(d)  # don't mutate caller's dict
     tool_calls = [ToolCallRequest(**tc) for tc in d.pop("tool_calls", [])]
     return LLMResponse(tool_calls=tool_calls, **d)
 
 
+# ── Per-task context for non-serializable refs ───────────────────────────────
+# ContextVars are safe for concurrent workflows — each asyncio Task gets
+# its own copy, so parallel turns don't stomp on each other.
+
+_provider_var: contextvars.ContextVar[LLMProvider | None] = contextvars.ContextVar(
+    "_provider_var", default=None
+)
+_registry_var: contextvars.ContextVar[ToolRegistry | None] = contextvars.ContextVar(
+    "_registry_var", default=None
+)
+
+
 # ── DBOS step functions ──────────────────────────────────────────────────────
-# These are module-level so DBOS can register and replay them.
-# They receive serializable inputs and produce serializable outputs.
-# The actual provider/registry references are passed via a module-level holder
-# that the executor sets before calling.
-
-
-class _Refs:
-    """Holds non-serializable references for the current turn."""
-
-    provider: LLMProvider | None = None
-    registry: ToolRegistry | None = None
+# Module-level so DBOS can register and replay them.
 
 
 @DBOS.step(retries_allowed=True, max_attempts=3, interval_seconds=2)
@@ -69,9 +69,11 @@ async def _chat_step(
     reasoning_effort: str | None,
 ) -> dict[str, Any]:
     """Durable LLM call. Result is cached by DBOS on completion."""
-    assert _Refs.provider is not None, "provider not set"
+    provider = _provider_var.get()
+    if provider is None:
+        raise RuntimeError("provider not set — call set_turn_context() before running turns")
     tools = json.loads(tools_json) if tools_json else None
-    resp = await _Refs.provider.chat(
+    resp = await provider.chat(
         messages=messages,
         tools=tools,
         model=model,
@@ -86,12 +88,14 @@ async def _chat_step(
 async def _tool_step(
     name: str,
     params: dict[str, Any],
-    ctx_data: dict[str, str] | None,
+    ctx_data: dict[str, Any] | None,
 ) -> str:
     """Durable tool execution. Result is cached by DBOS on completion."""
-    assert _Refs.registry is not None, "registry not set"
+    registry = _registry_var.get()
+    if registry is None:
+        raise RuntimeError("registry not set — call set_turn_context() before running turns")
     ctx = ToolContext(**ctx_data) if ctx_data else None
-    return await _Refs.registry.execute(name, params, ctx)
+    return await registry.execute(name, params, ctx)
 
 
 # ── DBOSExecutor ─────────────────────────────────────────────────────────────
@@ -101,6 +105,8 @@ class DBOSExecutor:
     """Executor that routes AgentLoop operations through DBOS steps.
 
     Must be used inside a @DBOS.workflow() — see run_durable_turn().
+    Sets ContextVar refs so steps can access provider/registry safely
+    across concurrent workflows.
     """
 
     async def chat(
@@ -114,7 +120,7 @@ class DBOSExecutor:
         max_tokens: int = 4096,
         reasoning_effort: str | None = None,
     ) -> LLMResponse:
-        _Refs.provider = provider
+        _provider_var.set(provider)
         tools_json = json.dumps(tools) if tools else None
         result = await _chat_step(
             messages=list(messages),
@@ -135,7 +141,7 @@ class DBOSExecutor:
         *,
         tool_call_id: str | None = None,
     ) -> str:
-        _Refs.registry = registry
+        _registry_var.set(registry)
         ctx_data = dataclasses.asdict(ctx) if ctx else None
         return await _tool_step(
             name=name,
@@ -155,8 +161,6 @@ class DBOSExecutor:
         plugin_context: list[str] | None = None,
         **kwargs: list[str] | None,
     ) -> list[dict[str, object]]:
-        # build_prompt is not a step — it's cheap and idempotent.
-        # We call conversation directly so it can trigger consolidation etc.
         return await conversation.build_prompt(
             session_id,
             message,
@@ -173,7 +177,6 @@ class DBOSExecutor:
         session_id: str,
         new_messages: list[dict[str, object]],
     ) -> None:
-        # record is not a step — it's the persistence itself
         await conversation.record(session_id, new_messages)
 
     async def clear(

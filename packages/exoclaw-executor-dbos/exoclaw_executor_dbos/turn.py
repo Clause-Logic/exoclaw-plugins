@@ -6,9 +6,9 @@ The agent loop runs inside the workflow, with each chat/tool call as a step.
 
 from __future__ import annotations
 
+import contextvars
 from typing import Any
 
-import structlog
 from dbos import DBOS
 from exoclaw.agent.conversation import Conversation
 from exoclaw.agent.loop import AgentLoop
@@ -16,8 +16,6 @@ from exoclaw.agent.tools.protocol import Tool
 from exoclaw.providers.protocol import LLMProvider
 
 from .executor import DBOSExecutor
-
-logger = structlog.get_logger()
 
 
 class _NullBus:
@@ -34,6 +32,53 @@ class _NullBus:
 
     async def get_outbound(self) -> Any:
         raise NotImplementedError
+
+
+# ── Per-task context for non-serializable deps ───────────────────────────────
+# ContextVars are safe for concurrent workflows — each asyncio Task gets
+# its own copy.
+
+_ctx_provider: contextvars.ContextVar[LLMProvider | None] = contextvars.ContextVar(
+    "_ctx_provider", default=None
+)
+_ctx_conversation: contextvars.ContextVar[Conversation | None] = contextvars.ContextVar(
+    "_ctx_conversation", default=None
+)
+_ctx_tools: contextvars.ContextVar[list[Tool] | None] = contextvars.ContextVar(
+    "_ctx_tools", default=None
+)
+_ctx_on_tool_calls: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "_ctx_on_tool_calls", default=None
+)
+_ctx_on_tool_result: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "_ctx_on_tool_result", default=None
+)
+_ctx_on_pre_tool: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "_ctx_on_pre_tool", default=None
+)
+
+
+def set_turn_context(
+    *,
+    provider: LLMProvider,
+    conversation: Conversation,
+    tools: list[Tool] | None = None,
+    on_tool_calls: Any = None,
+    on_tool_result: Any = None,
+    on_pre_tool: Any = None,
+) -> None:
+    """Set the non-serializable context for durable turns.
+
+    Call once at startup. The same provider/conversation/tools are used
+    for all turns and workflow recovery. Safe for concurrent turns via
+    ContextVar inheritance.
+    """
+    _ctx_provider.set(provider)
+    _ctx_conversation.set(conversation)
+    _ctx_tools.set(tools)
+    _ctx_on_tool_calls.set(on_tool_calls)
+    _ctx_on_tool_result.set(on_tool_result)
+    _ctx_on_pre_tool.set(on_pre_tool)
 
 
 @DBOS.workflow()
@@ -60,17 +105,14 @@ async def run_durable_turn(
 
     Returns the final assistant content, or None if max iterations reached.
     """
-    # These are set by the caller before invoking the workflow
-    # via the module-level _TurnContext.
-    provider = _TurnContext.provider
-    conversation = _TurnContext.conversation
-    tools = _TurnContext.tools
-    on_tool_calls = _TurnContext.on_tool_calls
-    on_tool_result = _TurnContext.on_tool_result
-    on_pre_tool = _TurnContext.on_pre_tool
+    provider = _ctx_provider.get()
+    conversation = _ctx_conversation.get()
+    tools = _ctx_tools.get()
 
-    assert provider is not None, "provider must be set via set_turn_context()"
-    assert conversation is not None, "conversation must be set via set_turn_context()"
+    if provider is None:
+        raise RuntimeError("provider must be set via set_turn_context()")
+    if conversation is None:
+        raise RuntimeError("conversation must be set via set_turn_context()")
 
     executor = DBOSExecutor()
 
@@ -85,9 +127,9 @@ async def run_durable_turn(
         temperature=temperature,
         max_tokens=max_tokens,
         reasoning_effort=reasoning_effort,
-        on_tool_calls=on_tool_calls,
-        on_tool_result=on_tool_result,
-        on_pre_tool=on_pre_tool,
+        on_tool_calls=_ctx_on_tool_calls.get(),
+        on_tool_result=_ctx_on_tool_result.get(),
+        on_pre_tool=_ctx_on_pre_tool.get(),
     )
 
     kwargs: dict[str, Any] = {}
@@ -113,40 +155,3 @@ async def run_durable_turn(
     await executor.record(conversation, session_id, new_msgs)
 
     return final_content
-
-
-class _TurnContext:
-    """Module-level holder for non-serializable turn dependencies.
-
-    Set these before calling run_durable_turn(). They can't be passed
-    as workflow arguments because they aren't serializable.
-    """
-
-    provider: LLMProvider | None = None
-    conversation: Conversation | None = None
-    tools: list[Tool] | None = None
-    on_tool_calls: Any = None
-    on_tool_result: Any = None
-    on_pre_tool: Any = None
-
-
-def set_turn_context(
-    *,
-    provider: LLMProvider,
-    conversation: Conversation,
-    tools: list[Tool] | None = None,
-    on_tool_calls: Any = None,
-    on_tool_result: Any = None,
-    on_pre_tool: Any = None,
-) -> None:
-    """Set the non-serializable context for durable turns.
-
-    Call once at startup. The same provider/conversation/tools are used
-    for all turns and workflow recovery.
-    """
-    _TurnContext.provider = provider
-    _TurnContext.conversation = conversation
-    _TurnContext.tools = tools
-    _TurnContext.on_tool_calls = on_tool_calls
-    _TurnContext.on_tool_result = on_tool_result
-    _TurnContext.on_pre_tool = on_pre_tool

@@ -43,6 +43,19 @@ class TestSerialization:
         assert restored.reasoning_content == "I thought about it"
         assert restored.thinking_blocks == [{"type": "thinking", "text": "hmm"}]
 
+    def test_dict_to_response_does_not_mutate_input(self) -> None:
+        d = {
+            "content": "hi",
+            "tool_calls": [{"id": "1", "name": "exec", "arguments": {}}],
+            "finish_reason": "stop",
+            "usage": {},
+            "reasoning_content": None,
+            "thinking_blocks": None,
+        }
+        original_keys = set(d.keys())
+        _dict_to_response(d)
+        assert set(d.keys()) == original_keys  # not mutated
+
 
 class TestDBOSExecutorProtocol:
     def test_has_required_methods(self) -> None:
