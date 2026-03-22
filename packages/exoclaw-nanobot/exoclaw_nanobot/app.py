@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -371,12 +372,17 @@ async def create(
         if job.payload.kind == "agent_turn":
             channel = job.payload.channel or "cli"
             chat_id = job.payload.to or "direct"
+            if job.payload.stateless:
+                sid = f"cron:{job.id}:{uuid.uuid4().hex[:8]}"
+            else:
+                sid = f"cron:{job.id}"
             response = await agent_loop.process_direct(
                 job.payload.message,
-                session_key=f"cron:{job.id}",
+                session_key=sid,
                 channel=channel,
                 chat_id=chat_id,
                 on_progress=None,
+                skills=job.payload.skills or None,
             )
             if job.payload.deliver and response:
                 await bus.publish_outbound(

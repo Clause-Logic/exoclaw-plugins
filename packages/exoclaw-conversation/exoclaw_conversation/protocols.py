@@ -73,6 +73,7 @@ class PromptBuilder(Protocol):
         self,
         history: list[dict[str, Any]],
         current_message: str,
+        skill_names: list[str] | None = None,
         *,
         media: list[str] | None = None,
         channel: str | None = None,

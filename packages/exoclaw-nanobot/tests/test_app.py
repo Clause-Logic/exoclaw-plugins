@@ -524,6 +524,107 @@ class TestCreate:
 
         fake_bus.publish_outbound.assert_not_called()
 
+    async def test_cron_job_passes_skills_to_process_direct(self) -> None:
+        """When a cron job has skills configured, they must be forwarded to the agent.
+
+        Without this, the agent running the cron job doesn't have the skill
+        loaded in its context — it just sees the prompt text but has no skill
+        instructions, so it behaves completely differently from a manual run.
+        """
+        fake_bus = MagicMock()
+        fake_bus.publish_inbound = AsyncMock()
+        fake_bus.publish_outbound = AsyncMock()
+
+        fake_loop = MagicMock()
+        fake_loop.run = AsyncMock()
+        fake_loop.process_direct = AsyncMock(return_value="Done.")
+
+        on_job = await self._get_on_cron_job(fake_bus, fake_loop)
+        assert on_job is not None
+
+        job = CronJob(
+            id="skill-test",
+            name="note-research",
+            schedule=CronSchedule(kind="cron", expr="0 * * * *"),
+            payload=CronPayload(
+                message="Run note-research skill: pick a topic and create a zettel",
+                channel="telegram",
+                to="123",
+                deliver=True,
+                skills=["note-research"],
+            ),
+            state=CronJobState(),
+        )
+
+        await on_job(job)
+
+        fake_loop.process_direct.assert_called_once()
+        call_kwargs = fake_loop.process_direct.call_args
+        # The skills must be passed through so the agent loop can load them
+        # into the system prompt. The exact parameter name may be `skills` or
+        # `skill_names` — either way it must appear in the call.
+        all_args = {**dict(zip(["content"], call_kwargs.args)), **(call_kwargs.kwargs or {})}
+        skills_value = all_args.get("skills") or all_args.get("skill_names")
+        assert skills_value == ["note-research"], (
+            f"Expected skills=['note-research'] to be passed to process_direct, "
+            f"got call args: {call_kwargs}"
+        )
+
+    async def test_cron_job_stateless_uses_unique_session_key(self) -> None:
+        """When stateless=True, each cron run must use a unique session key.
+
+        Otherwise history accumulates across runs in the same session
+        (e.g. 'cron:<job_id>'), causing the agent to see stale context
+        from previous executions instead of starting fresh each time.
+        """
+        fake_bus = MagicMock()
+        fake_bus.publish_inbound = AsyncMock()
+        fake_bus.publish_outbound = AsyncMock()
+
+        fake_loop = MagicMock()
+        fake_loop.run = AsyncMock()
+        fake_loop.process_direct = AsyncMock(return_value="Done.")
+
+        on_job = await self._get_on_cron_job(fake_bus, fake_loop)
+        assert on_job is not None
+
+        job = CronJob(
+            id="stateless-test",
+            name="stateless-job",
+            schedule=CronSchedule(kind="every", every_ms=3600000),
+            payload=CronPayload(
+                message="do something fresh",
+                channel="telegram",
+                to="123",
+                deliver=False,
+                stateless=True,
+            ),
+            state=CronJobState(),
+        )
+
+        # Run twice
+        await on_job(job)
+        await on_job(job)
+
+        assert fake_loop.process_direct.call_count == 2
+
+        first_call = fake_loop.process_direct.call_args_list[0]
+        second_call = fake_loop.process_direct.call_args_list[1]
+
+        first_session = first_call.kwargs.get("session_key") or first_call.args[1] if len(first_call.args) > 1 else first_call.kwargs.get("session_key")
+        second_session = second_call.kwargs.get("session_key") or second_call.args[1] if len(second_call.args) > 1 else second_call.kwargs.get("session_key")
+
+        # Session keys must differ between runs so no history accumulates
+        assert first_session != second_session, (
+            f"Stateless cron job used the same session key for both runs: {first_session!r}. "
+            f"Expected unique keys per run to prevent history accumulation."
+        )
+        # And neither should be the static 'cron:<id>' key
+        assert first_session != "cron:stateless-test", (
+            "Stateless cron job used the static session key 'cron:stateless-test' — "
+            "this causes history to accumulate across runs."
+        )
+
     async def test_create_loads_config_from_path(self, tmp_path: object) -> None:
         import json as _json
         from pathlib import Path as _Path

@@ -62,8 +62,10 @@ class SummarizingConsolidationPolicy:
 
     def _read_history(self) -> str:
         """Read the current HISTORY.md content."""
+        from pathlib import Path
+
         if hasattr(self._memory, "history_file"):
-            path = self._memory.history_file
-            if path.exists():
+            path = getattr(self._memory, "history_file")
+            if isinstance(path, Path) and path.exists():
                 return path.read_text(encoding="utf-8")
         return ""

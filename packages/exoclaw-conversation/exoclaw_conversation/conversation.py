@@ -96,8 +96,10 @@ class DefaultConversation:
         media: list[str] | None = None,
         plugin_context: list[str] | None = None,
         turn_context: list[str] | None = None,
+        **kwargs: list[str] | None,
     ) -> list[dict[str, Any]]:
         """Return the full messages list to send to the LLM."""
+        skills: list[str] | None = kwargs.get("skills")
         session = self.history.get_or_create(session_id)
 
         # Trigger background consolidation when policy says so (or default: history is long)
@@ -134,6 +136,7 @@ class DefaultConversation:
         return self.prompt.build_messages(
             history=history,
             current_message=message,
+            skill_names=skills,
             media=media,
             channel=channel,
             chat_id=chat_id,
