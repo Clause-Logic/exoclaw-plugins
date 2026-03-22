@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 import httpx
 import structlog
-from exoclaw.agent.tools.protocol import ToolBase
+from exoclaw.agent.tools.protocol import ToolBase, ToolContext
 
 logger = structlog.get_logger()
 
@@ -86,26 +86,39 @@ class WebSearchTool(ToolBase):
         """Resolve API key at call time so env/config changes are picked up."""
         return self._init_api_key or os.environ.get("BRAVE_API_KEY", "")
 
+    async def execute_with_context(
+        self, ctx: ToolContext, query: str, count: int | None = None, **kwargs: Any
+    ) -> str:
+        if self._search_model and self._provider:
+            return await self._search_via_model(query, count, ctx=ctx)
+        return await self._search_via_brave(query, count)
+
     async def execute(self, query: str, count: int | None = None, **kwargs: Any) -> str:
         if self._search_model and self._provider:
             return await self._search_via_model(query, count)
         return await self._search_via_brave(query, count)
 
-    async def _search_via_model(self, query: str, count: int | None) -> str:
+    async def _search_via_model(
+        self, query: str, count: int | None, ctx: ToolContext | None = None
+    ) -> str:
         n = min(max(count or self.max_results, 1), 10)
         logger.debug("web_search_model", model=self._search_model)
         try:
-            response = await self._provider.chat(  # type: ignore[union-attr]
-                messages=[
+            chat_kwargs: dict[str, Any] = {
+                "messages": [
                     {
                         "role": "user",
                         "content": f"Search the web for: {query}\n\nReturn the top {n} results with titles, URLs, and brief descriptions.",
                     }
                 ],
-                model=self._search_model,
-                max_tokens=1024,
-                temperature=0.1,
-            )
+                "model": self._search_model,
+                "max_tokens": 1024,
+                "temperature": 0.1,
+            }
+            if ctx and ctx.executor:
+                response = await ctx.executor.chat(self._provider, **chat_kwargs)  # type: ignore[arg-type]
+            else:
+                response = await self._provider.chat(**chat_kwargs)  # type: ignore[union-attr]
             return response.content or f"No results for: {query}"
         except Exception as e:
             logger.error("web_search_model_error", error=e)

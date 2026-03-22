@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import jinja2
-from exoclaw.agent.tools.protocol import ToolBase
+from exoclaw.agent.tools.protocol import ToolBase, ToolContext
 from exoclaw.providers.protocol import LLMProvider
 from exoclaw.providers.types import ResponseFormat
 
@@ -137,6 +137,19 @@ class LLMCallTool(ToolBase):
             "required": ["prompt"],
         }
 
+    async def execute_with_context(
+        self,
+        ctx: ToolContext,
+        prompt: str,
+        vars: dict[str, Any] | None = None,
+        model: str | None = None,
+        schema: dict[str, Any] | None = None,
+        output: str | None = None,
+        **kwargs: Any,
+    ) -> str:
+        """Execute with durable I/O via ctx.executor when available."""
+        return await self._call(prompt, vars, model, schema, output, ctx=ctx, **kwargs)
+
     async def execute(
         self,
         prompt: str,
@@ -144,6 +157,18 @@ class LLMCallTool(ToolBase):
         model: str | None = None,
         schema: dict[str, Any] | None = None,
         output: str | None = None,
+        **kwargs: Any,
+    ) -> str:
+        return await self._call(prompt, vars, model, schema, output, **kwargs)
+
+    async def _call(
+        self,
+        prompt: str,
+        vars: dict[str, Any] | None = None,
+        model: str | None = None,
+        schema: dict[str, Any] | None = None,
+        output: str | None = None,
+        ctx: ToolContext | None = None,
         **kwargs: Any,
     ) -> str:
         # Resolve model
@@ -163,8 +188,8 @@ class LLMCallTool(ToolBase):
         except jinja2.TemplateError as e:
             return f"Error rendering template: {e}"
 
-        # Call LLM
-        messages = [{"role": "user", "content": rendered}]
+        # Call LLM — use executor for durability when available
+        messages: list[dict[str, Any]] = [{"role": "user", "content": rendered}]
         chat_kwargs: dict[str, Any] = {
             "messages": messages,
             "tools": [],
@@ -174,7 +199,10 @@ class LLMCallTool(ToolBase):
             chat_kwargs["response_format"] = _build_response_format(dict(schema))
 
         try:
-            response = await self._provider.chat(**chat_kwargs)
+            if ctx and ctx.executor:
+                response = await ctx.executor.chat(self._provider, **chat_kwargs)
+            else:
+                response = await self._provider.chat(**chat_kwargs)
             text = response.content or ""
         except Exception as e:
             return f"Error calling LLM: {e}"
