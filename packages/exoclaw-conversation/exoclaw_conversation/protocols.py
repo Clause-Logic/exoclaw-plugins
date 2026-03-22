@@ -52,9 +52,7 @@ class MemoryBackend(Protocol):
         memory_window: int = 50,
     ) -> bool:
         """Consolidate pre-loaded messages. Falls back to consolidate()."""
-        return await self.consolidate(
-            session, archive_all=archive_all, memory_window=memory_window
-        )
+        return await self.consolidate(session, archive_all=archive_all, memory_window=memory_window)
 
 
 @runtime_checkable
