@@ -33,5 +33,7 @@ def init_dbos(db_path: str | Path = "exoclaw.sqlite") -> None:
 
     # Recover any turns that were in progress when the process died.
     # DBOS replays completed steps and continues from the next one.
-    DBOS.recover_pending_workflows()
+    recover = getattr(DBOS, "recover_pending_workflows", None)
+    if recover is not None:
+        recover()
     logger.info("dbos_recovery_complete")
