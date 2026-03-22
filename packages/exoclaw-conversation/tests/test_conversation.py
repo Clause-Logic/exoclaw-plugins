@@ -590,9 +590,20 @@ class TestProtocols:
 
 def _make_mock_history(session: Session | None = None) -> MagicMock:
     s = session or Session(key="test:1")
-    h = MagicMock(spec=["get_or_create", "save", "invalidate", "list_sessions"])
+    h = MagicMock(
+        spec=[
+            "get_or_create",
+            "save",
+            "save_append",
+            "save_metadata",
+            "load_range",
+            "invalidate",
+            "list_sessions",
+        ]
+    )
     h.get_or_create.return_value = s
     h.list_sessions.return_value = [{"key": "test:1"}]
+    h.load_range.return_value = []
     return h
 
 
@@ -660,7 +671,7 @@ class TestDefaultConversation:
             prompt=_make_mock_prompt(),
         )
         await conv.record("test:1", [{"role": "user", "content": "hi"}])
-        history.save.assert_called_once()
+        history.save_append.assert_called_once()
 
     async def test_record_strips_runtime_tag(self) -> None:
         session = Session(key="test:1")

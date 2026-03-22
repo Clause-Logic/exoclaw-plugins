@@ -17,6 +17,18 @@ class HistoryStore(Protocol):
     def invalidate(self, key: str) -> None: ...
     def list_sessions(self) -> list[dict[str, Any]]: ...
 
+    def save_append(self, session: "Session", new_messages: list[dict[str, Any]]) -> None:
+        """Append new messages to disk. Falls back to full save()."""
+        self.save(session)
+
+    def save_metadata(self, session: "Session") -> None:
+        """Update metadata without rewriting messages. Falls back to full save()."""
+        self.save(session)
+
+    def load_range(self, key: str, start: int, end: int) -> list[dict[str, Any]]:
+        """Load a range of messages from disk by index. Returns empty list by default."""
+        return []
+
 
 @runtime_checkable
 class MemoryBackend(Protocol):
@@ -30,6 +42,19 @@ class MemoryBackend(Protocol):
         archive_all: bool = False,
         memory_window: int = 50,
     ) -> bool: ...
+
+    async def consolidate_messages(
+        self,
+        session: "Session",
+        *,
+        old_messages: list[dict[str, Any]],
+        archive_all: bool = False,
+        memory_window: int = 50,
+    ) -> bool:
+        """Consolidate pre-loaded messages. Falls back to consolidate()."""
+        return await self.consolidate(
+            session, archive_all=archive_all, memory_window=memory_window
+        )
 
 
 @runtime_checkable

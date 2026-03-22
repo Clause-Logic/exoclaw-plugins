@@ -112,7 +112,7 @@ class DefaultConversation:
                 try:
                     async with lock:
                         success = await self._consolidate_memory(session)
-                        if success and hasattr(self.history, "save_metadata"):
+                        if success:
                             self.history.save_metadata(session)
                 finally:
                     self._consolidating.discard(session_id)
@@ -154,10 +154,7 @@ class DefaultConversation:
         """Persist the messages produced during one turn."""
         session = self.history.get_or_create(session_id)
         prepared = self._prepare_turn(session, new_messages)
-        if hasattr(self.history, "save_append"):
-            self.history.save_append(session, prepared)
-        else:
-            self.history.save(session)
+        self.history.save_append(session, prepared)
 
     async def clear(self, session_id: str) -> bool:
         """Archive current session to memory and start fresh. Returns True on success."""
@@ -236,10 +233,8 @@ class DefaultConversation:
     ) -> list[dict[str, Any]]:
         """Load the message range to consolidate from disk."""
         if archive_all:
-            # Load all messages
-            if hasattr(self.history, "load_range"):
-                return self.history.load_range(session.key, 0, session.total_messages)
-            return list(session.messages)
+            loaded = self.history.load_range(session.key, 0, session.total_messages)
+            return loaded or list(session.messages)
 
         keep_count = self.memory_window // 2
         if session.total_messages <= keep_count:
@@ -248,10 +243,8 @@ class DefaultConversation:
         start = session.last_consolidated
         if start >= end:
             return []
-        if hasattr(self.history, "load_range"):
-            return self.history.load_range(session.key, start, end)
-        # Fallback for non-disk-backed history stores
-        return session.messages[: end - start]
+        loaded = self.history.load_range(session.key, start, end)
+        return loaded or session.messages[: end - start]
 
     def _prepare_turn(
         self, session: Session, messages: list[dict[str, Any]]
