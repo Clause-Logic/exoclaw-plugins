@@ -611,8 +611,16 @@ class TestCreate:
         first_call = fake_loop.process_direct.call_args_list[0]
         second_call = fake_loop.process_direct.call_args_list[1]
 
-        first_session = first_call.kwargs.get("session_key") or first_call.args[1] if len(first_call.args) > 1 else first_call.kwargs.get("session_key")
-        second_session = second_call.kwargs.get("session_key") or second_call.args[1] if len(second_call.args) > 1 else second_call.kwargs.get("session_key")
+        first_session = (
+            first_call.kwargs.get("session_key") or first_call.args[1]
+            if len(first_call.args) > 1
+            else first_call.kwargs.get("session_key")
+        )
+        second_session = (
+            second_call.kwargs.get("session_key") or second_call.args[1]
+            if len(second_call.args) > 1
+            else second_call.kwargs.get("session_key")
+        )
 
         # Session keys must differ between runs so no history accumulates
         assert first_session != second_session, (
