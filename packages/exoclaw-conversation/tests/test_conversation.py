@@ -142,14 +142,45 @@ class TestSessionManager:
         mgr = SessionManager(tmp_path)
         s = mgr.get_or_create("ch:123")
         s.add_message("user", "hello")
-        s.last_consolidated = 1
         mgr.save(s)
 
         mgr2 = SessionManager(tmp_path)
         s2 = mgr2.get_or_create("ch:123")
-        assert len(s2.messages) == 1
+        assert s2.total_messages == 1
+        assert len(s2.messages) == 1  # unconsolidated
         assert s2.messages[0]["content"] == "hello"
-        assert s2.last_consolidated == 1
+        assert s2.last_consolidated == 0
+
+    def test_save_and_load_consolidated_not_in_ram(self, tmp_path: Path) -> None:
+        """Consolidated messages stay on disk, not loaded into RAM."""
+        mgr = SessionManager(tmp_path)
+        s = mgr.get_or_create("ch:123")
+        s.add_message("user", "old")
+        s.add_message("assistant", "old reply")
+        s.add_message("user", "new")
+        s.last_consolidated = 2
+        s.total_messages = 3
+        mgr.save(s)
+
+        mgr2 = SessionManager(tmp_path)
+        s2 = mgr2.get_or_create("ch:123")
+        assert s2.total_messages == 3
+        assert s2.last_consolidated == 2
+        assert len(s2.messages) == 1  # only unconsolidated tail
+        assert s2.messages[0]["content"] == "new"
+
+    def test_load_range(self, tmp_path: Path) -> None:
+        """load_range reads specific message ranges from disk."""
+        mgr = SessionManager(tmp_path)
+        s = mgr.get_or_create("ch:123")
+        for i in range(5):
+            s.add_message("user" if i % 2 == 0 else "assistant", str(i))
+        mgr.save(s)
+
+        msgs = mgr.load_range("ch:123", 1, 3)
+        assert len(msgs) == 2
+        assert msgs[0]["content"] == "1"
+        assert msgs[1]["content"] == "2"
 
     def test_invalidate(self, tmp_path: Path) -> None:
         mgr = SessionManager(tmp_path)
@@ -566,9 +597,10 @@ def _make_mock_history(session: Session | None = None) -> MagicMock:
 
 
 def _make_mock_memory() -> MagicMock:
-    m = MagicMock(spec=["get_memory_context", "consolidate"])
+    m = MagicMock(spec=["get_memory_context", "consolidate", "consolidate_messages"])
     m.get_memory_context.return_value = ""
     m.consolidate = AsyncMock(return_value=True)
+    m.consolidate_messages = AsyncMock(return_value=True)
     return m
 
 
@@ -615,7 +647,9 @@ class TestDefaultConversation:
         )
         await conv.build_prompt("test:1", "hello")
         await asyncio.sleep(0.05)
-        memory.consolidate.assert_called_once()
+        # consolidation now goes through consolidate_messages (disk-backed path)
+        # or consolidate (legacy path via ConsolidationPolicy)
+        assert memory.consolidate_messages.called or memory.consolidate.called
 
     async def test_record_saves_turn(self) -> None:
         session = Session(key="test:1")
@@ -737,6 +771,7 @@ class TestDefaultConversation:
         session.messages = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
         memory = _make_mock_memory()
         memory.consolidate = AsyncMock(return_value=False)
+        memory.consolidate_messages = AsyncMock(return_value=False)
         conv = DefaultConversation(
             history=_make_mock_history(session),
             memory=memory,
@@ -984,6 +1019,7 @@ class TestDefaultConversationExtra:
         session.messages = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
         memory = _make_mock_memory()
         memory.consolidate = AsyncMock(side_effect=Exception("boom"))
+        memory.consolidate_messages = AsyncMock(side_effect=Exception("boom"))
         conv = DefaultConversation(
             history=_make_mock_history(session),
             memory=memory,

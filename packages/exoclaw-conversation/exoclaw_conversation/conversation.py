@@ -111,7 +111,9 @@ class DefaultConversation:
             async def _consolidate_and_unlock() -> None:
                 try:
                     async with lock:
-                        await self._consolidate_memory(session)
+                        success = await self._consolidate_memory(session)
+                        if success and hasattr(self.history, "save_metadata"):
+                            self.history.save_metadata(session)
                 finally:
                     self._consolidating.discard(session_id)
                     _task = asyncio.current_task()
@@ -151,8 +153,11 @@ class DefaultConversation:
     ) -> None:
         """Persist the messages produced during one turn."""
         session = self.history.get_or_create(session_id)
-        self._save_turn(session, new_messages)
-        self.history.save(session)
+        prepared = self._prepare_turn(session, new_messages)
+        if hasattr(self.history, "save_append"):
+            self.history.save_append(session, prepared)
+        else:
+            self.history.save(session)
 
     async def clear(self, session_id: str) -> bool:
         """Archive current session to memory and start fresh. Returns True on success."""
@@ -161,7 +166,8 @@ class DefaultConversation:
         self._consolidating.add(session_id)
         try:
             async with lock:
-                snapshot = session.messages[session.last_consolidated :]
+                # session.messages contains only unconsolidated messages
+                snapshot = list(session.messages)
                 if snapshot:
                     temp = Session(key=session_id)
                     temp.messages = list(snapshot)
@@ -193,26 +199,71 @@ class DefaultConversation:
             return await self._consolidation_policy.should_consolidate(
                 session, memory_window=self.memory_window
             )
-        unconsolidated = len(session.messages) - session.last_consolidated
+        unconsolidated = session.total_messages - session.last_consolidated
         return unconsolidated >= self.memory_window
 
     async def _consolidate_memory(self, session: Session, archive_all: bool = False) -> bool:
-        """Delegate to ConsolidationPolicy if present, otherwise MemoryBackend."""
+        """Delegate to ConsolidationPolicy if present, otherwise MemoryBackend.
+
+        Loads the consolidation range from disk so we don't need the full
+        message history in RAM.
+        """
         if self._consolidation_policy is not None:
             return await self._consolidation_policy.consolidate(
                 session,
                 archive_all=archive_all,
                 memory_window=self.memory_window,
             )
-        return await self.memory.consolidate(
+
+        # Load only the messages that need consolidating from disk
+        if archive_all:
+            old_messages = self._load_consolidation_range(session, archive_all=True)
+        else:
+            old_messages = self._load_consolidation_range(session, archive_all=False)
+
+        if not old_messages:
+            return True
+
+        return await self.memory.consolidate_messages(
             session,
+            old_messages=old_messages,
             archive_all=archive_all,
             memory_window=self.memory_window,
         )
 
-    def _save_turn(self, session: Session, messages: list[dict[str, Any]]) -> None:
-        """Save turn messages into session, truncating large tool results."""
+    def _load_consolidation_range(
+        self, session: Session, *, archive_all: bool
+    ) -> list[dict[str, Any]]:
+        """Load the message range to consolidate from disk."""
+        if archive_all:
+            # Load all messages
+            if hasattr(self.history, "load_range"):
+                return self.history.load_range(session.key, 0, session.total_messages)
+            return list(session.messages)
+
+        keep_count = self.memory_window // 2
+        if session.total_messages <= keep_count:
+            return []
+        end = session.total_messages - keep_count
+        start = session.last_consolidated
+        if start >= end:
+            return []
+        if hasattr(self.history, "load_range"):
+            return self.history.load_range(session.key, start, end)
+        # Fallback for non-disk-backed history stores
+        return session.messages[: end - start]
+
+    def _prepare_turn(
+        self, session: Session, messages: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Prepare turn messages, truncating large tool results.
+
+        Appends to session.messages (in-memory view) and returns the
+        list of prepared entries for disk persistence.
+        """
         from datetime import datetime
+
+        prepared: list[dict[str, Any]] = []
 
         for m in messages:
             entry = dict(m)
@@ -258,4 +309,8 @@ class DefaultConversation:
 
             entry.setdefault("timestamp", datetime.now().isoformat())
             session.messages.append(entry)
+            session.total_messages += 1
+            prepared.append(entry)
+
         session.updated_at = datetime.now()
+        return prepared
