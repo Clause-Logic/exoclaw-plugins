@@ -130,7 +130,7 @@ class SubagentManager:
                 conversation=self._conversation_factory(),
                 model=self._model,
                 max_iterations=self._max_iterations,
-                tools=self._tools,
+                tools=[t for t in self._tools if t.name != "spawn"],
             )
             result = await loop.process_direct(task)
         except Exception as e:

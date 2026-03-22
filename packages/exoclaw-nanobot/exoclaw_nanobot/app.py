@@ -247,6 +247,7 @@ async def create(
     )
 
     # Subagent + spawn
+    _skill_pkgs = config.skills.packages or None
     subagent_mgr = SubagentManager(
         provider=provider,
         bus=bus,
@@ -254,7 +255,9 @@ async def create(
             workspace=workspace,
             provider=provider,
             model=model,
+            skill_packages=_skill_pkgs,
         ),
+        tools=tools,
         model=model,
         max_iterations=config.agents.defaults.max_tool_iterations,
         workspace=workspace,
