@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -86,25 +86,62 @@ class MemoryStore:
         """Consolidate old messages into MEMORY.md + HISTORY.md via LLM tool call.
 
         Returns True on success (including no-op), False on failure.
+
+        Legacy interface — reads messages from session.messages in RAM.
+        Prefer consolidate_messages() which accepts pre-loaded messages.
         """
         if archive_all:
             old_messages = session.messages
             keep_count = 0
-            logger.info(
-                "memory_consolidation_started", messages=len(session.messages), mode="archive_all"
-            )
         else:
             keep_count = memory_window // 2
-            if len(session.messages) <= keep_count:
+            total = getattr(session, "total_messages", len(session.messages))
+            if total <= keep_count:
                 return True
-            if len(session.messages) - session.last_consolidated <= 0:
+            if total - session.last_consolidated <= 0:
                 return True
-            old_messages = session.messages[session.last_consolidated : -keep_count]
+            # Translate absolute last_consolidated to relative index within
+            # session.messages (which may start at _messages_offset for
+            # disk-backed sessions).
+            offset = getattr(session, "_messages_offset", 0)
+            rel_start = max(session.last_consolidated - offset, 0)
+            rel_end = len(session.messages) - keep_count
+            old_messages = session.messages[rel_start:rel_end] if rel_end > rel_start else []
             if not old_messages:
                 return True
-            logger.info(
-                "memory_consolidation_started", to_consolidate=len(old_messages), keep=keep_count
-            )
+
+        return await self.consolidate_messages(
+            session,
+            old_messages=old_messages,
+            archive_all=archive_all,
+            memory_window=memory_window,
+        )
+
+    async def consolidate_messages(
+        self,
+        session: Session,
+        *,
+        old_messages: list[dict[str, Any]],
+        archive_all: bool = False,
+        memory_window: int = 50,
+    ) -> bool:
+        """Consolidate the given messages into MEMORY.md + HISTORY.md via LLM tool call.
+
+        Unlike consolidate(), this accepts pre-loaded messages so the caller
+        can load them from disk without keeping the full history in RAM.
+
+        Returns True on success (including no-op), False on failure.
+        """
+        if not old_messages:
+            return True
+
+        keep_count = 0 if archive_all else memory_window // 2
+        logger.info(
+            "memory_consolidation_started",
+            to_consolidate=len(old_messages),
+            keep=keep_count,
+            mode="archive_all" if archive_all else "normal",
+        )
 
         lines = []
         for m in old_messages:
@@ -174,10 +211,11 @@ class MemoryStore:
                 if update != current_memory:
                     self.write_long_term(update)
 
-            session.last_consolidated = 0 if archive_all else len(session.messages) - keep_count
+            total = getattr(session, "total_messages", len(session.messages))
+            session.last_consolidated = 0 if archive_all else total - keep_count
             logger.info(
                 "memory_consolidated",
-                messages=len(session.messages),
+                total_messages=total,
                 last_consolidated=session.last_consolidated,
             )
             return True
