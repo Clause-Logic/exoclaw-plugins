@@ -74,6 +74,10 @@ class CronTool(ToolBase):
                     "type": "boolean",
                     "description": "Whether to deliver the response to the user (for update)",
                 },
+                "to": {
+                    "type": "string",
+                    "description": "Delivery destination for this job (for update). Channel-specific address — consult the active channel skill for the format.",
+                },
                 "skills": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -107,6 +111,7 @@ class CronTool(ToolBase):
         at: str | None = None,
         job_id: str | None = None,
         deliver: bool | None = None,
+        to: str | None = None,
         skills: list[str] | None = None,
         stateless: bool | None = None,
         **kwargs: Any,
@@ -120,7 +125,7 @@ class CronTool(ToolBase):
         elif action == "remove":
             return self._remove_job(job_id)
         elif action == "update":
-            return self._update_job(job_id, message or None, deliver, skills, stateless)
+            return self._update_job(job_id, message or None, deliver, to, skills, stateless)
         return f"Unknown action: {action}"
 
     def _add_job(
@@ -191,13 +196,14 @@ class CronTool(ToolBase):
         job_id: str | None,
         message: str | None,
         deliver: bool | None,
+        to: str | None,
         skills: list[str] | None,
         stateless: bool | None = None,
     ) -> str:
         if not job_id:
             return "Error: job_id is required for update"
         job = self._cron.update_job(
-            job_id, message=message, deliver=deliver, skills=skills, stateless=stateless
+            job_id, message=message, deliver=deliver, to=to, skills=skills, stateless=stateless
         )
         if job:
             return f"Updated job {job_id}"

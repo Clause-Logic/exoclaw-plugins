@@ -29,6 +29,7 @@ Recurring (interval):
 ### Options
 
 - **deliver** — if true, send the job's output to the user. If false, run silently (default: true)
+- **to** — delivery destination (channel-specific address). Captured automatically when the job is created; use `update` to redirect it later. Consult the active channel skill for the address format.
 - **skills** — load these skills into context when the job runs: `"skills": ["rss-collector", "personal-api"]`
 - **stateless** — if true, run without session history (fresh context each time)
 - **tz** — IANA timezone for cron expressions (e.g. `America/New_York`, `US/Eastern`)
@@ -38,6 +39,7 @@ Recurring (interval):
 ```json
 {"action": "list"}
 {"action": "update", "job_id": "abc123", "deliver": false}
+{"action": "update", "job_id": "abc123", "to": "<channel-specific address>"}
 {"action": "remove", "job_id": "abc123"}
 ```
 
@@ -63,4 +65,5 @@ Examples:
 
 - Cannot schedule new jobs from within a cron job execution
 - One-time jobs (`at`) auto-delete after running
-- Jobs run in the context of the channel/chat they were created from
+- Jobs deliver to the channel/destination where they were created — use `update` with `to` to redirect
+- The format of `to` is channel-specific; channel skills may document it

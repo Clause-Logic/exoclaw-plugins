@@ -159,6 +159,7 @@ async def create(
     extra_channels: list[Any] | None = None,
     extra_tools: list[Any] | None = None,
     enable_cli: bool = True,
+    cli_channel: Any | None = None,
     on_pre_context: Callable[[str, str, str, str], Awaitable[str]] | None = None,
     on_pre_tool: Callable[[str, dict[str, Any], str], Awaitable[str | None]] | None = None,
     on_post_turn: Callable[[list[dict[str, Any]], str, str, str], Awaitable[None]] | None = None,
@@ -258,6 +259,8 @@ async def create(
 
     # Subagent + spawn
     _skill_pkgs = config.skills.packages or None
+    # Pass the tools list by reference — it's mutated in-place below (MCP, extra_tools),
+    # so subagents will have the full tool set when they actually run.
     subagent_mgr = SubagentManager(
         provider=provider,
         bus=bus,
@@ -408,7 +411,12 @@ async def create(
     cron_service.on_job = _on_cron_job
 
     # CLI channel (optional)
-    cli = CLIChannel(history_dir=workspace / "history") if enable_cli else None
+    if not enable_cli:
+        cli = None
+    elif cli_channel is not None:
+        cli = cli_channel
+    else:
+        cli = CLIChannel(history_dir=workspace / "history")
 
     # Heartbeat
     heartbeat = HeartbeatService(
