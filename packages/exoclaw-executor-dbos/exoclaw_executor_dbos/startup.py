@@ -52,6 +52,26 @@ def init_dbos(db_path: str | Path = "exoclaw.sqlite") -> None:
 
     db_file = Path(db_path)
 
+    # Remove stale DB with broken schema from pre-patch runs.
+    # Once the patch is applied and a clean DB is created, this
+    # block becomes a no-op (the schema will be correct).
+    if db_file.exists():
+        import sqlite3
+
+        try:
+            conn = sqlite3.connect(str(db_file))
+            # Test if the DEFAULT works — if not, the schema is broken
+            conn.execute(
+                "INSERT INTO application_versions (version_id, version_name) "
+                "VALUES ('__test__', '__test__')"
+            )
+            conn.execute("DELETE FROM application_versions WHERE version_id='__test__'")
+            conn.commit()
+            conn.close()
+        except Exception:
+            logger.warning("dbos_removing_broken_db", db_path=str(db_file))
+            db_file.unlink()
+
     DBOS(
         config={
             "name": "exoclaw",
