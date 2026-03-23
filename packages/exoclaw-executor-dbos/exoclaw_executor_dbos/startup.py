@@ -21,29 +21,29 @@ def init_dbos(db_path: str | Path = "exoclaw.sqlite") -> None:
         db_path: Path to the SQLite database. Defaults to exoclaw.sqlite
                  in the current directory.
     """
-    db_url = f"sqlite:///{db_path}"
-    try:
-        DBOS(
-            config={
-                "name": "exoclaw",
-                "system_database_url": db_url,
-            }
-        )
-        DBOS.launch()
-        logger.info("dbos_initialized", db_path=str(db_path))
-    except Exception:
-        # If the DB is corrupt from a previous failed init, delete and retry
-        db_file = Path(db_path)
-        if db_file.exists():
-            logger.warning("dbos_init_failed_retrying", db_path=str(db_path))
+    db_file = Path(db_path)
+    db_url = f"sqlite:///{db_file}"
+
+    # Validate the existing DB is usable. If it's corrupt or from an
+    # incompatible DBOS version, remove it so init starts clean.
+    # This is safe because DBOS recovery only matters within the same
+    # application version — a new deploy invalidates old workflows anyway.
+    if db_file.exists():
+        try:
+            import sqlite3
+
+            conn = sqlite3.connect(str(db_file))
+            conn.execute("SELECT 1 FROM application_versions LIMIT 1")
+            conn.close()
+        except Exception:
+            logger.warning("dbos_stale_db_removed", db_path=str(db_file))
             db_file.unlink()
-            DBOS(
-                config={
-                    "name": "exoclaw",
-                    "system_database_url": db_url,
-                }
-            )
-            DBOS.launch()
-            logger.info("dbos_initialized_after_reset", db_path=str(db_path))
-        else:
-            raise
+
+    DBOS(
+        config={
+            "name": "exoclaw",
+            "system_database_url": db_url,
+        }
+    )
+    DBOS.launch()
+    logger.info("dbos_initialized", db_path=str(db_file))

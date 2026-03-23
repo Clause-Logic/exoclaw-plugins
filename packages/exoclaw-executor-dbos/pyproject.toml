@@ -1,6 +1,6 @@
 [project]
 name = "exoclaw-executor-dbos"
-version = "0.1.1"
+version = "0.1.2"
 description = "DBOS-backed durable executor for exoclaw — turns and tool calls survive restarts"
 readme = "README.md"
 requires-python = ">=3.11"
