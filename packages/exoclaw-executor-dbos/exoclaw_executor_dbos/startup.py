@@ -17,32 +17,26 @@ logger = structlog.get_logger()
 def init_dbos(db_path: str | Path = "exoclaw.sqlite") -> None:
     """Initialize DBOS with SQLite and launch (which auto-recovers).
 
+    Always starts with a fresh database. Recovery across deploys is
+    not useful since the application code (and thus workflow definitions)
+    changes with each deploy. Within a single run, DBOS journals steps
+    and can recover from mid-turn crashes.
+
     Args:
         db_path: Path to the SQLite database. Defaults to exoclaw.sqlite
                  in the current directory.
     """
     db_file = Path(db_path)
-    db_url = f"sqlite:///{db_file}"
 
-    # Validate the existing DB is usable. If it's corrupt or from an
-    # incompatible DBOS version, remove it so init starts clean.
-    # This is safe because DBOS recovery only matters within the same
-    # application version — a new deploy invalidates old workflows anyway.
+    # Always start fresh — avoids schema compat issues between DBOS versions
+    # and stale workflow state from previous deploys.
     if db_file.exists():
-        try:
-            import sqlite3
-
-            conn = sqlite3.connect(str(db_file))
-            conn.execute("SELECT 1 FROM application_versions LIMIT 1")
-            conn.close()
-        except Exception:
-            logger.warning("dbos_stale_db_removed", db_path=str(db_file))
-            db_file.unlink()
+        db_file.unlink()
 
     DBOS(
         config={
             "name": "exoclaw",
-            "system_database_url": db_url,
+            "system_database_url": f"sqlite:///{db_file}",
         }
     )
     DBOS.launch()
