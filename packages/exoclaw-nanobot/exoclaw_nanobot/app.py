@@ -20,7 +20,13 @@ from exoclaw_conversation.conversation import DefaultConversation
 from exoclaw_conversation.memory import MemoryStore
 from exoclaw_conversation.session.manager import SessionManager
 from exoclaw_conversation.summarizing_policy import SummarizingConsolidationPolicy
-from exoclaw_executor_dbos import DBOSExecutor, init_dbos, set_turn_context
+
+try:
+    from exoclaw_executor_dbos import DBOSExecutor, init_dbos, set_turn_context
+
+    _DBOS_AVAILABLE = True
+except Exception:
+    _DBOS_AVAILABLE = False
 from exoclaw_loop_detection import LoopDetectionConfig, LoopDetectionPolicy
 from exoclaw_provider_litellm.provider import LiteLLMProvider
 from exoclaw_subagent.manager import SubagentManager
@@ -346,7 +352,7 @@ async def create(
         return None
 
     # Durable executor — every LLM call and tool execution is checkpointed
-    executor = DBOSExecutor()
+    executor = DBOSExecutor() if _DBOS_AVAILABLE else None
 
     # Agent loop
     agent_loop = AgentLoop(
@@ -414,16 +420,19 @@ async def create(
         enabled=config.gateway.heartbeat.enabled,
     )
 
-    # Set turn context for DBOS recovery, then initialize
-    # (DBOS.launch() auto-recovers incomplete workflows)
-    set_turn_context(
-        provider=provider,
-        conversation=conversation,
-        tools=tools,
-        on_tool_calls=on_tool_calls,
-        on_pre_tool=on_pre_tool,
-    )
-    init_dbos(db_path=workspace / "exoclaw.sqlite")
+    # DBOS durable execution (optional — degrades gracefully if init fails)
+    if _DBOS_AVAILABLE:
+        try:
+            set_turn_context(
+                provider=provider,
+                conversation=conversation,
+                tools=tools,
+                on_tool_calls=on_tool_calls,
+                on_pre_tool=on_pre_tool,
+            )
+            init_dbos(db_path=workspace / "exoclaw.sqlite")
+        except Exception as e:
+            logger.warning("dbos_init_failed_continuing_without", error=str(e))
 
     return ExoclawNanobot(
         config=config,
