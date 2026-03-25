@@ -46,6 +46,30 @@ class LoadSkillResult:
     tool_names: list[str] = field(default_factory=list)
 
 
+@dataclass
+class AgentHook:
+    """An agent hook defined by a markdown file in a skill's hooks directory.
+
+    Agent hooks are ``.md`` files at ``skills/{name}/hooks/exoclaw/{hook_name}.md``.
+    The markdown content is the prompt for a fire-and-forget agent turn that
+    reacts to the lifecycle event.  Frontmatter controls which tools/skills
+    the hook turn has access to.
+
+    Attributes:
+        skill_name: The skill that owns this hook.
+        hook_name: The lifecycle event (e.g. ``agent_end``).
+        prompt: The markdown body (frontmatter stripped) — used as the agent prompt.
+        tools: Tool names from frontmatter ``tools:`` field, or empty to inherit.
+        skills: Skill names from frontmatter ``skills:`` field, or empty to inherit.
+    """
+
+    skill_name: str
+    hook_name: str
+    prompt: str
+    tools: list[str] = field(default_factory=list)
+    skills: list[str] = field(default_factory=list)
+
+
 class SkillsLoader:
     """
     Loader for agent skills.
@@ -367,6 +391,61 @@ class SkillsLoader:
             ):
                 if hook_file.exists() and os.access(hook_file, os.X_OK):
                     results.append(hook_file)
+                    break
+        return results
+
+    def get_agent_hooks(self, hook_name: str) -> list[AgentHook]:
+        """Return agent hooks for a lifecycle event across all installed skills.
+
+        Agent hooks are ``.md`` files at ``hooks/exoclaw/{hook_name}.md`` inside
+        a skill directory.  Each file becomes a fire-and-forget agent turn when
+        the event fires.  Frontmatter ``tools:`` and ``skills:`` control what
+        the hook turn has access to (empty = inherit from parent).
+
+        Args:
+            hook_name: Lifecycle event name (e.g. ``agent_end``).
+
+        Returns:
+            List of :class:`AgentHook` instances, one per skill that defines
+            the hook.  Order matches skill priority (workspace > builtin > package).
+        """
+        results: list[AgentHook] = []
+        seen: set[str] = set()
+        for skill_dir, _source in self._all_skill_dirs:
+            if skill_dir.name in seen:
+                continue
+            seen.add(skill_dir.name)
+            for hook_path in (
+                skill_dir / "hooks" / "exoclaw" / f"{hook_name}.md",
+                skill_dir / "hooks" / "nanobot" / f"{hook_name}.md",
+            ):
+                if hook_path.exists():
+                    raw = hook_path.read_text(encoding="utf-8").strip()
+                    if not raw:
+                        break
+                    # Parse frontmatter
+                    tools: list[str] = []
+                    skills: list[str] = []
+                    prompt = raw
+                    if raw.startswith("---"):
+                        match = re.match(r"^---\n(.*?)\n---\n?", raw, re.DOTALL)
+                        if match:
+                            prompt = raw[match.end():].strip()
+                            for line in match.group(1).splitlines():
+                                if ":" in line:
+                                    key, value = line.split(":", 1)
+                                    key = key.strip()
+                                    if key == "tools":
+                                        tools = [t.strip() for t in value.split(",") if t.strip()]
+                                    elif key == "skills":
+                                        skills = [s.strip() for s in value.split(",") if s.strip()]
+                    results.append(AgentHook(
+                        skill_name=skill_dir.name,
+                        hook_name=hook_name,
+                        prompt=prompt,
+                        tools=tools,
+                        skills=skills,
+                    ))
                     break
         return results
 
