@@ -68,6 +68,7 @@ class DefaultConversation:
         self._turn_channel: str | None = None
         self._turn_chat_id: str | None = None
         self._turn_session_id: str | None = None
+        self._turn_active_skills: set[str] | None = None
 
     @classmethod
     def create(
@@ -112,6 +113,15 @@ class DefaultConversation:
         self._turn_session_id = session_id
 
         skills: list[str] | None = kwargs.get("skills")
+
+        # Compute active skills for hook filtering.
+        skills_loader = getattr(self.prompt, "skills", None)
+        if skills_loader is not None and hasattr(skills_loader, "get_always_skills"):
+            always = skills_loader.get_always_skills()
+            extra = [s for s in (skills or []) if s not in always]
+            self._turn_active_skills = set(always + extra)
+        else:
+            self._turn_active_skills = None
         session = self.history.get_or_create(session_id)
 
         # Trigger background consolidation when policy says so (or default: history is long)
@@ -174,8 +184,14 @@ class DefaultConversation:
 
         # Fire agent_end hooks via the bus.  Hook turns use channel="hook"
         # and are skipped to prevent recursion.
-        if self._bus and self._turn_channel != "hook":
-            await self._fire_agent_hooks(session_id)
+        try:
+            if self._bus and self._turn_channel != "hook":
+                await self._fire_agent_hooks(session_id)
+        finally:
+            self._turn_channel = None
+            self._turn_chat_id = None
+            self._turn_session_id = None
+            self._turn_active_skills = None
 
     async def clear(self, session_id: str) -> bool:
         """Archive current session to memory and start fresh. Returns True on success."""
@@ -215,18 +231,22 @@ class DefaultConversation:
         """Discover agent_end hooks and publish them as inbound messages on the bus."""
         from exoclaw.bus.events import InboundMessage
 
+        bus = self._bus
+        if bus is None:
+            return
+
         skills_loader = getattr(self.prompt, "skills", None)
         if skills_loader is None:
             return
 
-        hooks = skills_loader.get_agent_hooks("agent_end")
+        hooks = skills_loader.get_agent_hooks("agent_end", only=self._turn_active_skills)
         if not hooks:
             return
 
         chat_id = self._turn_chat_id or session_id
         for hook in hooks:
             try:
-                await self._bus.publish_inbound(  # type: ignore[union-attr]
+                await bus.publish_inbound(
                     InboundMessage(
                         channel="hook",
                         sender_id=f"hook:{hook.skill_name}:agent_end",

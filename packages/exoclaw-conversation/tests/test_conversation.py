@@ -1264,3 +1264,161 @@ class TestActiveToolsLoopIntegration:
         assert tools_seen, "provider.chat was never called"
         tool_names = [t["function"]["name"] for t in tools_seen[0]]  # type: ignore[index]
         assert "spy_tool" not in tool_names
+
+
+# ---------------------------------------------------------------------------
+# agent_end hook firing tests
+# ---------------------------------------------------------------------------
+
+
+def _make_mock_prompt_with_skills(
+    hooks: list[Any] | None = None,
+    always_skills: list[str] | None = None,
+) -> MagicMock:
+    """Create a mock prompt builder with a skills loader attached."""
+    p = MagicMock(spec=["build_messages", "get_active_optional_tools", "skills"])
+    p.build_messages.return_value = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "hi"},
+    ]
+    p.get_active_optional_tools.return_value = set()
+    p.skills.get_agent_hooks.return_value = hooks or []
+    p.skills.get_always_skills.return_value = always_skills or []
+    return p
+
+
+class TestAgentEndHookFiring:
+    """Tests for record() firing agent_end hooks via bus."""
+
+    async def test_publish_inbound_called_with_bus(self) -> None:
+        """record() publishes hook messages when bus is configured."""
+        from exoclaw_conversation.skills import AgentHook
+
+        hook = AgentHook(
+            skill_name="chat",
+            hook_name="agent_end",
+            prompt="Name this chat",
+            tools=["set_chat_name"],
+            skills=[],
+        )
+        bus = MagicMock()
+        bus.publish_inbound = AsyncMock()
+        prompt = _make_mock_prompt_with_skills(hooks=[hook], always_skills=["chat"])
+
+        conv = DefaultConversation(
+            history=_make_mock_history(),
+            memory=_make_mock_memory(),
+            prompt=prompt,
+            bus=bus,
+        )
+        # Simulate build_prompt to set turn context
+        await conv.build_prompt("test:1", "hello", channel="slack", chat_id="c123", skills=["chat"])
+        await conv.record("test:1", [{"role": "assistant", "content": "hi"}])
+
+        bus.publish_inbound.assert_called_once()
+        msg = bus.publish_inbound.call_args[0][0]
+        assert msg.channel == "hook"
+        assert msg.content == "Name this chat"
+        assert msg.metadata["hook_skill"] == "chat"
+        assert msg.metadata["source_session_id"] == "test:1"
+
+    async def test_hook_skipped_when_channel_is_hook(self) -> None:
+        """record() does not fire hooks when channel is 'hook' (recursion guard)."""
+        bus = MagicMock()
+        bus.publish_inbound = AsyncMock()
+        prompt = _make_mock_prompt_with_skills(hooks=[], always_skills=["chat"])
+
+        conv = DefaultConversation(
+            history=_make_mock_history(),
+            memory=_make_mock_memory(),
+            prompt=prompt,
+            bus=bus,
+        )
+        await conv.build_prompt("test:1", "hello", channel="hook", chat_id="c123")
+        await conv.record("test:1", [{"role": "assistant", "content": "hi"}])
+
+        bus.publish_inbound.assert_not_called()
+
+    async def test_no_hooks_when_bus_is_none(self) -> None:
+        """record() does not attempt hook firing when no bus is configured."""
+        prompt = _make_mock_prompt_with_skills(always_skills=["chat"])
+
+        conv = DefaultConversation(
+            history=_make_mock_history(),
+            memory=_make_mock_memory(),
+            prompt=prompt,
+        )
+        await conv.build_prompt("test:1", "hello", channel="slack")
+        await conv.record("test:1", [{"role": "assistant", "content": "hi"}])
+        # No exception, no bus call — just works
+        prompt.skills.get_agent_hooks.assert_not_called()
+
+    async def test_hooks_filtered_to_active_skills(self) -> None:
+        """get_agent_hooks is called with only= set to active skills."""
+        bus = MagicMock()
+        bus.publish_inbound = AsyncMock()
+        prompt = _make_mock_prompt_with_skills(hooks=[], always_skills=["core"])
+
+        conv = DefaultConversation(
+            history=_make_mock_history(),
+            memory=_make_mock_memory(),
+            prompt=prompt,
+            bus=bus,
+        )
+        await conv.build_prompt("test:1", "hello", channel="slack", skills=["chat"])
+        await conv.record("test:1", [{"role": "assistant", "content": "hi"}])
+
+        prompt.skills.get_agent_hooks.assert_called_once_with(
+            "agent_end", only={"core", "chat"}
+        )
+
+    async def test_turn_context_cleared_after_record(self) -> None:
+        """Turn context is cleared after record() completes."""
+        bus = MagicMock()
+        bus.publish_inbound = AsyncMock()
+        prompt = _make_mock_prompt_with_skills(hooks=[], always_skills=[])
+
+        conv = DefaultConversation(
+            history=_make_mock_history(),
+            memory=_make_mock_memory(),
+            prompt=prompt,
+            bus=bus,
+        )
+        await conv.build_prompt("test:1", "hello", channel="slack", chat_id="c1")
+        assert conv._turn_channel == "slack"
+
+        await conv.record("test:1", [{"role": "assistant", "content": "hi"}])
+        assert conv._turn_channel is None
+        assert conv._turn_chat_id is None
+        assert conv._turn_session_id is None
+        assert conv._turn_active_skills is None
+
+
+class TestGetAgentHooksFiltering:
+    """Tests for SkillsLoader.get_agent_hooks only= parameter."""
+
+    def _setup_skills(self, tmp_path: Path) -> SkillsLoader:
+        for name in ("chat", "sentry", "code"):
+            skill_dir = tmp_path / "skills" / name
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text(f"---\nname: {name}\n---\n# {name}")
+            hook_dir = skill_dir / "hooks" / "exoclaw"
+            hook_dir.mkdir(parents=True)
+            (hook_dir / "agent_end.md").write_text(f"Hook for {name}")
+        return SkillsLoader(tmp_path)
+
+    def test_returns_all_hooks_when_only_is_none(self, tmp_path: Path) -> None:
+        loader = self._setup_skills(tmp_path)
+        hooks = loader.get_agent_hooks("agent_end")
+        assert len(hooks) == 3
+
+    def test_filters_to_only_specified_skills(self, tmp_path: Path) -> None:
+        loader = self._setup_skills(tmp_path)
+        hooks = loader.get_agent_hooks("agent_end", only={"chat", "sentry"})
+        names = {h.skill_name for h in hooks}
+        assert names == {"chat", "sentry"}
+
+    def test_empty_only_returns_no_hooks(self, tmp_path: Path) -> None:
+        loader = self._setup_skills(tmp_path)
+        hooks = loader.get_agent_hooks("agent_end", only=set())
+        assert hooks == []

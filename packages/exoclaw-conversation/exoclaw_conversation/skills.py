@@ -394,8 +394,10 @@ class SkillsLoader:
                     break
         return results
 
-    def get_agent_hooks(self, hook_name: str) -> list[AgentHook]:
-        """Return agent hooks for a lifecycle event across all installed skills.
+    def get_agent_hooks(
+        self, hook_name: str, *, only: set[str] | None = None
+    ) -> list[AgentHook]:
+        """Return agent hooks for a lifecycle event from active skills.
 
         Agent hooks are ``.md`` files at ``hooks/exoclaw/{hook_name}.md`` inside
         a skill directory.  Each file becomes a fire-and-forget agent turn when
@@ -404,6 +406,9 @@ class SkillsLoader:
 
         Args:
             hook_name: Lifecycle event name (e.g. ``agent_end``).
+            only: If provided, restrict to hooks from skills whose name is in
+                this set.  When ``None``, hooks from **all** installed skills
+                are returned (legacy behaviour).
 
         Returns:
             List of :class:`AgentHook` instances, one per skill that defines
@@ -415,6 +420,8 @@ class SkillsLoader:
             if skill_dir.name in seen:
                 continue
             seen.add(skill_dir.name)
+            if only is not None and skill_dir.name not in only:
+                continue
             for hook_path in (
                 skill_dir / "hooks" / "exoclaw" / f"{hook_name}.md",
                 skill_dir / "hooks" / "nanobot" / f"{hook_name}.md",
