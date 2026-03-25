@@ -93,7 +93,7 @@ class GitHubChannel:
         elif event_name == "workflow_dispatch":
             return self._parse_dispatch_event(data, repo)
         else:
-            logger.info("github_event_unsupported", event_name=event_name)
+            logger.info("github_event_unsupported", **{"event.name": event_name})
             return None
 
     def _parse_issues_event(self, data: dict[str, Any], repo: str) -> GitHubEvent | None:
@@ -118,7 +118,7 @@ class GitHubChannel:
         comment = data["comment"]
         body = comment.get("body", "")
         if self._trigger and self._trigger not in body:
-            logger.info("github_trigger_missing", trigger=self._trigger)
+            logger.info("github_trigger_missing", **{"github.trigger": self._trigger})
             return None
         issue = data["issue"]
         return GitHubEvent(
@@ -155,7 +155,7 @@ class GitHubChannel:
         comment = data["comment"]
         body = comment.get("body", "")
         if self._trigger and self._trigger not in body:
-            logger.info("github_review_trigger_missing", trigger=self._trigger)
+            logger.info("github_trigger_missing", **{"github.trigger": self._trigger})
             return None
         pr = data["pull_request"]
         path = comment.get("path", "")
@@ -191,7 +191,7 @@ class GitHubChannel:
 
     async def _post_comment(self, event: GitHubEvent, content: str) -> None:
         if event.kind == "dispatch":
-            logger.info("github_dispatch_response", content=content)
+            logger.info("github_dispatch_response", **{"response.content": content})
             return
 
         if event.reply_to_comment_id is not None:
@@ -210,7 +210,9 @@ class GitHubChannel:
         async with httpx.AsyncClient() as client:
             resp = await client.post(url, json={"body": content}, headers=headers)
             resp.raise_for_status()
-        logger.info("github_comment_posted", repo=event.repo, number=event.number)
+        logger.info(
+            "github_comment_posted", **{"github.repo": event.repo, "github.number": event.number}
+        )
 
     # ------------------------------------------------------------------
     # Channel protocol
@@ -244,7 +246,9 @@ class GitHubChannel:
             )
         )
 
-        logger.info("github_waiting_response", kind=event.kind, number=event.number)
+        logger.info(
+            "github_awaiting_response", **{"event.kind": event.kind, "github.number": event.number}
+        )
         await self._response_event.wait()
 
     async def stop(self) -> None:

@@ -193,7 +193,7 @@ class SessionManager:
             session._messages_offset = last_consolidated
             return session
         except Exception as e:
-            logger.warning("session_load_failed", session_key=key, error=e)
+            logger.warning("session_load_failed", **{"session.key": key}, error=e)
             return None
 
     def load_range(self, key: str, start: int, end: int) -> list[dict[str, Any]]:

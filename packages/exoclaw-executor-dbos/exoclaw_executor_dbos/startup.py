@@ -45,7 +45,7 @@ def _patch_dbos_sqlite_migrations() -> None:
                 for s in m.sqlite_migrations
             ]
 
-        logger.info("dbos_sqlite_migrations_patched", sqlite_version=sqlite3.sqlite_version)
+        logger.info("dbos_sqlite_patched", **{"sqlite.version": sqlite3.sqlite_version})
     except Exception:
         pass
 
@@ -74,7 +74,7 @@ def init_dbos(db_path: str | Path = "exoclaw.sqlite") -> None:
             conn.commit()
             conn.close()
         except Exception:
-            logger.warning("dbos_removing_broken_db", db_path=str(db_file))
+            logger.warning("dbos_removing_broken_db", **{"db.path": str(db_file)})
             db_file.unlink()
 
     DBOS(
@@ -84,4 +84,4 @@ def init_dbos(db_path: str | Path = "exoclaw.sqlite") -> None:
         }
     )
     DBOS.launch()
-    logger.info("dbos_initialized", db_path=str(db_file))
+    logger.info("dbos_initialized", **{"db.path": str(db_file)})

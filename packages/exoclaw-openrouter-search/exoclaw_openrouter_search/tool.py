@@ -62,7 +62,7 @@ class OpenRouterSearchTool(ToolBase):
             if not model.startswith("openrouter/"):
                 model = f"openrouter/{model}"
 
-            logger.debug("openrouter_search", model=model, query=query)
+            logger.debug("openrouter_search", **{"llm.model": model, "search.query": query})
 
             response = await acompletion(
                 model=model,

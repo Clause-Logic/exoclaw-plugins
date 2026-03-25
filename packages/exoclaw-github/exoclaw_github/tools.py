@@ -137,7 +137,10 @@ class GitHubReviewTool(ToolBase):
             resp.raise_for_status()
 
         n_inline = len(comments) if comments else 0
-        logger.info("github_review_submitted", action=event, pr=number, inline_comments=n_inline)
+        logger.info(
+            "github_review_submitted",
+            **{"review.action": event, "github.pr": number, "review.inline_comments": n_inline},
+        )
         detail = f" with {n_inline} inline comment(s)" if n_inline else ""
         return f"Submitted {event} review on PR #{number}{detail}"
 

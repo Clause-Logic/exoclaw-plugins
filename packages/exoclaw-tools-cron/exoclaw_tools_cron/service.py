@@ -188,7 +188,7 @@ class CronService:
         self._recompute_next_runs()
         self._save_store()
         self._arm_timer()
-        logger.info("cron_started", jobs=len(self._store.jobs if self._store else []))
+        logger.info("cron_started", **{"job.count": len(self._store.jobs if self._store else [])})
 
     def stop(self) -> None:
         """Stop the cron service."""
@@ -256,7 +256,6 @@ class CronService:
     async def _execute_job(self, job: CronJob) -> None:
         """Execute a single job."""
         start_ms = _now_ms()
-        logger.info("cron_job_executing", job=job.name, id=job.id)
 
         try:
             if self.on_job:
@@ -264,12 +263,12 @@ class CronService:
 
             job.state.last_status = "ok"
             job.state.last_error = None
-            logger.info("cron_job_completed", job=job.name)
+            logger.info("cron_job_executed", **{"job.name": job.name, "job.id": job.id})
 
         except Exception as e:
             job.state.last_status = "error"
             job.state.last_error = str(e)
-            logger.error("cron_job_failed", job=job.name, error=e)
+            logger.error("cron_job_failed", **{"job.name": job.name}, error=e)
 
         job.state.last_run_at_ms = start_ms
         job.updated_at_ms = _now_ms()
@@ -334,7 +333,7 @@ class CronService:
         self._save_store()
         self._arm_timer()
 
-        logger.info("cron_job_added", job=name, id=job.id)
+        logger.info("cron_job_added", **{"job.name": name, "job.id": job.id})
         return job
 
     def remove_job(self, job_id: str) -> bool:
@@ -347,7 +346,7 @@ class CronService:
         if removed:
             self._save_store()
             self._arm_timer()
-            logger.info("cron_job_removed", id=job_id)
+            logger.info("cron_job_removed", **{"job.id": job_id})
 
         return removed
 
@@ -386,7 +385,7 @@ class CronService:
                 job.updated_at_ms = _now_ms()
                 self._save_store()
                 self._arm_timer()
-                logger.info("cron_job_updated", job=job.name, id=job.id)
+                logger.info("cron_job_updated", **{"job.name": job.name, "job.id": job.id})
                 return job
         return None
 

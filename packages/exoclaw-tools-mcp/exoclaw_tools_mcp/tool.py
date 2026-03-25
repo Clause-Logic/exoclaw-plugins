@@ -57,7 +57,10 @@ class MCPToolWrapper(ToolBase):
                 timeout=self._tool_timeout,
             )
         except asyncio.TimeoutError:
-            logger.warning("mcp_tool_timeout", tool=self._name, timeout_s=self._tool_timeout)
+            logger.warning(
+                "mcp_tool_timeout",
+                **{"tool.name": self._name, "tool.timeout_s": self._tool_timeout},
+            )
             return f"(MCP tool call timed out after {self._tool_timeout}s)"
 
         parts = []
@@ -87,7 +90,7 @@ async def connect_mcp_servers(
                         "sse" if cfg.url.rstrip("/").endswith("/sse") else "streamableHttp"
                     )
                 else:
-                    logger.warning("mcp_server_no_transport", server=name)
+                    logger.warning("mcp_server_no_transport", **{"server.name": name})
                     continue
 
             if transport_type == "stdio":
@@ -129,7 +132,8 @@ async def connect_mcp_servers(
                 )
             else:
                 logger.warning(
-                    "mcp_server_unknown_transport", server=name, transport=transport_type
+                    "mcp_server_unknown_transport",
+                    **{"server.name": name, "server.transport": transport_type},
                 )
                 continue
 
@@ -140,8 +144,12 @@ async def connect_mcp_servers(
             for tool_def in tools.tools:
                 wrapper = MCPToolWrapper(session, name, tool_def, tool_timeout=cfg.tool_timeout)
                 registry.register(wrapper)
-                logger.debug("mcp_tool_registered", tool=wrapper.name, server=name)
+                logger.debug(
+                    "mcp_tool_registered", **{"tool.name": wrapper.name, "server.name": name}
+                )
 
-            logger.info("mcp_server_connected", server=name, tools=len(tools.tools))
+            logger.info(
+                "mcp_server_connected", **{"server.name": name, "tool.count": len(tools.tools)}
+            )
         except Exception as e:
-            logger.error("mcp_server_connect_failed", server=name, error=e)
+            logger.error("mcp_server_connect_failed", **{"server.name": name}, error=e)

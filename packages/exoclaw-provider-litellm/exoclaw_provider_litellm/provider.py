@@ -280,9 +280,11 @@ class LiteLLMProvider:
         if self._llm_logging:
             logger.info(
                 "llm_request",
-                model=resolved_model,
-                messages=len(kwargs["messages"]),
-                tools=len(tools) if tools else 0,
+                **{
+                    "llm.model": resolved_model,
+                    "llm.message.count": len(kwargs["messages"]),
+                    "llm.tool.count": len(tools) if tools else 0,
+                },
             )
             for msg in kwargs["messages"]:
                 role = msg.get("role", "?")
@@ -292,7 +294,7 @@ class LiteLLMProvider:
                 text = str(content).replace("\n", "\\n")
                 if self._llm_log_truncate >= 0:
                     text = text[: self._llm_log_truncate]
-                logger.info("llm_request_msg", role=role, text=text)
+                logger.info("llm_request_msg", **{"message.role": role, "message.text": text})
 
         try:
             t0 = time.monotonic()
@@ -313,15 +315,17 @@ class LiteLLMProvider:
                 cache_created = getattr(usage, "cache_creation_input_tokens", 0) if usage else 0
                 logger.info(
                     "llm_response",
-                    model=resolved_model,
-                    prompt_tokens=usage.prompt_tokens if usage else "?",
-                    completion_tokens=usage.completion_tokens if usage else "?",
-                    total_tokens=usage.total_tokens if usage else "?",
-                    cached_tokens=cached_tokens,
-                    cache_created=cache_created,
-                    duration_s=round(elapsed, 2),
-                    finish=choice.finish_reason,
-                    tools=[tc.function.name for tc in tool_calls],
+                    **{
+                        "llm.model": resolved_model,
+                        "llm.token.prompt": usage.prompt_tokens if usage else "?",
+                        "llm.token.completion": usage.completion_tokens if usage else "?",
+                        "llm.token.total": usage.total_tokens if usage else "?",
+                        "llm.token.cached": cached_tokens,
+                        "llm.token.cache_created": cache_created,
+                        "llm.duration_s": round(elapsed, 2),
+                        "llm.finish_reason": choice.finish_reason,
+                        "llm.tools": [tc.function.name for tc in tool_calls],
+                    },
                 )
 
             return self._parse_response(response)

@@ -122,7 +122,7 @@ class HeartbeatService:
 
         self._running = True
         self._task = asyncio.create_task(self._run_loop())
-        logger.info("heartbeat_started", interval_s=self.interval_s)
+        logger.info("heartbeat_started", **{"heartbeat.interval_s": self.interval_s})
 
     def stop(self) -> None:
         """Stop the heartbeat service."""
@@ -150,23 +150,24 @@ class HeartbeatService:
             logger.debug("heartbeat_file_empty")
             return
 
-        logger.info("heartbeat_checking")
-
         try:
             action, tasks = await self._decide(content)
 
             if action != "run":
-                logger.info("heartbeat_skip")
+                logger.info("heartbeat_skipped")
                 return
 
-            logger.info("heartbeat_executing")
             if self.on_execute:
                 response = await self.on_execute(tasks)
                 if response and self.on_notify:
-                    logger.info("heartbeat_delivering")
                     await self.on_notify(response)
+                    logger.info("heartbeat_delivered")
+                else:
+                    logger.info("heartbeat_executed")
+            else:
+                logger.info("heartbeat_executed")
         except Exception:
-            logger.exception("heartbeat_execution_failed")
+            logger.exception("heartbeat_failed")
 
     async def trigger_now(self) -> str | None:
         """Manually trigger a heartbeat."""

@@ -172,7 +172,7 @@ class DefaultConversation:
                     if not success:
                         return False
         except Exception:
-            logger.exception("session_clear_failed", session_id=session_id)
+            logger.exception("session_clear_failed", **{"session.id": session_id})
             return False
         finally:
             self._consolidating.discard(session_id)

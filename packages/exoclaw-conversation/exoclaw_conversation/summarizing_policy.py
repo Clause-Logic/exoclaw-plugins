@@ -56,7 +56,7 @@ class SummarizingConsolidationPolicy:
             new_entry = history_after[len(history_before) :].strip()
             if new_entry:
                 session.metadata["summary"] = new_entry
-                logger.info("session_summary_stored", chars=len(new_entry))
+                logger.info("session_summary_stored", **{"summary.chars": len(new_entry)})
 
         return success
 

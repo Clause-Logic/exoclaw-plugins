@@ -106,7 +106,10 @@ class SubagentManager:
 
         bg_task.add_done_callback(_cleanup)
 
-        logger.info("subagent_spawned", id=task_id, label=display_label, batch=batch)
+        logger.info(
+            "subagent_spawned",
+            **{"subagent.id": task_id, "subagent.label": display_label, "batch.id": batch},
+        )
         return f"Subagent [{display_label}] started (id: {task_id})."
 
     async def _run(
@@ -120,7 +123,6 @@ class SubagentManager:
         batch: str | None,
     ) -> None:
         """Execute the subagent and announce the result."""
-        logger.info("subagent_starting", id=task_id, label=label)
         status = "completed"
 
         try:
@@ -136,9 +138,12 @@ class SubagentManager:
         except Exception as e:
             result = f"Error: {e}"
             status = "failed"
-            logger.error("subagent_failed", id=task_id, error=e)
+            logger.error("subagent_failed", **{"subagent.id": task_id}, error=e)
 
-        logger.info("subagent_done", id=task_id, status=status, batch=batch)
+        logger.info(
+            "subagent_done",
+            **{"subagent.id": task_id, "subagent.status": status, "batch.id": batch},
+        )
 
         # Write result to disk so it survives compaction
         result_path = self._write_result(task_id, label, task, result, status)
@@ -177,7 +182,7 @@ class SubagentManager:
             f"## Result\n\n{result}\n"
         )
         path.write_text(content, encoding="utf-8")
-        logger.info("subagent_result_written", path=str(path))
+        logger.info("subagent_result_written", **{"file.path": str(path)})
         return str(path)
 
     async def _record_batch_completion(
@@ -203,9 +208,7 @@ class SubagentManager:
         )
         logger.info(
             "batch_progress",
-            batch=batch,
-            completed=state.completed,
-            total=state.total,
+            **{"batch.id": batch, "batch.completed": state.completed, "batch.total": state.total},
         )
 
         if state.completed >= state.total:
@@ -243,7 +246,7 @@ class SubagentManager:
             session_key_override=state.session_key,
             metadata={"session_key": state.session_key} if state.session_key else {},
         )
-        logger.info("batch_announced", batch=batch, results=len(state.results))
+        logger.info("batch_announced", **{"batch.id": batch, "batch.results": len(state.results)})
         await self._bus.publish_inbound(msg)
 
     async def _announce_single(

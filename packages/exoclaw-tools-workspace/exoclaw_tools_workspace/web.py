@@ -102,7 +102,7 @@ class WebSearchTool(ToolBase):
         self, query: str, count: int | None, ctx: ToolContext | None = None
     ) -> str:
         n = min(max(count or self.max_results, 1), 10)
-        logger.debug("web_search_model", model=self._search_model)
+        logger.debug("web_search_model", **{"llm.model": self._search_model})
         try:
             chat_kwargs: dict[str, Any] = {
                 "messages": [
@@ -130,7 +130,7 @@ class WebSearchTool(ToolBase):
 
         try:
             n = min(max(count or self.max_results, 1), 10)
-            logger.debug("web_search_brave", proxy=bool(self.proxy))
+            logger.debug("web_search_brave", **{"http.proxy": bool(self.proxy)})
             async with httpx.AsyncClient(proxy=self.proxy) as client:
                 r = await client.get(
                     "https://api.search.brave.com/res/v1/web/search",
@@ -194,7 +194,7 @@ class WebFetchTool(ToolBase):
             )
 
         try:
-            logger.debug("web_fetch", proxy=bool(self.proxy))
+            logger.debug("web_fetch", **{"http.proxy": bool(self.proxy)})
             async with httpx.AsyncClient(
                 follow_redirects=True,
                 max_redirects=MAX_REDIRECTS,
@@ -237,10 +237,10 @@ class WebFetchTool(ToolBase):
                 ensure_ascii=False,
             )
         except httpx.ProxyError as e:
-            logger.error("web_fetch_proxy_error", url=url, error=e)
+            logger.error("web_fetch_proxy_error", **{"http.url": url}, error=e)
             return json.dumps({"error": f"Proxy error: {e}", "url": url}, ensure_ascii=False)
         except Exception as e:
-            logger.error("web_fetch_error", url=url, error=e)
+            logger.error("web_fetch_error", **{"http.url": url}, error=e)
             return json.dumps({"error": str(e), "url": url}, ensure_ascii=False)
 
     def _to_markdown(self, html_content: str) -> str:

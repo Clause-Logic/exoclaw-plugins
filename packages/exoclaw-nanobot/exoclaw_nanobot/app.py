@@ -112,13 +112,17 @@ class ExoclawNanobot:
                     if not t.cancelled():
                         exc = t.exception()
                         if exc is not None:
-                            logger.error("channel_task_failed", error=repr(exc))
+                            logger.error("channel_task_failed", **{"error.repr": repr(exc)})
         finally:
             for ch in self._extra_channels:
                 try:
                     await ch.stop()
                 except Exception as e:
-                    logger.warning("channel_stop_error", channel=ch, error=e)
+                    logger.warning(
+                        "channel_stop_failed",
+                        **{"channel.name": getattr(ch, "name", str(ch))},
+                        error=e,
+                    )
             for t in tasks:
                 t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -137,9 +141,11 @@ class ExoclawNanobot:
                     try:
                         await ch.send(msg)
                     except Exception as e:
-                        logger.error("outbound_send_error", channel=msg.channel, error=e)
+                        logger.error(
+                            "outbound_send_failed", **{"channel.name": msg.channel}, error=e
+                        )
                 else:
-                    logger.warning("outbound_no_channel", channel=msg.channel)
+                    logger.warning("outbound_no_channel", **{"channel.name": msg.channel})
             except asyncio.TimeoutError:
                 continue
             except asyncio.CancelledError:
@@ -295,7 +301,7 @@ async def create(
         mcp_registry = ToolRegistry()
         await connect_mcp_servers(mcp_cfgs, mcp_registry, mcp_stack)
         tools.extend(mcp_registry._tools.values())
-        logger.info("mcp_tools_registered", tools=len(mcp_registry._tools))
+        logger.info("mcp_tools_registered", **{"tool.count": len(mcp_registry._tools)})
 
     if extra_tools:
         tools.extend(extra_tools)
@@ -348,8 +354,7 @@ async def create(
         if len(compacted) < len(messages):
             logger.info(
                 "context_overflow_compacted",
-                before=len(messages),
-                after=len(compacted),
+                **{"message.count.before": len(messages), "message.count.after": len(compacted)},
             )
             return compacted
         return None
@@ -440,7 +445,7 @@ async def create(
             )
             init_dbos(db_path=workspace / "exoclaw.sqlite")
         except Exception as e:
-            logger.warning("dbos_init_failed_continuing_without", error=str(e))
+            logger.warning("dbos_init_failed", error=str(e))
 
     return ExoclawNanobot(
         config=config,

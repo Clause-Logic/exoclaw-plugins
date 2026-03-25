@@ -136,12 +136,6 @@ class MemoryStore:
             return True
 
         keep_count = 0 if archive_all else memory_window // 2
-        logger.info(
-            "memory_consolidation_started",
-            to_consolidate=len(old_messages),
-            keep=keep_count,
-            mode="archive_all" if archive_all else "normal",
-        )
 
         lines = []
         for m in old_messages:
@@ -197,7 +191,7 @@ class MemoryStore:
                 logger.warning(
                     "memory_consolidation_skipped",
                     reason="unexpected_args_type",
-                    args_type=type(args).__name__,
+                    **{"args.type": type(args).__name__},
                 )
                 return False
 
@@ -215,8 +209,11 @@ class MemoryStore:
             session.last_consolidated = 0 if archive_all else total - keep_count
             logger.info(
                 "memory_consolidated",
-                total_messages=total,
-                last_consolidated=session.last_consolidated,
+                **{
+                    "message.total": total,
+                    "message.consolidated": session.last_consolidated,
+                    "message.kept": keep_count,
+                },
             )
             return True
         except Exception:
