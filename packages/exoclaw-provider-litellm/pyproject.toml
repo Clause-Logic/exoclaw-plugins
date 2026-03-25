@@ -1,11 +1,11 @@
 [project]
 name = "exoclaw-provider-litellm"
-version = "0.3.1"
+version = "0.3.2"
 description = "LiteLLM provider for exoclaw"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "exoclaw>=0.8.0",
+    "exoclaw>=0.10.1",
     "litellm>=1.0.0,<1.82.7",  # 1.82.7-8 compromised: https://github.com/BerriAI/litellm/issues/24512
     "json-repair>=0.1.0",
     "structlog>=25.0.0",

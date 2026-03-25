@@ -1,10 +1,10 @@
 [project]
 name = "exoclaw-openrouter-search"
-version = "0.2.0"
+version = "0.2.1"
 description = "Web search tool for exoclaw using OpenRouter's web search plugin"
 requires-python = ">=3.11"
 dependencies = [
-    "exoclaw>=0.6.0",
+    "exoclaw>=0.10.1",
     "litellm>=1.0.0,<1.82.7",  # 1.82.7-8 compromised: https://github.com/BerriAI/litellm/issues/24512
     "structlog>=25.0.0",
 ]

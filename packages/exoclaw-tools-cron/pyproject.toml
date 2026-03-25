@@ -1,11 +1,11 @@
 [project]
 name = "exoclaw-tools-cron"
-version = "0.4.0"
+version = "0.4.1"
 description = "Cron scheduling tool for exoclaw"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "exoclaw>=0.6.0",
+    "exoclaw>=0.10.1",
     "structlog>=25.0.0",
     "croniter>=6.0.0,<7.0.0",
 ]
