@@ -6,11 +6,44 @@ import json
 import os
 import re
 import shutil
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 # Default builtin skills directory — none bundled in this package
 BUILTIN_SKILLS_DIR: Path | None = None
+
+# Standard tool definition for load_skill — consumers can include this in their
+# tool list so the agent can dynamically activate skills listed in <skills>.
+LOAD_SKILL_TOOL_DEF: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "load_skill",
+        "description": (
+            "Load a skill by name. Returns the skill instructions and "
+            "activates its tools for use in this conversation. Call this "
+            "when a skill from <skills> is relevant to the user's request."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "The skill name from the <skills> summary.",
+                }
+            },
+            "required": ["name"],
+        },
+    },
+}
+
+
+@dataclass
+class LoadSkillResult:
+    """Result of activating a skill via :meth:`SkillsLoader.activate_skill`."""
+
+    content: str
+    tool_names: list[str] = field(default_factory=list)
 
 
 class SkillsLoader:
@@ -167,6 +200,24 @@ class SkillsLoader:
             return self._package_skills[name]
 
         return None
+
+    def activate_skill(self, name: str) -> LoadSkillResult:
+        """Load a skill's content and resolve its declared tool names.
+
+        This is the handler behind the ``load_skill`` tool.  Consumers should
+        call this when the LLM invokes ``load_skill`` and then merge the
+        returned ``tool_names`` into the active optional tools set so subsequent
+        LLM calls include them.
+
+        Returns:
+            A :class:`LoadSkillResult` with the skill content (or an error
+            message) and the list of tool names declared by the skill.
+        """
+        content = self.load_skill(name)
+        if content is None:
+            return LoadSkillResult(content=f"Skill '{name}' not found.")
+        tool_names = list(self.get_tools_for_skills([name]))
+        return LoadSkillResult(content=content, tool_names=tool_names)
 
     def load_skills_for_context(self, skill_names: list[str]) -> str:
         """
