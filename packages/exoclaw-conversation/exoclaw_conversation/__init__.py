@@ -5,10 +5,13 @@ from exoclaw_conversation.context import (
     drop_oldest_half,
 )
 from exoclaw_conversation.protocols import ConsolidationPolicy
+from exoclaw_conversation.skills import LOAD_SKILL_TOOL_DEF, LoadSkillResult
 from exoclaw_conversation.summarizing_policy import SummarizingConsolidationPolicy
 
 __all__ = [
     "ConsolidationPolicy",
+    "LOAD_SKILL_TOOL_DEF",
+    "LoadSkillResult",
     "SummarizingConsolidationPolicy",
     "compact_tool_results",
     "drop_oldest_half",
