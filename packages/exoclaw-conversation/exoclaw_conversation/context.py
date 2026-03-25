@@ -157,12 +157,17 @@ class ContextBuilder:
         if bootstrap_hooks:
             parts.append("\n\n".join(bootstrap_hooks))
 
-        skills_summary = self.skills.build_skills_summary()
+        # Show non-active skills that could be loaded on demand via load_skill.
+        # Only show skills that were requested (skill_names) or always-on — not
+        # every installed skill — so the agent doesn't claim capabilities that
+        # aren't enabled for this session.
+        active_set = set(active_skills) if active_skills else None
+        skills_summary = self.skills.build_skills_summary(only=active_set)
         if skills_summary:
             parts.append(f"""# Skills
 
-The following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.
-Skills with available="false" need dependencies installed first - you can try installing them with apt/brew.
+The following skills are available. To activate a skill and its tools, call the load_skill tool with the skill name.
+Skills with available="false" need dependencies installed first.
 
 {skills_summary}""")
 
