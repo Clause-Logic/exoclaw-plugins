@@ -430,7 +430,7 @@ class SkillsLoader:
                     if raw.startswith("---"):
                         match = re.match(r"^---\n(.*?)\n---\n?", raw, re.DOTALL)
                         if match:
-                            prompt = raw[match.end():].strip()
+                            prompt = raw[match.end() :].strip()
                             for line in match.group(1).splitlines():
                                 if ":" in line:
                                     key, value = line.split(":", 1)
@@ -439,13 +439,15 @@ class SkillsLoader:
                                         tools = [t.strip() for t in value.split(",") if t.strip()]
                                     elif key == "skills":
                                         skills = [s.strip() for s in value.split(",") if s.strip()]
-                    results.append(AgentHook(
-                        skill_name=skill_dir.name,
-                        hook_name=hook_name,
-                        prompt=prompt,
-                        tools=tools,
-                        skills=skills,
-                    ))
+                    results.append(
+                        AgentHook(
+                            skill_name=skill_dir.name,
+                            hook_name=hook_name,
+                            prompt=prompt,
+                            tools=tools,
+                            skills=skills,
+                        )
+                    )
                     break
         return results
 
