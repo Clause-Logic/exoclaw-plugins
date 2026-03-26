@@ -15,6 +15,7 @@ from .session.manager import Session
 logger = structlog.get_logger()
 
 if TYPE_CHECKING:
+    from exoclaw.bus.protocol import Bus
     from exoclaw.providers.protocol import LLMProvider
 
 # Injected before each user message at call time; stripped before persisting.
@@ -49,18 +50,24 @@ class DefaultConversation:
         prompt: PromptBuilder,
         memory_window: int = 100,
         consolidation_policy: ConsolidationPolicy | None = None,
+        bus: Bus | None = None,
     ):
         self.history = history
         self.memory = memory
         self.prompt = prompt
         self.memory_window = memory_window
         self._consolidation_policy = consolidation_policy
+        self._bus: Bus | None = bus
 
         self._consolidating: set[str] = set()
         self._consolidation_tasks: set[asyncio.Task[Any]] = set()
         self._consolidation_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
             weakref.WeakValueDictionary()
         )
+        # Turn context set by build_prompt(), read by record() for hook firing.
+        self._turn_channel: str | None = None
+        self._turn_chat_id: str | None = None
+        self._turn_session_id: str | None = None
 
     @classmethod
     def create(
@@ -99,6 +106,11 @@ class DefaultConversation:
         **kwargs: list[str] | None,
     ) -> list[dict[str, Any]]:
         """Return the full messages list to send to the LLM."""
+        # Track turn context for hook firing in record().
+        self._turn_channel = channel
+        self._turn_chat_id = chat_id
+        self._turn_session_id = session_id
+
         skills: list[str] | None = kwargs.get("skills")
         session = self.history.get_or_create(session_id)
 
@@ -151,10 +163,19 @@ class DefaultConversation:
         session_id: str,
         new_messages: list[dict[str, Any]],
     ) -> None:
-        """Persist the messages produced during one turn."""
+        """Persist the messages produced during one turn.
+
+        After persisting, fires agent_end hooks if a bus is configured and the
+        turn is not itself a hook turn (channel != "hook").
+        """
         session = self.history.get_or_create(session_id)
         prepared = self._prepare_turn(session, new_messages)
         self.history.save_append(session, prepared)
+
+        # Fire agent_end hooks via the bus.  Hook turns use channel="hook"
+        # and are skipped to prevent recursion.
+        if self._bus and self._turn_channel != "hook":
+            await self._fire_agent_hooks(session_id)
 
     async def clear(self, session_id: str) -> bool:
         """Archive current session to memory and start fresh. Returns True on success."""
@@ -189,6 +210,44 @@ class DefaultConversation:
     def active_tools(self) -> set[str]:
         """Return optional tool names activated by the current turn's skills."""
         return self.prompt.get_active_optional_tools()
+
+    async def _fire_agent_hooks(self, session_id: str) -> None:
+        """Discover agent_end hooks and publish them as inbound messages on the bus."""
+        from exoclaw.bus.events import InboundMessage
+
+        skills_loader = getattr(self.prompt, "skills", None)
+        if skills_loader is None:
+            return
+
+        hooks = skills_loader.get_agent_hooks("agent_end")
+        if not hooks:
+            return
+
+        chat_id = self._turn_chat_id or session_id
+        for hook in hooks:
+            try:
+                await self._bus.publish_inbound(  # type: ignore[union-attr]
+                    InboundMessage(
+                        channel="hook",
+                        sender_id=f"hook:{hook.skill_name}:agent_end",
+                        chat_id=chat_id,
+                        content=hook.prompt,
+                        metadata={
+                            "_hook_turn": True,
+                            "hook_name": "agent_end",
+                            "hook_skill": hook.skill_name,
+                            "hook_tools": hook.tools,
+                            "hook_skills": hook.skills,
+                            "source_session_id": session_id,
+                        },
+                    )
+                )
+            except Exception:
+                logger.warning(
+                    "agent_hook_publish_failed",
+                    hook_skill=hook.skill_name,
+                    exc_info=True,
+                )
 
     async def _should_consolidate(self, session: Session) -> bool:
         """Check whether consolidation should run."""
