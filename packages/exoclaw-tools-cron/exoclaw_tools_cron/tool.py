@@ -5,15 +5,15 @@ from typing import Any
 
 from exoclaw.agent.tools.protocol import ToolBase, ToolContext
 
-from exoclaw_tools_cron.service import CronService
+from exoclaw_tools_cron.protocol import CronBackend
 from exoclaw_tools_cron.types import CronSchedule
 
 
 class CronTool(ToolBase):
     """Tool to schedule reminders and recurring tasks."""
 
-    def __init__(self, cron_service: CronService):
-        self._cron = cron_service
+    def __init__(self, backend: CronBackend):
+        self._backend = backend
         self._channel = ""
         self._chat_id = ""
         self._in_cron_context: ContextVar[bool] = ContextVar("cron_in_context", default=False)
@@ -119,16 +119,16 @@ class CronTool(ToolBase):
         if action == "add":
             if self._in_cron_context.get():
                 return "Error: cannot schedule new jobs from within a cron job execution"
-            return self._add_job(message, every_seconds, cron_expr, tz, at, skills, stateless)
+            return await self._add_job(message, every_seconds, cron_expr, tz, at, skills, stateless)
         elif action == "list":
-            return self._list_jobs()
+            return await self._list_jobs()
         elif action == "remove":
-            return self._remove_job(job_id)
+            return await self._remove_job(job_id)
         elif action == "update":
-            return self._update_job(job_id, message or None, deliver, to, skills, stateless)
+            return await self._update_job(job_id, message or None, deliver, to, skills, stateless)
         return f"Unknown action: {action}"
 
-    def _add_job(
+    async def _add_job(
         self,
         message: str,
         every_seconds: int | None,
@@ -171,7 +171,7 @@ class CronTool(ToolBase):
         else:
             return "Error: either every_seconds, cron_expr, or at is required"
 
-        job = self._cron.add_job(
+        job = await self._backend.add(
             name=message[:30],
             schedule=schedule,
             message=message,
@@ -184,14 +184,14 @@ class CronTool(ToolBase):
         )
         return f"Created job '{job.name}' (id: {job.id})"
 
-    def _list_jobs(self) -> str:
-        jobs = self._cron.list_jobs()
+    async def _list_jobs(self) -> str:
+        jobs = await self._backend.list()
         if not jobs:
             return "No scheduled jobs."
         lines = [f"- {j.name} (id: {j.id}, {j.schedule.kind})" for j in jobs]
         return "Scheduled jobs:\n" + "\n".join(lines)
 
-    def _update_job(
+    async def _update_job(
         self,
         job_id: str | None,
         message: str | None,
@@ -202,16 +202,16 @@ class CronTool(ToolBase):
     ) -> str:
         if not job_id:
             return "Error: job_id is required for update"
-        job = self._cron.update_job(
+        job = await self._backend.update(
             job_id, message=message, deliver=deliver, to=to, skills=skills, stateless=stateless
         )
         if job:
             return f"Updated job {job_id}"
         return f"Job {job_id} not found"
 
-    def _remove_job(self, job_id: str | None) -> str:
+    async def _remove_job(self, job_id: str | None) -> str:
         if not job_id:
             return "Error: job_id is required for remove"
-        if self._cron.remove_job(job_id):
+        if await self._backend.remove(job_id):
             return f"Removed job {job_id}"
         return f"Job {job_id} not found"

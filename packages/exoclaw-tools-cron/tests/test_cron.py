@@ -9,8 +9,10 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from exoclaw_tools_cron.protocol import CronBackend
 from exoclaw_tools_cron.service import (
     CronService,
+    LocalCronBackend,
     _compute_next_run,
     _now_ms,
     _validate_schedule_for_add,
@@ -544,8 +546,13 @@ def mock_service(tmp_path: Path) -> CronService:
 
 
 @pytest.fixture
-def tool(mock_service: CronService) -> CronTool:
-    t = CronTool(cron_service=mock_service)
+def backend(mock_service: CronService) -> LocalCronBackend:
+    return LocalCronBackend(mock_service)
+
+
+@pytest.fixture
+def tool(backend: LocalCronBackend) -> CronTool:
+    t = CronTool(backend=backend)
     t.set_context("cli", "user1")
     return t
 
@@ -587,7 +594,7 @@ class TestCronToolExecuteAdd:
 
     async def test_add_no_context_error(self, tmp_path: Path) -> None:
         svc = CronService(store_path=tmp_path / "j.json")
-        t = CronTool(cron_service=svc)
+        t = CronTool(backend=LocalCronBackend(svc))
         # No set_context
         result = await t.execute(action="add", message="hi", every_seconds=60)
         assert "Error" in result
@@ -635,7 +642,7 @@ class TestCronToolExecuteList:
 class TestCronToolExecuteRemove:
     async def test_remove_existing(self, tool: CronTool) -> None:
         await tool.execute(action="add", message="rm", every_seconds=60)
-        jobs = tool._cron.list_jobs()
+        jobs = await tool._backend.list()
         result = await tool.execute(action="remove", job_id=jobs[0].id)
         assert "Removed" in result
 
@@ -651,7 +658,7 @@ class TestCronToolExecuteRemove:
 class TestCronToolExecuteUpdate:
     async def test_update_message(self, tool: CronTool) -> None:
         await tool.execute(action="add", message="old", every_seconds=60)
-        jobs = tool._cron.list_jobs()
+        jobs = await tool._backend.list()
         result = await tool.execute(action="update", job_id=jobs[0].id, message="new msg")
         assert "Updated" in result
 
@@ -708,3 +715,67 @@ class TestCronToolCronContext:
 
     def test_reset_with_non_token_noop(self, tool: CronTool) -> None:
         tool.reset_cron_context("not-a-token")  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# CronBackend protocol
+# ---------------------------------------------------------------------------
+
+
+class TestCronBackendProtocol:
+    def test_local_backend_satisfies_protocol(self, backend: LocalCronBackend) -> None:
+        assert isinstance(backend, CronBackend)
+
+    async def test_backend_add_and_list(self, backend: LocalCronBackend) -> None:
+        job = await backend.add(
+            name="test",
+            schedule=CronSchedule(kind="every", every_ms=60000),
+            message="hello",
+        )
+        assert job.id
+        assert job.payload.message == "hello"
+        jobs = await backend.list()
+        assert len(jobs) == 1
+
+    async def test_backend_get(self, backend: LocalCronBackend) -> None:
+        job = await backend.add(
+            name="get-me",
+            schedule=CronSchedule(kind="every", every_ms=1000),
+            message="get",
+        )
+        found = await backend.get(job.id)
+        assert found is not None
+        assert found.id == job.id
+        assert await backend.get("nonexistent") is None
+
+    async def test_backend_update(self, backend: LocalCronBackend) -> None:
+        job = await backend.add(
+            name="upd",
+            schedule=CronSchedule(kind="every", every_ms=1000),
+            message="old",
+        )
+        updated = await backend.update(job.id, message="new", skills=["s1"])
+        assert updated is not None
+        assert updated.payload.message == "new"
+        assert updated.payload.skills == ["s1"]
+
+    async def test_backend_remove(self, backend: LocalCronBackend) -> None:
+        job = await backend.add(
+            name="rm",
+            schedule=CronSchedule(kind="every", every_ms=1000),
+            message="rm",
+        )
+        assert await backend.remove(job.id) is True
+        assert await backend.remove("nope") is False
+
+    async def test_backend_enable(self, backend: LocalCronBackend) -> None:
+        job = await backend.add(
+            name="en",
+            schedule=CronSchedule(kind="every", every_ms=1000),
+            message="en",
+        )
+        disabled = await backend.enable(job.id, enabled=False)
+        assert disabled is not None
+        assert disabled.enabled is False
+        assert await backend.list() == []
+        assert len(await backend.list(include_disabled=True)) == 1

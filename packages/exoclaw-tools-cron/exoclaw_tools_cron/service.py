@@ -1,4 +1,15 @@
-"""Cron service for scheduling agent tasks."""
+"""Cron service for scheduling agent tasks.
+
+Contains two public classes:
+
+- ``CronService`` — the low-level engine (JSON storage + asyncio timer loop).
+  Methods are sync where possible, used directly by the timer internals.
+
+- ``LocalCronBackend`` — async wrapper that implements ``CronBackend`` protocol.
+  This is the interface callers (``CronTool``) should depend on.
+"""
+
+from __future__ import annotations
 
 import asyncio
 import json
@@ -426,3 +437,80 @@ class CronService:
             "jobs": len(store.jobs),
             "next_wake_at_ms": self._get_next_wake_ms(),
         }
+
+
+class LocalCronBackend:
+    """Async ``CronBackend`` implementation backed by ``CronService``.
+
+    Wraps the sync CronService methods as async coroutines so that
+    ``CronTool`` can depend on the protocol without caring whether the
+    backend is local (JSON file + timer) or remote (e.g. Temporal).
+    """
+
+    def __init__(self, service: CronService) -> None:
+        self._svc = service
+
+    # -- CronBackend protocol ------------------------------------------------
+
+    async def add(
+        self,
+        name: str,
+        schedule: CronSchedule,
+        message: str,
+        *,
+        deliver: bool = False,
+        channel: str | None = None,
+        to: str | None = None,
+        delete_after_run: bool = False,
+        skills: list[str] | None = None,
+        stateless: bool = False,
+    ) -> CronJob:
+        return self._svc.add_job(
+            name=name,
+            schedule=schedule,
+            message=message,
+            deliver=deliver,
+            channel=channel,
+            to=to,
+            delete_after_run=delete_after_run,
+            skills=skills,
+            stateless=stateless,
+        )
+
+    async def list(self, *, include_disabled: bool = False) -> list[CronJob]:
+        return self._svc.list_jobs(include_disabled=include_disabled)
+
+    async def get(self, job_id: str) -> CronJob | None:
+        for job in self._svc.list_jobs(include_disabled=True):
+            if job.id == job_id:
+                return job
+        return None
+
+    async def update(
+        self,
+        job_id: str,
+        *,
+        message: str | None = None,
+        schedule: CronSchedule | None = None,
+        deliver: bool | None = None,
+        channel: str | None = None,
+        to: str | None = None,
+        skills: list[str] | None = None,
+        stateless: bool | None = None,
+    ) -> CronJob | None:
+        return self._svc.update_job(
+            job_id,
+            message=message,
+            schedule=schedule,
+            deliver=deliver,
+            channel=channel,
+            to=to,
+            skills=skills,
+            stateless=stateless,
+        )
+
+    async def remove(self, job_id: str) -> bool:
+        return self._svc.remove_job(job_id)
+
+    async def enable(self, job_id: str, enabled: bool = True) -> CronJob | None:
+        return self._svc.enable_job(job_id, enabled=enabled)
