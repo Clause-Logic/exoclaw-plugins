@@ -232,7 +232,11 @@ async def create(
     )
 
     # Load skill tool — lets the agent activate skills on demand
-    load_skill_tool = LoadSkillTool(prompt=conversation.prompt)
+    prompt = conversation.prompt
+    load_skill_tool = LoadSkillTool(
+        skills=prompt.skills,  # type: ignore[attr-defined]
+        active_tools=prompt._active_optional_tools,  # type: ignore[attr-defined]
+    )
 
     # Workspace tools
     allowed_dir = workspace if config.tools.restrict_to_workspace else None

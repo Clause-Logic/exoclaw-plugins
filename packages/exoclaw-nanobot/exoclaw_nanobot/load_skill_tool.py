@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from exoclaw_conversation.context import ContextBuilder
+    from exoclaw_conversation.skills import SkillsLoader
 
 from exoclaw_conversation import LOAD_SKILL_TOOL_DEF
 
@@ -19,11 +19,12 @@ class LoadSkillTool:
     description = _schema["description"]
     parameters = _schema["parameters"]
 
-    def __init__(self, prompt: ContextBuilder) -> None:
-        self._prompt = prompt
+    def __init__(self, skills: SkillsLoader, active_tools: set[str]) -> None:
+        self._skills = skills
+        self._active_tools = active_tools
 
     async def execute(self, *, name: str, **_: object) -> str:
-        result = self._prompt.skills.activate_skill(name)
+        result = self._skills.activate_skill(name)
         # Merge newly activated tool names so they're visible on subsequent LLM calls
-        self._prompt._active_optional_tools.update(result.tool_names)
+        self._active_tools.update(result.tool_names)
         return result.content
