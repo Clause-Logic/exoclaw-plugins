@@ -30,7 +30,7 @@ except Exception:
 from exoclaw_loop_detection import LoopDetectionConfig, LoopDetectionPolicy
 from exoclaw_provider_litellm.provider import LiteLLMProvider
 from exoclaw_subagent.manager import SubagentManager
-from exoclaw_tools_cron.service import CronService
+from exoclaw_tools_cron.service import CronService, LocalCronBackend
 from exoclaw_tools_cron.tool import CronTool
 from exoclaw_tools_cron.types import CronJob
 from exoclaw_tools_mcp.config import MCPServerConfig as MCPConfig
@@ -253,7 +253,7 @@ async def create(
 
     # Cron
     cron_service = CronService(store_path=workspace / "cron.json")
-    tools.append(CronTool(cron_service=cron_service))
+    tools.append(CronTool(backend=LocalCronBackend(cron_service)))
 
     # Message
     tools.append(
