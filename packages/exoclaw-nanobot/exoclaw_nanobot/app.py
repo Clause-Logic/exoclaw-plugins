@@ -48,6 +48,7 @@ from exoclaw_tools_workspace.web import WebFetchTool, WebSearchTool
 
 from exoclaw_nanobot.config.loader import load_config
 from exoclaw_nanobot.config.schema import Config
+from exoclaw_nanobot.load_skill_tool import LoadSkillTool
 
 logger = structlog.get_logger()
 
@@ -230,9 +231,13 @@ async def create(
         consolidation_policy=consolidation_policy,
     )
 
+    # Load skill tool — lets the agent activate skills on demand
+    load_skill_tool = LoadSkillTool(prompt=conversation.prompt)
+
     # Workspace tools
     allowed_dir = workspace if config.tools.restrict_to_workspace else None
     tools: list[Any] = [
+        load_skill_tool,
         ReadFileTool(workspace=workspace, allowed_dir=allowed_dir),
         WriteFileTool(workspace=workspace, allowed_dir=allowed_dir),
         EditFileTool(workspace=workspace, allowed_dir=allowed_dir),
