@@ -40,7 +40,7 @@ class CronTool(ToolBase):
 
     @property
     def description(self) -> str:
-        return "Schedule reminders and recurring tasks. Actions: add, list, remove, update."
+        return "Schedule reminders and recurring tasks. Actions: add, list, remove, update, enable, disable."
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -49,7 +49,7 @@ class CronTool(ToolBase):
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["add", "list", "remove", "update"],
+                    "enum": ["add", "list", "remove", "update", "enable", "disable"],
                     "description": "Action to perform",
                 },
                 "message": {"type": "string", "description": "Reminder message (for add)"},
@@ -126,6 +126,10 @@ class CronTool(ToolBase):
             return await self._remove_job(job_id)
         elif action == "update":
             return await self._update_job(job_id, message or None, deliver, to, skills, stateless)
+        elif action == "enable":
+            return await self._enable_job(job_id, enabled=True)
+        elif action == "disable":
+            return await self._enable_job(job_id, enabled=False)
         return f"Unknown action: {action}"
 
     async def _add_job(
@@ -214,4 +218,13 @@ class CronTool(ToolBase):
             return "Error: job_id is required for remove"
         if await self._backend.remove(job_id):
             return f"Removed job {job_id}"
+        return f"Job {job_id} not found"
+
+    async def _enable_job(self, job_id: str | None, *, enabled: bool) -> str:
+        if not job_id:
+            return "Error: job_id is required for enable/disable"
+        job = await self._backend.enable(job_id, enabled=enabled)
+        if job:
+            state = "enabled" if enabled else "disabled"
+            return f"{state.capitalize()} job {job_id}"
         return f"Job {job_id} not found"

@@ -303,6 +303,14 @@ class CronService:
         jobs = store.jobs if include_disabled else [j for j in store.jobs if j.enabled]
         return sorted(jobs, key=lambda j: j.state.next_run_at_ms or float("inf"))
 
+    def get_job(self, job_id: str) -> CronJob | None:
+        """Get a single job by ID without sorting."""
+        store = self._load_store()
+        for job in store.jobs:
+            if job.id == job_id:
+                return job
+        return None
+
     def add_job(
         self,
         name: str,
@@ -481,10 +489,7 @@ class LocalCronBackend:
         return self._svc.list_jobs(include_disabled=include_disabled)
 
     async def get(self, job_id: str) -> CronJob | None:
-        for job in self._svc.list_jobs(include_disabled=True):
-            if job.id == job_id:
-                return job
-        return None
+        return self._svc.get_job(job_id)
 
     async def update(
         self,

@@ -284,6 +284,17 @@ class TestCronServicePublicApi:
         assert job.name == "ping"
         assert store_path.exists()
 
+    def test_get_job(self, service: CronService) -> None:
+        job = service.add_job(
+            name="find-me",
+            schedule=CronSchedule(kind="every", every_ms=1000),
+            message="find",
+        )
+        found = service.get_job(job.id)
+        assert found is not None
+        assert found.id == job.id
+        assert service.get_job("nonexistent") is None
+
     def test_add_job_at(self, service: CronService) -> None:
         future_ms = _now_ms() + 60000
         job = service.add_job(
@@ -668,6 +679,24 @@ class TestCronToolExecuteUpdate:
 
     async def test_update_no_job_id(self, tool: CronTool) -> None:
         result = await tool.execute(action="update")
+        assert "Error" in result
+
+
+class TestCronToolExecuteEnable:
+    async def test_enable_existing(self, tool: CronTool) -> None:
+        await tool.execute(action="add", message="en", every_seconds=60)
+        jobs = await tool._backend.list_jobs()
+        result = await tool.execute(action="disable", job_id=jobs[0].id)
+        assert "Disabled" in result
+        result = await tool.execute(action="enable", job_id=jobs[0].id)
+        assert "Enabled" in result
+
+    async def test_enable_nonexistent(self, tool: CronTool) -> None:
+        result = await tool.execute(action="enable", job_id="nope")
+        assert "not found" in result
+
+    async def test_enable_no_job_id(self, tool: CronTool) -> None:
+        result = await tool.execute(action="enable")
         assert "Error" in result
 
 
