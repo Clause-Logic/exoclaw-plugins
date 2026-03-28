@@ -1,6 +1,6 @@
 """CronBackend protocol — the execution engine seam for cron scheduling.
 
-Implementations handle storage, scheduling, and job lifecycle. The CronTool
+Implementations handle storage, scheduling, and job lifecycle. The ``CronTool``
 delegates all persistence and scheduling concerns through this protocol,
 allowing alternative backends (e.g. Temporal Schedules) to reuse the full
 plugin feature set without reimplementing the tool.
@@ -31,7 +31,7 @@ class CronBackend(Protocol):
         stateless: bool = False,
     ) -> CronJob: ...
 
-    async def list(self, *, include_disabled: bool = False) -> list[CronJob]: ...
+    async def list_jobs(self, *, include_disabled: bool = False) -> list[CronJob]: ...
 
     async def get(self, job_id: str) -> CronJob | None: ...
 

@@ -185,7 +185,7 @@ class CronTool(ToolBase):
         return f"Created job '{job.name}' (id: {job.id})"
 
     async def _list_jobs(self) -> str:
-        jobs = await self._backend.list()
+        jobs = await self._backend.list_jobs()
         if not jobs:
             return "No scheduled jobs."
         lines = [f"- {j.name} (id: {j.id}, {j.schedule.kind})" for j in jobs]

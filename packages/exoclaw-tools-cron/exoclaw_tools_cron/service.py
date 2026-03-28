@@ -477,7 +477,7 @@ class LocalCronBackend:
             stateless=stateless,
         )
 
-    async def list(self, *, include_disabled: bool = False) -> list[CronJob]:
+    async def list_jobs(self, *, include_disabled: bool = False) -> list[CronJob]:
         return self._svc.list_jobs(include_disabled=include_disabled)
 
     async def get(self, job_id: str) -> CronJob | None:

@@ -642,7 +642,7 @@ class TestCronToolExecuteList:
 class TestCronToolExecuteRemove:
     async def test_remove_existing(self, tool: CronTool) -> None:
         await tool.execute(action="add", message="rm", every_seconds=60)
-        jobs = await tool._backend.list()
+        jobs = await tool._backend.list_jobs()
         result = await tool.execute(action="remove", job_id=jobs[0].id)
         assert "Removed" in result
 
@@ -658,7 +658,7 @@ class TestCronToolExecuteRemove:
 class TestCronToolExecuteUpdate:
     async def test_update_message(self, tool: CronTool) -> None:
         await tool.execute(action="add", message="old", every_seconds=60)
-        jobs = await tool._backend.list()
+        jobs = await tool._backend.list_jobs()
         result = await tool.execute(action="update", job_id=jobs[0].id, message="new msg")
         assert "Updated" in result
 
@@ -734,7 +734,7 @@ class TestCronBackendProtocol:
         )
         assert job.id
         assert job.payload.message == "hello"
-        jobs = await backend.list()
+        jobs = await backend.list_jobs()
         assert len(jobs) == 1
 
     async def test_backend_get(self, backend: LocalCronBackend) -> None:
@@ -777,5 +777,5 @@ class TestCronBackendProtocol:
         disabled = await backend.enable(job.id, enabled=False)
         assert disabled is not None
         assert disabled.enabled is False
-        assert await backend.list() == []
-        assert len(await backend.list(include_disabled=True)) == 1
+        assert await backend.list_jobs() == []
+        assert len(await backend.list_jobs(include_disabled=True)) == 1
