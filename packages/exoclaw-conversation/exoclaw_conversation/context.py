@@ -157,12 +157,10 @@ class ContextBuilder:
         if bootstrap_hooks:
             parts.append("\n\n".join(bootstrap_hooks))
 
-        # Show non-active skills that could be loaded on demand via load_skill.
-        # Only show skills that were requested (skill_names) or always-on — not
-        # every installed skill — so the agent doesn't claim capabilities that
-        # aren't enabled for this session.
-        active_set = set(active_skills) if active_skills else None
-        skills_summary = self.skills.build_skills_summary(only=active_set)
+        # Show all enabled skills so the agent can load_skill any of them.
+        # Active skills are already injected above; the summary gives the agent
+        # names + descriptions for everything it *could* load on demand.
+        skills_summary = self.skills.build_skills_summary()
         if skills_summary:
             parts.append(f"""# Skills
 
