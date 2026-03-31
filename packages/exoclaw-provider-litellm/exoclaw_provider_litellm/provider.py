@@ -1,5 +1,6 @@
 """LiteLLM provider implementation for exoclaw."""
 
+import asyncio
 import hashlib
 import os
 import secrets
@@ -171,11 +172,15 @@ class LiteLLMProvider:
         api_base: str | None = None,
         default_model: str = "anthropic/claude-opus-4-5",
         extra_headers: dict[str, str] | None = None,
+        stream: bool = False,
+        stream_ttft_timeout: float = 15.0,
     ):
         self.api_key = api_key
         self.api_base = api_base
         self.default_model = default_model
         self.extra_headers = extra_headers or {}
+        self._stream = stream
+        self._stream_ttft_timeout = stream_ttft_timeout
 
         if api_key and api_base:
             # Custom / gateway endpoint — set as OpenAI-compatible
@@ -298,7 +303,12 @@ class LiteLLMProvider:
 
         try:
             t0 = time.monotonic()
-            response = await acompletion(**kwargs)
+
+            if self._stream:
+                response = await self._stream_to_completion(kwargs)
+            else:
+                response = await acompletion(**kwargs)
+
             elapsed = time.monotonic() - t0
 
             if self._llm_logging:
@@ -325,17 +335,46 @@ class LiteLLMProvider:
                         "llm.duration_s": round(elapsed, 2),
                         "llm.finish_reason": choice.finish_reason,
                         "llm.tools": [tc.function.name for tc in tool_calls],
+                        "llm.stream": self._stream,
                     },
                 )
 
             return self._parse_response(response)
         except litellm.ContextWindowExceededError:
             raise ContextWindowExceededError("Prompt exceeds model context window")
+        except TimeoutError:
+            raise
         except Exception as e:
             return LLMResponse(
                 content=f"Error calling LLM: {str(e)}",
                 finish_reason="error",
             )
+
+    async def _stream_to_completion(self, kwargs: dict[str, Any]) -> Any:
+        """Stream the response and reassemble into a non-streaming response object.
+
+        Applies a TTFT (time-to-first-token) timeout: if the streaming connection
+        isn't established within ``stream_ttft_timeout`` seconds, raises
+        ``TimeoutError`` so Temporal can retry on a fresh connection.
+        """
+        kwargs["stream"] = True
+        try:
+            stream = await asyncio.wait_for(
+                acompletion(**kwargs), timeout=self._stream_ttft_timeout
+            )
+        except asyncio.TimeoutError:
+            raise TimeoutError(
+                f"LLM stream: connection not established within {self._stream_ttft_timeout}s (TTFT timeout)"
+            )
+
+        chunks: list[Any] = []
+        async for chunk in stream:
+            chunks.append(chunk)
+
+        if not chunks:
+            raise TimeoutError("LLM stream returned no chunks")
+
+        return litellm.stream_chunk_builder(chunks)
 
     def _parse_response(self, response: Any) -> LLMResponse:
         """Parse LiteLLM response into our standard format."""
