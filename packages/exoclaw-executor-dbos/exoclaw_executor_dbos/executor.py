@@ -201,13 +201,18 @@ class DBOSExecutor:
     ) -> tuple[str | None, list[dict[str, Any]]]:
         """Run a full agent turn inside a DBOS workflow.
 
-        Called by AgentLoop._process_message when it detects this method
-        on the executor. Wraps loop.process_turn() in a @DBOS.workflow()
-        so the entire turn is recoverable on restart.
+        Called by AgentLoop.process_turn() when the executor provides this
+        method. Sets the loop context (for crash recovery) and wraps the
+        turn in a @DBOS.workflow() so it is recoverable on restart.
         """
-        from .turn import _ctx_on_progress, run_durable_turn
+        from .turn import run_durable_turn, set_loop_context
 
-        _ctx_on_progress.set(on_progress)
+        # Ensure the loop reference is available for DBOS recovery
+        set_loop_context(loop)
+
+        from . import turn
+
+        turn._on_progress = on_progress
 
         return await run_durable_turn(
             session_id,

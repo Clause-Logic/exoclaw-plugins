@@ -2,23 +2,22 @@
 
 When the AgentLoop calls process_turn(), the DBOSExecutor intercepts it
 and runs it inside this @DBOS.workflow(). Every LLM call and tool execution
-within process_turn is a DBOS step, so if the process restarts, DBOS
+within the turn is a DBOS step, so if the process restarts, DBOS
 replays completed steps and continues from where it left off.
 """
 
 from __future__ import annotations
 
-import contextvars
 from typing import Any
 
 from dbos import DBOS
 
-# ── Per-process context (set once at startup, available during recovery) ────
+# ── Module-level globals (set once at startup, available during recovery) ────
+# These are plain globals, not ContextVars, because the loop reference is
+# per-process and must survive thread/context switches during DBOS recovery.
 
-_ctx_loop: contextvars.ContextVar[Any] = contextvars.ContextVar("_ctx_loop", default=None)
-_ctx_on_progress: contextvars.ContextVar[Any] = contextvars.ContextVar(
-    "_ctx_on_progress", default=None
-)
+_loop: Any = None
+_on_progress: Any = None
 
 
 def set_loop_context(loop: Any) -> None:
@@ -26,9 +25,10 @@ def set_loop_context(loop: Any) -> None:
 
     Call once at startup, after creating the AgentLoop. On recovery,
     DBOS re-enters run_durable_turn() and uses this loop to call
-    process_turn().
+    _process_turn_inline().
     """
-    _ctx_loop.set(loop)
+    global _loop
+    _loop = loop
 
 
 @DBOS.workflow()
@@ -42,17 +42,17 @@ async def run_durable_turn(
 ) -> tuple[str | None, list[dict[str, Any]]]:
     """Run one full agent turn as a durable DBOS workflow.
 
-    Delegates to AgentLoop.process_turn(), which calls build_prompt,
+    Delegates to AgentLoop._process_turn_inline(), which calls build_prompt,
     _run_agent_loop (with durable chat/tool steps), and record.
 
     If the process restarts, DBOS replays completed steps and continues.
     Returns ``(final_content, new_messages)``.
     """
-    loop = _ctx_loop.get()
+    loop = _loop
     if loop is None:
         raise RuntimeError("AgentLoop not set — call set_loop_context() at startup")
 
-    on_progress = _ctx_on_progress.get()
+    on_progress = _on_progress
 
     return await loop._process_turn_inline(
         session_id,
