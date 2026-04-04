@@ -186,6 +186,43 @@ class DBOSExecutor:
     ) -> bool:
         return await conversation.clear(session_id)
 
+    async def run_turn(
+        self,
+        loop: Any,
+        session_id: str,
+        message: str,
+        *,
+        channel: str | None = None,
+        chat_id: str | None = None,
+        media: list[str] | None = None,
+        plugin_context: list[str] | None = None,
+        on_progress: Any = None,
+        **kwargs: Any,
+    ) -> tuple[str | None, list[dict[str, Any]]]:
+        """Run a full agent turn inside a DBOS workflow.
+
+        Called by AgentLoop.process_turn() when the executor provides this
+        method. Sets the loop context (for crash recovery) and wraps the
+        turn in a @DBOS.workflow() so it is recoverable on restart.
+        """
+        from .turn import run_durable_turn, set_loop_context
+
+        # Ensure the loop reference is available for DBOS recovery
+        set_loop_context(loop)
+
+        from . import turn
+
+        turn._on_progress = on_progress
+
+        return await run_durable_turn(
+            session_id,
+            message,
+            channel=channel or "",
+            chat_id=chat_id or "",
+            media=media,
+            plugin_context=plugin_context,
+        )
+
     async def run_hook(
         self,
         fn: Callable[..., Awaitable[object]],

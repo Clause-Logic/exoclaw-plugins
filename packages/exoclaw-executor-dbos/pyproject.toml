@@ -5,7 +5,7 @@ description = "DBOS-backed durable executor for exoclaw — turns and tool calls
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "exoclaw>=0.10.1",
+    "exoclaw>=0.12.0",
     "dbos>=1.0.0",
     "structlog>=24.0.0",
 ]

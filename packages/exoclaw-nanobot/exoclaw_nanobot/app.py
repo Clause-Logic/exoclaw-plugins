@@ -22,7 +22,7 @@ from exoclaw_conversation.session.manager import SessionManager
 from exoclaw_conversation.summarizing_policy import SummarizingConsolidationPolicy
 
 try:
-    from exoclaw_executor_dbos import DBOSExecutor, init_dbos, set_turn_context
+    from exoclaw_executor_dbos import DBOSExecutor, init_dbos, set_loop_context
 
     _DBOS_AVAILABLE = True
 except Exception:
@@ -445,13 +445,7 @@ async def create(
     # DBOS durable execution (optional — degrades gracefully if init fails)
     if _DBOS_AVAILABLE:
         try:
-            set_turn_context(
-                provider=provider,
-                conversation=conversation,
-                tools=tools,
-                on_tool_calls=on_tool_calls,
-                on_pre_tool=on_pre_tool,
-            )
+            set_loop_context(agent_loop)
             init_dbos(db_path=workspace / "exoclaw.sqlite")
         except Exception as e:
             logger.warning("dbos_init_failed", error=str(e))
