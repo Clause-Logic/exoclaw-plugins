@@ -23,7 +23,8 @@ import json
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from dbos import DBOS
+from dbos import DBOS, SetWorkflowID
+from uuid_utils import uuid7
 from exoclaw.agent.conversation import Conversation
 from exoclaw.agent.tools.protocol import ToolContext
 from exoclaw.agent.tools.registry import ToolRegistry
@@ -214,14 +215,16 @@ class DBOSExecutor:
 
         turn._on_progress = on_progress
 
-        return await run_durable_turn(
-            session_id,
-            message,
-            channel=channel or "",
-            chat_id=chat_id or "",
-            media=media,
-            plugin_context=plugin_context,
-        )
+        wfid = f"turn:{session_id}:{uuid7().hex}"
+        with SetWorkflowID(wfid):
+            return await run_durable_turn(
+                session_id,
+                message,
+                channel=channel or "",
+                chat_id=chat_id or "",
+                media=media,
+                plugin_context=plugin_context,
+            )
 
     async def run_hook(
         self,
