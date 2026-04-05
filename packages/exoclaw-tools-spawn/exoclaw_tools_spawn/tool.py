@@ -18,6 +18,7 @@ class SpawnManager(Protocol):
         origin_chat_id: str = "direct",
         session_key: str | None = None,
         batch: str | None = None,
+        skills: list[str] | None = None,
     ) -> str: ...
 
     def get_status(self) -> dict: ...
@@ -32,12 +33,20 @@ class SpawnTool(ToolBase):
         self._origin_channel = "cli"
         self._origin_chat_id = "direct"
         self._session_key = "cli:direct"
+        self._parent_skills: list[str] | None = None
 
-    def set_context(self, channel: str, chat_id: str, session_key: str | None = None) -> None:
+    def set_context(
+        self,
+        channel: str,
+        chat_id: str,
+        session_key: str | None = None,
+        skills: list[str] | None = None,
+    ) -> None:
         """Set the origin context for subagent announcements."""
         self._origin_channel = channel
         self._origin_chat_id = chat_id
         self._session_key = session_key or f"{channel}:{chat_id}"
+        self._parent_skills = skills
 
     @property
     def name(self) -> str:
@@ -78,6 +87,12 @@ class SpawnTool(ToolBase):
                     "subagents with the same batch ID complete, then announced together. "
                     "Use the same batch value for related parallel tasks.",
                 },
+                "skills": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional skill names to load in the subagent. "
+                    "If not provided, the subagent inherits the parent's active skills.",
+                },
             },
             "required": [],
         }
@@ -89,6 +104,7 @@ class SpawnTool(ToolBase):
         task: str | None = None,
         label: str | None = None,
         batch: str | None = None,
+        skills: list[str] | None = None,
         **kwargs: Any,
     ) -> str:
         """Execute spawn tool with context."""
@@ -98,6 +114,7 @@ class SpawnTool(ToolBase):
             return json.dumps(self._manager.list_results(), indent=2)
         if not task:
             return "Error: 'task' is required for spawn action."
+        resolved_skills = skills if skills is not None else self._parent_skills
         return await self._manager.spawn(
             task=task,
             label=label,
@@ -105,6 +122,7 @@ class SpawnTool(ToolBase):
             origin_chat_id=ctx.chat_id,
             session_key=ctx.session_key,
             batch=batch,
+            skills=resolved_skills,
         )
 
     async def execute(
@@ -113,6 +131,7 @@ class SpawnTool(ToolBase):
         task: str | None = None,
         label: str | None = None,
         batch: str | None = None,
+        skills: list[str] | None = None,
         **kwargs: Any,
     ) -> str:
         """Execute spawn tool."""
@@ -122,6 +141,7 @@ class SpawnTool(ToolBase):
             return json.dumps(self._manager.list_results(), indent=2)
         if not task:
             return "Error: 'task' is required for spawn action."
+        resolved_skills = skills if skills is not None else self._parent_skills
         return await self._manager.spawn(
             task=task,
             label=label,
@@ -129,4 +149,5 @@ class SpawnTool(ToolBase):
             origin_chat_id=self._origin_chat_id,
             session_key=self._session_key,
             batch=batch,
+            skills=resolved_skills,
         )

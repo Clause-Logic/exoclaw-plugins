@@ -23,6 +23,7 @@ class TestSpawnManagerProtocol:
                 origin_chat_id: str = "direct",
                 session_key: str | None = None,
                 batch: str | None = None,
+                skills: list[str] | None = None,
             ) -> str:
                 return "done"
 
@@ -105,6 +106,7 @@ class TestSpawnToolExecute:
             origin_chat_id="user1",
             session_key="cli:user1",
             batch=None,
+            skills=None,
         )
 
     async def test_spawn_with_label(self, tool: SpawnTool, manager: AsyncMock) -> None:
@@ -116,6 +118,35 @@ class TestSpawnToolExecute:
             origin_chat_id="user1",
             session_key="cli:user1",
             batch=None,
+            skills=None,
+        )
+
+    async def test_spawn_inherits_parent_skills(self, manager: AsyncMock) -> None:
+        t = SpawnTool(manager=manager)
+        t.set_context("cli", "user1", session_key="cli:user1", skills=["research"])
+        await t.execute(task="do research")
+        manager.spawn.assert_called_once_with(
+            task="do research",
+            label=None,
+            origin_channel="cli",
+            origin_chat_id="user1",
+            session_key="cli:user1",
+            batch=None,
+            skills=["research"],
+        )
+
+    async def test_spawn_explicit_skills_override(self, manager: AsyncMock) -> None:
+        t = SpawnTool(manager=manager)
+        t.set_context("cli", "user1", session_key="cli:user1", skills=["research"])
+        await t.execute(task="do other", skills=["other-skill"])
+        manager.spawn.assert_called_once_with(
+            task="do other",
+            label=None,
+            origin_channel="cli",
+            origin_chat_id="user1",
+            session_key="cli:user1",
+            batch=None,
+            skills=["other-skill"],
         )
 
     async def test_spawn_returns_manager_response(

@@ -290,7 +290,8 @@ async def create(
         max_iterations=config.agents.defaults.max_tool_iterations,
         workspace=workspace,
     )
-    tools.append(SpawnTool(manager=subagent_mgr))
+    spawn_tool = SpawnTool(manager=subagent_mgr)
+    tools.append(spawn_tool)
 
     # MCP servers
     mcp_stack = AsyncExitStack()
@@ -404,14 +405,19 @@ async def create(
                 sid = f"cron:{job.id}:{uuid.uuid4().hex[:8]}"
             else:
                 sid = f"cron:{job.id}"
-            response = await agent_loop.process_direct(
-                job.payload.message,
-                session_key=sid,
-                channel=channel,
-                chat_id=chat_id,
-                on_progress=None,
-                skills=job.payload.skills or None,
-            )
+            cron_skills = job.payload.skills or None
+            spawn_tool.set_context(channel, chat_id, session_key=sid, skills=cron_skills)
+            try:
+                response = await agent_loop.process_direct(
+                    job.payload.message,
+                    session_key=sid,
+                    channel=channel,
+                    chat_id=chat_id,
+                    on_progress=None,
+                    skills=cron_skills,
+                )
+            finally:
+                spawn_tool.set_context(channel, chat_id, session_key=sid, skills=None)
             if job.payload.deliver and response:
                 await bus.publish_outbound(
                     OutboundMessage(
