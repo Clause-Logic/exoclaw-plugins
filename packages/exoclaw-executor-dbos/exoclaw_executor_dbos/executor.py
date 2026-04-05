@@ -24,12 +24,12 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from dbos import DBOS, SetWorkflowID
-from uuid_utils import uuid7
 from exoclaw.agent.conversation import Conversation
 from exoclaw.agent.tools.protocol import ToolContext
 from exoclaw.agent.tools.registry import ToolRegistry
 from exoclaw.providers.protocol import LLMProvider
 from exoclaw.providers.types import LLMResponse, ToolCallRequest
+from uuid_utils import uuid7
 
 # ── Serialization helpers ────────────────────────────────────────────────────
 
