@@ -301,70 +301,54 @@ class LiteLLMProvider:
                     text = text[: self._llm_log_truncate]
                 logger.info("llm_request_msg", **{"message.role": role, "message.text": text})
 
-        max_retries = 2
-        for attempt in range(1, max_retries + 1):
-            try:
-                t0 = time.monotonic()
+        try:
+            t0 = time.monotonic()
 
-                if self._stream:
-                    response = await self._stream_to_completion(kwargs)
-                else:
-                    response = await acompletion(**kwargs)
+            if self._stream:
+                response = await self._stream_to_completion(kwargs)
+            else:
+                response = await acompletion(**kwargs)
 
-                elapsed = time.monotonic() - t0
+            elapsed = time.monotonic() - t0
 
-                if not getattr(response, "choices", None):
-                    if attempt < max_retries:
-                        logger.warning(
-                            "llm_empty_response_retry",
-                            attempt=attempt,
-                            model=resolved_model,
-                        )
-                        await asyncio.sleep(1)
-                        continue
-                    return LLMResponse(
-                        content="LLM returned an empty response (no choices). This may be due to content filtering.",
-                        finish_reason="error",
-                    )
-
-                if self._llm_logging:
-                    usage = response.usage
-                    choice = response.choices[0]
-                    content = getattr(choice.message, "content", None) or ""
-                    tool_calls = getattr(choice.message, "tool_calls", None) or []
-                    cached_tokens = 0
-                    if usage:
-                        details = getattr(usage, "prompt_tokens_details", None)
-                        cached_tokens = getattr(details, "cached_tokens", 0) or 0
-                        if not cached_tokens:
-                            cached_tokens = getattr(usage, "cache_read_input_tokens", 0) or 0
-                    cache_created = getattr(usage, "cache_creation_input_tokens", 0) if usage else 0
-                    logger.info(
-                        "llm_response",
-                        **{
-                            "llm.model": resolved_model,
-                            "llm.token.prompt": usage.prompt_tokens if usage else "?",
-                            "llm.token.completion": usage.completion_tokens if usage else "?",
-                            "llm.token.total": usage.total_tokens if usage else "?",
-                            "llm.token.cached": cached_tokens,
-                            "llm.token.cache_created": cache_created,
-                            "llm.duration_s": round(elapsed, 2),
-                            "llm.finish_reason": choice.finish_reason,
-                            "llm.tools": [tc.function.name for tc in tool_calls],
-                            "llm.stream": self._stream,
-                        },
-                    )
-
-                return self._parse_response(response)
-            except litellm.ContextWindowExceededError:
-                raise ContextWindowExceededError("Prompt exceeds model context window")
-            except TimeoutError:
-                raise
-            except Exception as e:
-                return LLMResponse(
-                    content=f"Error calling LLM: {str(e)}",
-                    finish_reason="error",
+            if self._llm_logging:
+                usage = response.usage
+                choice = response.choices[0]
+                content = getattr(choice.message, "content", None) or ""
+                tool_calls = getattr(choice.message, "tool_calls", None) or []
+                cached_tokens = 0
+                if usage:
+                    details = getattr(usage, "prompt_tokens_details", None)
+                    cached_tokens = getattr(details, "cached_tokens", 0) or 0
+                    if not cached_tokens:
+                        cached_tokens = getattr(usage, "cache_read_input_tokens", 0) or 0
+                cache_created = getattr(usage, "cache_creation_input_tokens", 0) if usage else 0
+                logger.info(
+                    "llm_response",
+                    **{
+                        "llm.model": resolved_model,
+                        "llm.token.prompt": usage.prompt_tokens if usage else "?",
+                        "llm.token.completion": usage.completion_tokens if usage else "?",
+                        "llm.token.total": usage.total_tokens if usage else "?",
+                        "llm.token.cached": cached_tokens,
+                        "llm.token.cache_created": cache_created,
+                        "llm.duration_s": round(elapsed, 2),
+                        "llm.finish_reason": choice.finish_reason,
+                        "llm.tools": [tc.function.name for tc in tool_calls],
+                        "llm.stream": self._stream,
+                    },
                 )
+
+            return self._parse_response(response)
+        except litellm.ContextWindowExceededError:
+            raise ContextWindowExceededError("Prompt exceeds model context window")
+        except TimeoutError:
+            raise
+        except Exception as e:
+            return LLMResponse(
+                content=f"Error calling LLM: {str(e)}",
+                finish_reason="error",
+            )
 
     async def _stream_to_completion(self, kwargs: dict[str, Any]) -> Any:
         """Stream the response and reassemble into a non-streaming response object.
