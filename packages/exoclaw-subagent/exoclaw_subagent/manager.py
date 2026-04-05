@@ -97,7 +97,13 @@ class SubagentManager:
 
         bg_task = asyncio.create_task(
             self._run(
-                task_id, task, display_label, origin_channel, origin_chat_id, session_key, batch,
+                task_id,
+                task,
+                display_label,
+                origin_channel,
+                origin_chat_id,
+                session_key,
+                batch,
                 skills=skills,
             )
         )

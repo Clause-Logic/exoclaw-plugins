@@ -121,9 +121,7 @@ class TestSpawnToolExecute:
             skills=None,
         )
 
-    async def test_spawn_inherits_parent_skills(
-        self, manager: AsyncMock
-    ) -> None:
+    async def test_spawn_inherits_parent_skills(self, manager: AsyncMock) -> None:
         t = SpawnTool(manager=manager)
         t.set_context("cli", "user1", session_key="cli:user1", skills=["research"])
         await t.execute(task="do research")
@@ -137,9 +135,7 @@ class TestSpawnToolExecute:
             skills=["research"],
         )
 
-    async def test_spawn_explicit_skills_override(
-        self, manager: AsyncMock
-    ) -> None:
+    async def test_spawn_explicit_skills_override(self, manager: AsyncMock) -> None:
         t = SpawnTool(manager=manager)
         t.set_context("cli", "user1", session_key="cli:user1", skills=["research"])
         await t.execute(task="do other", skills=["other-skill"])
