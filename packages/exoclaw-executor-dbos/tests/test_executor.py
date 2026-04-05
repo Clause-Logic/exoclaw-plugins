@@ -1,5 +1,7 @@
 """Basic tests for exoclaw-executor-dbos."""
 
+import re
+
 from exoclaw.providers.types import LLMResponse, ToolCallRequest
 from exoclaw_executor_dbos.executor import (
     DBOSExecutor,
@@ -66,3 +68,76 @@ class TestDBOSExecutorProtocol:
         assert hasattr(executor, "record")
         assert hasattr(executor, "clear")
         assert hasattr(executor, "run_hook")
+
+
+class TestWorkflowIDUniqueness:
+    def test_workflow_id_format(self) -> None:
+        """run_turn sets a workflow ID matching turn:{session_id}:{uuid7_hex}."""
+        from unittest.mock import AsyncMock, patch
+
+        executor = DBOSExecutor()
+        captured_ids: list[str] = []
+
+        original_set_wf = __import__("dbos").SetWorkflowID
+
+        class CapturingSetWorkflowID(original_set_wf):  # type: ignore[misc]
+            def __init__(self, wfid: str) -> None:
+                captured_ids.append(wfid)
+                super().__init__(wfid)
+
+        with (
+            patch(
+                "exoclaw_executor_dbos.executor.SetWorkflowID",
+                CapturingSetWorkflowID,
+            ),
+            patch(
+                "exoclaw_executor_dbos.turn.run_durable_turn",
+                new=AsyncMock(return_value=("ok", [])),
+            ),
+        ):
+            import asyncio
+
+            loop = AsyncMock()
+            asyncio.run(executor.run_turn(loop, "sess-123", "hello"))
+
+        assert len(captured_ids) == 1
+        assert re.match(r"^turn:sess-123:[0-9a-f]{32}$", captured_ids[0])
+
+    def test_two_calls_produce_distinct_ids(self) -> None:
+        """Two run_turn calls for the same session_id get different workflow IDs."""
+        from unittest.mock import AsyncMock, patch
+
+        executor = DBOSExecutor()
+        captured_ids: list[str] = []
+
+        original_set_wf = __import__("dbos").SetWorkflowID
+
+        class CapturingSetWorkflowID(original_set_wf):  # type: ignore[misc]
+            def __init__(self, wfid: str) -> None:
+                captured_ids.append(wfid)
+                super().__init__(wfid)
+
+        with (
+            patch(
+                "exoclaw_executor_dbos.executor.SetWorkflowID",
+                CapturingSetWorkflowID,
+            ),
+            patch(
+                "exoclaw_executor_dbos.turn.run_durable_turn",
+                new=AsyncMock(return_value=("ok", [])),
+            ),
+        ):
+            import asyncio
+
+            loop = AsyncMock()
+
+            async def run_both() -> None:
+                await asyncio.gather(
+                    executor.run_turn(loop, "sess-abc", "msg1"),
+                    executor.run_turn(loop, "sess-abc", "msg2"),
+                )
+
+            asyncio.run(run_both())
+
+        assert len(captured_ids) == 2
+        assert captured_ids[0] != captured_ids[1]
