@@ -46,8 +46,7 @@ class SpawnTool(ToolBase):
         self._origin_channel = channel
         self._origin_chat_id = chat_id
         self._session_key = session_key or f"{channel}:{chat_id}"
-        if skills is not None:
-            self._parent_skills = skills
+        self._parent_skills = skills
 
     @property
     def name(self) -> str:

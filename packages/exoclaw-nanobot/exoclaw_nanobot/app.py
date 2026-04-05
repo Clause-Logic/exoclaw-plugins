@@ -405,15 +405,19 @@ async def create(
                 sid = f"cron:{job.id}:{uuid.uuid4().hex[:8]}"
             else:
                 sid = f"cron:{job.id}"
-            spawn_tool._parent_skills = job.payload.skills or None
-            response = await agent_loop.process_direct(
-                job.payload.message,
-                session_key=sid,
-                channel=channel,
-                chat_id=chat_id,
-                on_progress=None,
-                skills=job.payload.skills or None,
-            )
+            cron_skills = job.payload.skills or None
+            spawn_tool.set_context(channel, chat_id, session_key=sid, skills=cron_skills)
+            try:
+                response = await agent_loop.process_direct(
+                    job.payload.message,
+                    session_key=sid,
+                    channel=channel,
+                    chat_id=chat_id,
+                    on_progress=None,
+                    skills=cron_skills,
+                )
+            finally:
+                spawn_tool.set_context(channel, chat_id, session_key=sid, skills=None)
             if job.payload.deliver and response:
                 await bus.publish_outbound(
                     OutboundMessage(

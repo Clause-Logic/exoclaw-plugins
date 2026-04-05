@@ -144,7 +144,7 @@ class SubagentManager:
                 tools=[t for t in self._tools if t.name != "spawn"],
             )
             kwargs: dict = {}
-            if skills:
+            if skills is not None:
                 kwargs["skills"] = skills
             result = await loop.process_direct(task, **kwargs)
         except Exception as e:
