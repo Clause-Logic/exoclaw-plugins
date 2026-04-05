@@ -290,7 +290,8 @@ async def create(
         max_iterations=config.agents.defaults.max_tool_iterations,
         workspace=workspace,
     )
-    tools.append(SpawnTool(manager=subagent_mgr))
+    spawn_tool = SpawnTool(manager=subagent_mgr)
+    tools.append(spawn_tool)
 
     # MCP servers
     mcp_stack = AsyncExitStack()
@@ -404,6 +405,7 @@ async def create(
                 sid = f"cron:{job.id}:{uuid.uuid4().hex[:8]}"
             else:
                 sid = f"cron:{job.id}"
+            spawn_tool._parent_skills = job.payload.skills or None
             response = await agent_loop.process_direct(
                 job.payload.message,
                 session_key=sid,

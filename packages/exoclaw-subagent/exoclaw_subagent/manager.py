@@ -82,6 +82,7 @@ class SubagentManager:
         origin_chat_id: str = "direct",
         session_key: str | None = None,
         batch: str | None = None,
+        skills: list[str] | None = None,
     ) -> str:
         """Spawn a background subagent. Returns immediately."""
         task_id = str(uuid.uuid4())[:8]
@@ -96,7 +97,8 @@ class SubagentManager:
 
         bg_task = asyncio.create_task(
             self._run(
-                task_id, task, display_label, origin_channel, origin_chat_id, session_key, batch
+                task_id, task, display_label, origin_channel, origin_chat_id, session_key, batch,
+                skills=skills,
             )
         )
         self._running_tasks[task_id] = bg_task
@@ -121,6 +123,7 @@ class SubagentManager:
         origin_chat_id: str,
         session_key: str | None,
         batch: str | None,
+        skills: list[str] | None = None,
     ) -> None:
         """Execute the subagent and announce the result."""
         status = "completed"
@@ -134,7 +137,10 @@ class SubagentManager:
                 max_iterations=self._max_iterations,
                 tools=[t for t in self._tools if t.name != "spawn"],
             )
-            result = await loop.process_direct(task)
+            kwargs: dict = {}
+            if skills:
+                kwargs["skills"] = skills
+            result = await loop.process_direct(task, **kwargs)
         except Exception as e:
             result = f"Error: {e}"
             status = "failed"
