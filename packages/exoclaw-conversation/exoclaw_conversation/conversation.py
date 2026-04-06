@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import structlog
+import structlog.contextvars
 
 from .protocols import ConsolidationPolicy, HistoryStore, MemoryBackend, PromptBuilder
 from .session.manager import Session
@@ -114,6 +115,20 @@ class DefaultConversation:
         skills: list[str] | None = kwargs.get("skills")
         session = self.history.get_or_create(session_id)
 
+        unconsolidated = session.total_messages - session.last_consolidated
+        structlog.contextvars.bind_contextvars(
+            **{
+                "session.total_messages": session.total_messages,
+                "session.last_consolidated": session.last_consolidated,
+                "session.unconsolidated": unconsolidated,
+                "session.has_summary": bool(session.metadata.get("summary")),
+                "memory.window": self.memory_window,
+                "consolidation.active": session_id in self._consolidating,
+                "skill.requested": ",".join(skills) if skills else "",
+                "hook.active": channel == "hook",
+            }
+        )
+
         # Trigger background consolidation when policy says so (or default: history is long)
         should = await self._should_consolidate(session)
         if should and session_id not in self._consolidating:
@@ -147,7 +162,7 @@ class DefaultConversation:
         if summary:
             effective_turn_context.insert(0, f"## Previous Session Summary\n{summary}")
 
-        return self.prompt.build_messages(
+        messages = self.prompt.build_messages(
             history=history,
             current_message=message,
             skill_names=skills,
@@ -157,6 +172,26 @@ class DefaultConversation:
             extra_context=extra_context,
             turn_context=effective_turn_context or None,
         )
+
+        # Bind skill/tool context after build_messages (which resolves active skills/tools)
+        get_tools = getattr(self.prompt, "get_active_optional_tools", None)
+        skills_loader = getattr(self.prompt, "skills", None)
+        if get_tools and skills_loader:
+            active_tools = get_tools()
+            always_skills = skills_loader.get_always_skills()
+            extra_skills = [s for s in (skills or []) if s not in always_skills]
+            active_skills = always_skills + extra_skills
+            structlog.contextvars.bind_contextvars(
+                **{
+                    "skill.always": ",".join(always_skills),
+                    "skill.active": ",".join(active_skills),
+                    "skill.active.count": len(active_skills),
+                    "tool.optional.active": ",".join(sorted(active_tools)),
+                    "tool.optional.active.count": len(active_tools),
+                }
+            )
+
+        return messages
 
     async def record(
         self,
