@@ -116,16 +116,18 @@ class DefaultConversation:
         session = self.history.get_or_create(session_id)
 
         unconsolidated = session.total_messages - session.last_consolidated
-        structlog.contextvars.bind_contextvars(**{
-            "session.total_messages": session.total_messages,
-            "session.last_consolidated": session.last_consolidated,
-            "session.unconsolidated": unconsolidated,
-            "session.has_summary": bool(session.metadata.get("summary")),
-            "memory.window": self.memory_window,
-            "consolidation.active": session_id in self._consolidating,
-            "skill.requested": ",".join(skills) if skills else "",
-            "hook.active": channel == "hook",
-        })
+        structlog.contextvars.bind_contextvars(
+            **{
+                "session.total_messages": session.total_messages,
+                "session.last_consolidated": session.last_consolidated,
+                "session.unconsolidated": unconsolidated,
+                "session.has_summary": bool(session.metadata.get("summary")),
+                "memory.window": self.memory_window,
+                "consolidation.active": session_id in self._consolidating,
+                "skill.requested": ",".join(skills) if skills else "",
+                "hook.active": channel == "hook",
+            }
+        )
 
         # Trigger background consolidation when policy says so (or default: history is long)
         should = await self._should_consolidate(session)
@@ -179,13 +181,15 @@ class DefaultConversation:
             always_skills = skills_loader.get_always_skills()
             extra_skills = [s for s in (skills or []) if s not in always_skills]
             active_skills = always_skills + extra_skills
-            structlog.contextvars.bind_contextvars(**{
-                "skill.always": ",".join(always_skills),
-                "skill.active": ",".join(active_skills),
-                "skill.active.count": len(active_skills),
-                "tool.optional.active": ",".join(sorted(active_tools)),
-                "tool.optional.active.count": len(active_tools),
-            })
+            structlog.contextvars.bind_contextvars(
+                **{
+                    "skill.always": ",".join(always_skills),
+                    "skill.active": ",".join(active_skills),
+                    "skill.active.count": len(active_skills),
+                    "tool.optional.active": ",".join(sorted(active_tools)),
+                    "tool.optional.active.count": len(active_tools),
+                }
+            )
 
         return messages
 
