@@ -47,4 +47,8 @@ def apply_sqlite_patch() -> None:
 
         logger.info("dbos_sqlite_patched", **{"sqlite.version": sqlite3.sqlite_version})
     except Exception:
-        pass
+        logger.warning(
+            "dbos_sqlite_patch_failed",
+            **{"sqlite.version": sqlite3.sqlite_version},
+            exc_info=True,
+        )
