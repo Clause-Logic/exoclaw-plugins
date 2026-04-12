@@ -22,7 +22,7 @@ from exoclaw_conversation.session.manager import SessionManager
 from exoclaw_conversation.summarizing_policy import SummarizingConsolidationPolicy
 
 try:
-    from exoclaw_executor_dbos import DBOSExecutor, init_dbos, set_loop_context
+    from exoclaw_executor_dbos import DBOSExecutor, set_loop_context
 
     _DBOS_AVAILABLE = True
 except Exception:
@@ -448,13 +448,12 @@ async def create(
         enabled=config.gateway.heartbeat.enabled,
     )
 
-    # DBOS durable execution (optional — degrades gracefully if init fails)
+    # DBOS durable execution — caller owns DBOS lifecycle. We only wire the
+    # agent loop reference so replayed workflows can find it. The caller is
+    # responsible for constructing DBOS() and calling DBOS.launch() after
+    # create() returns but before running the bot.
     if _DBOS_AVAILABLE:
-        try:
-            set_loop_context(agent_loop)
-            init_dbos(db_path=workspace / "exoclaw.sqlite")
-        except Exception as e:
-            logger.warning("dbos_init_failed", error=str(e))
+        set_loop_context(agent_loop)
 
     return ExoclawNanobot(
         config=config,

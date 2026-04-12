@@ -655,7 +655,7 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-conversation"
-version = "0.13.0"
+version = "0.13.1"
 source = { editable = "packages/exoclaw-conversation" }
 dependencies = [
     { name = "exoclaw" },
@@ -672,7 +672,7 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-executor-dbos"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "packages/exoclaw-executor-dbos" }
 dependencies = [
     { name = "dbos" },
@@ -725,7 +725,7 @@ requires-dist = [{ name = "exoclaw", specifier = ">=0.7.0" }]
 
 [[package]]
 name = "exoclaw-nanobot"
-version = "0.12.0"
+version = "0.13.0"
 source = { editable = "packages/exoclaw-nanobot" }
 dependencies = [
     { name = "exoclaw" },
