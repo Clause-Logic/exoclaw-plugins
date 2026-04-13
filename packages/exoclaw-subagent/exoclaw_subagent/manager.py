@@ -6,7 +6,7 @@ import asyncio
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import structlog
 from exoclaw.agent.conversation import Conversation
@@ -17,6 +17,64 @@ from exoclaw.bus.protocol import Bus
 from exoclaw.providers.protocol import LLMProvider
 
 logger = structlog.get_logger()
+
+# ── Optional DBOS integration ────────────────────────────────────────────────
+# When the host app uses exoclaw-executor-dbos, subagents must run as their
+# own DBOS child workflows instead of bare asyncio tasks. Otherwise they
+# inherit the parent workflow's ContextVar and their chat/tool steps get
+# recorded into the parent's journal — concurrent subagents then race and
+# poison determinism (see 2026-04-13 Feed curator incident).
+
+try:
+    from dbos import DBOS  # type: ignore[import-not-found]
+
+    _DBOS_AVAILABLE = True
+except ImportError:  # pragma: no cover - dbos is optional
+    DBOS = None  # type: ignore[assignment,misc]
+    _DBOS_AVAILABLE = False
+
+# Module-level ref to the active manager so the workflow entrypoint (which
+# must take only serializable args) can find it. Follows the same pattern as
+# exoclaw_executor_dbos.turn._loop. Single-manager-per-process assumption.
+_active_manager: "SubagentManager | None" = None
+
+
+if _DBOS_AVAILABLE:
+
+    @DBOS.workflow()  # type: ignore[misc]
+    async def _subagent_workflow(
+        task_id: str,
+        task: str,
+        label: str,
+        origin_channel: str,
+        origin_chat_id: str,
+        session_key: str | None,
+        batch: str | None,
+        skills: list[str] | None,
+        model: str | None,
+    ) -> None:
+        """Durable child workflow that runs one subagent.
+
+        Dispatched via ``DBOS.start_workflow_async`` so each subagent gets
+        its own wfid and step journal; only a single deterministic "started
+        child" entry is recorded in the parent's journal.
+        """
+        mgr = _active_manager
+        if mgr is None:
+            raise RuntimeError(
+                "SubagentManager not initialized — cannot run subagent workflow"
+            )
+        await mgr._run(
+            task_id,
+            task,
+            label,
+            origin_channel,
+            origin_chat_id,
+            session_key,
+            batch,
+            skills=skills,
+            model=model,
+        )
 
 
 def _safe_filename(label: str) -> str:
@@ -68,11 +126,16 @@ class SubagentManager:
         self._model = model
         self._max_iterations = max_iterations
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
+        self._running_handles: dict[str, Any] = {}
         self._results_dir: Path | None = None
         self._batches: dict[str, _BatchState] = {}
         if workspace is not None:
             self._results_dir = workspace / "subagents"
             self._results_dir.mkdir(parents=True, exist_ok=True)
+
+        if _DBOS_AVAILABLE:
+            global _active_manager
+            _active_manager = self
 
     async def spawn(
         self,
@@ -101,8 +164,11 @@ class SubagentManager:
             state.origin_chat_id = origin_chat_id
             state.session_key = session_key
 
-        bg_task = asyncio.create_task(
-            self._run(
+        if _DBOS_AVAILABLE and DBOS.workflow_id is not None:
+            # Inside a DBOS workflow — dispatch the subagent as its own child
+            # workflow so its steps go into a separate journal.
+            handle = await DBOS.start_workflow_async(
+                _subagent_workflow,
                 task_id,
                 task,
                 display_label,
@@ -110,16 +176,41 @@ class SubagentManager:
                 origin_chat_id,
                 session_key,
                 batch,
-                skills=skills,
-                model=model,
+                skills,
+                model,
             )
-        )
-        self._running_tasks[task_id] = bg_task
+            self._running_handles[task_id] = handle
 
-        def _cleanup(_: asyncio.Task[None]) -> None:
-            self._running_tasks.pop(task_id, None)
+            async def _await_handle() -> None:
+                try:
+                    await handle.get_result()
+                except Exception:
+                    pass
+                self._running_handles.pop(task_id, None)
 
-        bg_task.add_done_callback(_cleanup)
+            # Thin wrapper task just awaits the handle for cleanup; runs no
+            # DBOS steps of its own so inheriting the parent context is safe.
+            asyncio.create_task(_await_handle())
+        else:
+            bg_task = asyncio.create_task(
+                self._run(
+                    task_id,
+                    task,
+                    display_label,
+                    origin_channel,
+                    origin_chat_id,
+                    session_key,
+                    batch,
+                    skills=skills,
+                    model=model,
+                )
+            )
+            self._running_tasks[task_id] = bg_task
+
+            def _cleanup(_: asyncio.Task[None]) -> None:
+                self._running_tasks.pop(task_id, None)
+
+            bg_task.add_done_callback(_cleanup)
 
         logger.info(
             "subagent_spawned",
@@ -309,13 +400,15 @@ class SubagentManager:
 
     def get_running_count(self) -> int:
         """Return the number of currently running subagents."""
-        return len(self._running_tasks)
+        return len(self._running_tasks) + len(self._running_handles)
 
     def get_status(self) -> dict:
         """Return status of all subagents: running, batches, and completed results on disk."""
         running = []
         for task_id, task in self._running_tasks.items():
             running.append({"id": task_id, "done": task.done()})
+        for task_id in self._running_handles:
+            running.append({"id": task_id, "done": False})
 
         batches = {}
         for batch_id, state in self._batches.items():
@@ -350,8 +443,15 @@ class SubagentManager:
     async def cancel_by_session(self, session_key: str) -> int:
         """Cancel running subagents. Returns count cancelled."""
         cancelled = 0
-        for task_id, task in list(self._running_tasks.items()):
+        for _task_id, task in list(self._running_tasks.items()):
             if not task.done():
                 task.cancel()
                 cancelled += 1
+        if _DBOS_AVAILABLE:
+            for _task_id, handle in list(self._running_handles.items()):
+                try:
+                    await DBOS.cancel_workflow_async(handle.get_workflow_id())
+                    cancelled += 1
+                except Exception:
+                    pass
         return cancelled
