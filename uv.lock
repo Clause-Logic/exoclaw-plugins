@@ -892,7 +892,7 @@ requires-dist = [{ name = "exoclaw", specifier = ">=0.1.0" }]
 
 [[package]]
 name = "exoclaw-tools-spawn"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "packages/exoclaw-tools-spawn" }
 dependencies = [
     { name = "exoclaw" },

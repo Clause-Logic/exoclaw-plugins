@@ -24,6 +24,7 @@ class TestSpawnManagerProtocol:
                 session_key: str | None = None,
                 batch: str | None = None,
                 skills: list[str] | None = None,
+                model: str | None = None,
             ) -> str:
                 return "done"
 
@@ -107,6 +108,7 @@ class TestSpawnToolExecute:
             session_key="cli:user1",
             batch=None,
             skills=None,
+            model=None,
         )
 
     async def test_spawn_with_label(self, tool: SpawnTool, manager: AsyncMock) -> None:
@@ -119,6 +121,7 @@ class TestSpawnToolExecute:
             session_key="cli:user1",
             batch=None,
             skills=None,
+            model=None,
         )
 
     async def test_spawn_inherits_parent_skills(self, manager: AsyncMock) -> None:
@@ -133,6 +136,7 @@ class TestSpawnToolExecute:
             session_key="cli:user1",
             batch=None,
             skills=["research"],
+            model=None,
         )
 
     async def test_spawn_explicit_skills_override(self, manager: AsyncMock) -> None:
@@ -147,7 +151,13 @@ class TestSpawnToolExecute:
             session_key="cli:user1",
             batch=None,
             skills=["other-skill"],
+            model=None,
         )
+
+    async def test_spawn_passes_model(self, tool: SpawnTool, manager: AsyncMock) -> None:
+        await tool.execute(task="cheap task", model="claude-haiku-4-5")
+        _, kwargs = manager.spawn.call_args
+        assert kwargs["model"] == "claude-haiku-4-5"
 
     async def test_spawn_returns_manager_response(
         self, tool: SpawnTool, manager: AsyncMock
@@ -159,3 +169,50 @@ class TestSpawnToolExecute:
     async def test_kwargs_ignored(self, tool: SpawnTool, manager: AsyncMock) -> None:
         result = await tool.execute(task="do it", unknown_param="ignored")
         assert "started" in result
+
+
+class TestSpawnToolModelAllowlist:
+    def test_schema_has_plain_model_when_no_allowlist(self, manager: AsyncMock) -> None:
+        t = SpawnTool(manager=manager)
+        model_schema = t.parameters["properties"]["model"]
+        assert model_schema["type"] == "string"
+        assert "enum" not in model_schema
+
+    def test_schema_advertises_enum_when_allowlist_set(self, manager: AsyncMock) -> None:
+        t = SpawnTool(manager=manager, allowed_models=["haiku", "nano"])
+        model_schema = t.parameters["properties"]["model"]
+        assert model_schema["enum"] == ["haiku", "nano"]
+        assert "haiku" in model_schema["description"]
+        assert "nano" in model_schema["description"]
+
+    async def test_no_allowlist_accepts_any_model(self, manager: AsyncMock) -> None:
+        t = SpawnTool(manager=manager)
+        t.set_context("cli", "user1", session_key="cli:user1")
+        await t.execute(task="anything", model="some/expensive-model")
+        _, kwargs = manager.spawn.call_args
+        assert kwargs["model"] == "some/expensive-model"
+
+    async def test_allowlist_accepts_listed_model(self, manager: AsyncMock) -> None:
+        t = SpawnTool(manager=manager, allowed_models=["haiku", "nano"])
+        t.set_context("cli", "user1", session_key="cli:user1")
+        result = await t.execute(task="cheap", model="haiku")
+        assert "started" in result
+        _, kwargs = manager.spawn.call_args
+        assert kwargs["model"] == "haiku"
+
+    async def test_allowlist_rejects_unlisted_model(self, manager: AsyncMock) -> None:
+        t = SpawnTool(manager=manager, allowed_models=["haiku", "nano"])
+        t.set_context("cli", "user1", session_key="cli:user1")
+        result = await t.execute(task="try", model="opus")
+        assert "Error" in result
+        assert "opus" in result
+        assert "haiku" in result  # allowed models listed in error
+        manager.spawn.assert_not_called()
+
+    async def test_allowlist_allows_model_none(self, manager: AsyncMock) -> None:
+        t = SpawnTool(manager=manager, allowed_models=["haiku"])
+        t.set_context("cli", "user1", session_key="cli:user1")
+        result = await t.execute(task="default")
+        assert "started" in result
+        _, kwargs = manager.spawn.call_args
+        assert kwargs["model"] is None
