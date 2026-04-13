@@ -59,11 +59,15 @@ class TestCronPayload:
         assert p.channel is None
         assert p.to is None
         assert p.skills == []
+        assert p.model is None
 
     def test_custom(self) -> None:
-        p = CronPayload(message="hello", deliver=True, channel="whatsapp", to="+1234")
+        p = CronPayload(
+            message="hello", deliver=True, channel="whatsapp", to="+1234", model="haiku"
+        )
         assert p.message == "hello"
         assert p.deliver is True
+        assert p.model == "haiku"
 
 
 class TestCronJobState:
@@ -267,6 +271,51 @@ class TestCronServiceSaveStore:
         assert store_path.exists()
         data = json.loads(store_path.read_text())
         assert data["jobs"][0]["id"] == "x1"
+
+    def test_model_roundtrip(self, service: CronService, store_path: Path) -> None:
+        store = service._load_store()
+        store.jobs.append(
+            CronJob(
+                id="m1",
+                name="cheap",
+                schedule=CronSchedule(kind="every", every_ms=5000),
+                payload=CronPayload(message="hi", model="claude-haiku-4-5"),
+                state=CronJobState(),
+            )
+        )
+        service._save_store()
+        data = json.loads(store_path.read_text())
+        assert data["jobs"][0]["payload"]["model"] == "claude-haiku-4-5"
+
+        # Force reload from disk and confirm the field survives the trip
+        service._store = None
+        service._last_mtime = 0.0
+        reloaded = service._load_store()
+        assert reloaded.jobs[0].payload.model == "claude-haiku-4-5"
+
+    def test_model_defaults_none_when_absent(self, service: CronService, store_path: Path) -> None:
+        # Simulate a pre-existing store file without the model field
+        legacy = {
+            "version": 1,
+            "jobs": [
+                {
+                    "id": "old",
+                    "name": "old",
+                    "enabled": True,
+                    "schedule": {"kind": "every", "everyMs": 1000},
+                    "payload": {"message": "hi"},
+                    "state": {},
+                    "createdAtMs": 0,
+                    "updatedAtMs": 0,
+                    "deleteAfterRun": False,
+                }
+            ],
+        }
+        store_path.write_text(json.dumps(legacy))
+        service._store = None
+        service._last_mtime = 0.0
+        reloaded = service._load_store()
+        assert reloaded.jobs[0].payload.model is None
 
     def test_save_noop_when_no_store(self, store_path: Path) -> None:
         svc = CronService(store_path=store_path)
@@ -638,6 +687,14 @@ class TestCronToolExecuteAdd:
         )
         assert "Created job" in result
 
+    async def test_add_with_model(self, tool: CronTool) -> None:
+        result = await tool.execute(
+            action="add", message="cheap task", every_seconds=60, model="claude-haiku-4-5"
+        )
+        assert "Created job" in result
+        jobs = await tool._backend.list_jobs()
+        assert jobs[0].payload.model == "claude-haiku-4-5"
+
 
 class TestCronToolExecuteList:
     async def test_list_empty(self, tool: CronTool) -> None:
@@ -783,10 +840,11 @@ class TestCronBackendProtocol:
             schedule=CronSchedule(kind="every", every_ms=1000),
             message="old",
         )
-        updated = await backend.update(job.id, message="new", skills=["s1"])
+        updated = await backend.update(job.id, message="new", skills=["s1"], model="haiku")
         assert updated is not None
         assert updated.payload.message == "new"
         assert updated.payload.skills == ["s1"]
+        assert updated.payload.model == "haiku"
 
     async def test_backend_remove(self, backend: LocalCronBackend) -> None:
         job = await backend.add(

@@ -830,7 +830,7 @@ requires-dist = [{ name = "exoclaw", specifier = ">=0.1.0" }]
 
 [[package]]
 name = "exoclaw-tools-cron"
-version = "0.5.0"
+version = "0.6.0"
 source = { editable = "packages/exoclaw-tools-cron" }
 dependencies = [
     { name = "croniter" },

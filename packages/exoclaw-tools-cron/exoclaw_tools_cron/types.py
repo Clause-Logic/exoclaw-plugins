@@ -33,6 +33,9 @@ class CronPayload:
     skills: list[str] = field(default_factory=list)
     # Run without session history (default False — stateful, backwards compatible)
     stateless: bool = False
+    # Override the agent's default model for this job (e.g. a cheaper model
+    # for batch work). None means use whatever the agent is configured with.
+    model: str | None = None
 
 
 @dataclass
