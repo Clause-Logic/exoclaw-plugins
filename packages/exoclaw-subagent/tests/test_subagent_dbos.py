@@ -57,9 +57,11 @@ class TestSubagentRunsAsChildWorkflow:
         from exoclaw_subagent.manager import SubagentManager
 
         observed: dict[str, str | None] = {}
+        child_ran = asyncio.Event()
 
         async def observe_process_direct(task: str, **kwargs: Any) -> str:
             observed["child"] = DBOS.workflow_id
+            child_ran.set()
             return "done"
 
         mock_loop = MagicMock()
@@ -81,11 +83,7 @@ class TestSubagentRunsAsChildWorkflow:
             observed["parent"] = DBOS.workflow_id
             with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop):
                 await mgr.spawn(task="work", label="child")
-                # allow the dispatched child to run
-                for _ in range(20):
-                    if "child" in observed:
-                        break
-                    await asyncio.sleep(0.01)
+                await asyncio.wait_for(child_ran.wait(), timeout=2.0)
 
         with SetWorkflowID(parent_wfid):
             await parent_workflow()
@@ -106,7 +104,7 @@ class TestSubagentRunsAsChildWorkflow:
         )
 
     async def test_concurrent_spawns_get_distinct_workflow_ids(self, dbos_instance: Any) -> None:
-        """Two subagents spawned from the same parent must each get their own wfid.
+        """Four subagents spawned from the same parent must each get their own wfid.
 
         This is the exact shape of the original failure — the user spawned 4
         parallel subagents (web-search, calendar, feed-fetch, notes-search)
@@ -114,14 +112,15 @@ class TestSubagentRunsAsChildWorkflow:
         """
         from exoclaw_subagent.manager import SubagentManager
 
+        n = 4
         child_wfids: list[str | None] = []
-        started = asyncio.Event()
+        all_started = asyncio.Event()
         release = asyncio.Event()
 
         async def observe_process_direct(task: str, **kwargs: Any) -> str:
             child_wfids.append(DBOS.workflow_id)
-            if len(child_wfids) == 2:
-                started.set()
+            if len(child_wfids) == n:
+                all_started.set()
             await release.wait()
             return "done"
 
@@ -140,26 +139,21 @@ class TestSubagentRunsAsChildWorkflow:
         @DBOS.workflow()
         async def parent_workflow() -> None:
             with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop):
-                await mgr.spawn(task="a", label="a")
-                await mgr.spawn(task="b", label="b")
+                for i in range(n):
+                    await mgr.spawn(task=f"t{i}", label=f"child-{i}")
                 try:
-                    await asyncio.wait_for(started.wait(), timeout=2.0)
+                    await asyncio.wait_for(all_started.wait(), timeout=2.0)
                 finally:
                     release.set()
-                # drain the running tasks
-                for _ in range(50):
-                    if mgr.get_running_count() == 0:
-                        break
-                    await asyncio.sleep(0.01)
 
         with SetWorkflowID(f"parent-{uuid.uuid4()}"):
             await parent_workflow()
 
-        assert len(child_wfids) == 2
+        assert len(child_wfids) == n
         assert all(w is not None for w in child_wfids), (
             f"subagents ran outside any DBOS workflow: {child_wfids}"
         )
-        assert child_wfids[0] != child_wfids[1], (
-            f"concurrent subagents shared a workflow id {child_wfids[0]!r} — "
+        assert len(set(child_wfids)) == n, (
+            f"concurrent subagents shared workflow ids {child_wfids!r} — "
             "they will race into the same DBOS step journal"
         )

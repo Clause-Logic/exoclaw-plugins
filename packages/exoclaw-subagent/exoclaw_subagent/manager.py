@@ -183,8 +183,12 @@ class SubagentManager:
                 try:
                     await handle.get_result()
                 except Exception:
-                    pass
-                self._running_handles.pop(task_id, None)
+                    logger.exception(
+                        "subagent_child_workflow_failed",
+                        **{"subagent.id": task_id, "subagent.label": display_label},
+                    )
+                finally:
+                    self._running_handles.pop(task_id, None)
 
             # Thin wrapper task just awaits the handle for cleanup; runs no
             # DBOS steps of its own so inheriting the parent context is safe.
