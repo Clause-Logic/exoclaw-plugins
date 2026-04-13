@@ -691,3 +691,116 @@ class TestCreate:
         finally:
             for p_obj in patches:
                 p_obj.stop()
+
+    async def test_spawn_tool_receives_no_allowlist_by_default(self) -> None:
+        config = Config()
+        spawn_tool_mock = MagicMock(return_value=MagicMock())
+
+        patches = [
+            patch(
+                "exoclaw_nanobot.app.LiteLLMProvider",
+                MagicMock(return_value=MagicMock(get_default_model=MagicMock(return_value="x"))),
+            ),
+            patch(
+                "exoclaw_nanobot.app.MessageBus",
+                MagicMock(return_value=MagicMock(publish_outbound=AsyncMock())),
+            ),
+            patch("exoclaw_nanobot.app.DefaultConversation"),
+            patch(
+                "exoclaw_nanobot.app.AgentLoop",
+                MagicMock(return_value=MagicMock(run=AsyncMock(), process_direct=AsyncMock())),
+            ),
+            patch(
+                "exoclaw_nanobot.app.CLIChannel",
+                MagicMock(return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())),
+            ),
+            patch(
+                "exoclaw_nanobot.app.CronService",
+                MagicMock(return_value=MagicMock(start=AsyncMock())),
+            ),
+            patch("exoclaw_nanobot.app.CronTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.MessageTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.SpawnTool", spawn_tool_mock),
+            patch("exoclaw_nanobot.app.SubagentManager", MagicMock(return_value=MagicMock())),
+            patch(
+                "exoclaw_nanobot.app.HeartbeatService",
+                MagicMock(return_value=MagicMock(start=AsyncMock())),
+            ),
+            patch("exoclaw_nanobot.app.ReadFileTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.WriteFileTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.EditFileTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.ListDirTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.ExecTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.WebSearchTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.WebFetchTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.connect_mcp_servers", AsyncMock()),
+        ]
+
+        for p_obj in patches:
+            p_obj.start()
+
+        try:
+            await create(config)
+            spawn_tool_mock.assert_called_once()
+            _, kwargs = spawn_tool_mock.call_args
+            assert kwargs["allowed_models"] is None
+        finally:
+            for p_obj in patches:
+                p_obj.stop()
+
+    async def test_spawn_tool_receives_allowlist_when_configured(self) -> None:
+        config = Config()
+        config.agents.subagent_allowed_models = ["claude-haiku-4-5", "gpt-5-nano"]
+        spawn_tool_mock = MagicMock(return_value=MagicMock())
+
+        patches = [
+            patch(
+                "exoclaw_nanobot.app.LiteLLMProvider",
+                MagicMock(return_value=MagicMock(get_default_model=MagicMock(return_value="x"))),
+            ),
+            patch(
+                "exoclaw_nanobot.app.MessageBus",
+                MagicMock(return_value=MagicMock(publish_outbound=AsyncMock())),
+            ),
+            patch("exoclaw_nanobot.app.DefaultConversation"),
+            patch(
+                "exoclaw_nanobot.app.AgentLoop",
+                MagicMock(return_value=MagicMock(run=AsyncMock(), process_direct=AsyncMock())),
+            ),
+            patch(
+                "exoclaw_nanobot.app.CLIChannel",
+                MagicMock(return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())),
+            ),
+            patch(
+                "exoclaw_nanobot.app.CronService",
+                MagicMock(return_value=MagicMock(start=AsyncMock())),
+            ),
+            patch("exoclaw_nanobot.app.CronTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.MessageTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.SpawnTool", spawn_tool_mock),
+            patch("exoclaw_nanobot.app.SubagentManager", MagicMock(return_value=MagicMock())),
+            patch(
+                "exoclaw_nanobot.app.HeartbeatService",
+                MagicMock(return_value=MagicMock(start=AsyncMock())),
+            ),
+            patch("exoclaw_nanobot.app.ReadFileTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.WriteFileTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.EditFileTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.ListDirTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.ExecTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.WebSearchTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.WebFetchTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.connect_mcp_servers", AsyncMock()),
+        ]
+
+        for p_obj in patches:
+            p_obj.start()
+
+        try:
+            await create(config)
+            spawn_tool_mock.assert_called_once()
+            _, kwargs = spawn_tool_mock.call_args
+            assert kwargs["allowed_models"] == ["claude-haiku-4-5", "gpt-5-nano"]
+        finally:
+            for p_obj in patches:
+                p_obj.stop()

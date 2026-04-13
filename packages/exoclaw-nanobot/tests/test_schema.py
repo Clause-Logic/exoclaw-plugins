@@ -15,6 +15,15 @@ class TestConfigDefaults:
         assert cfg.agents.defaults.provider == "auto"
         assert cfg.agents.defaults.max_tokens == 8192
 
+    def test_subagent_allowed_models_empty_by_default(self) -> None:
+        cfg = Config()
+        assert cfg.agents.subagent_allowed_models == []
+
+    def test_subagent_allowed_models_accepts_list(self) -> None:
+        cfg = Config()
+        cfg.agents.subagent_allowed_models = ["haiku", "nano"]
+        assert cfg.agents.subagent_allowed_models == ["haiku", "nano"]
+
     def test_workspace_path_expanded(self) -> None:
         cfg = Config()
         path = cfg.workspace_path
