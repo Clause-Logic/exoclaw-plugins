@@ -240,6 +240,57 @@ class TestRun:
         _, kwargs = MockLoop.call_args
         assert kwargs["model"] == "claude-opus"
 
+    async def test_run_per_spawn_model_overrides_default(self) -> None:
+        bus = _make_bus()
+        mgr = SubagentManager(
+            provider=_make_provider(),
+            bus=bus,
+            conversation_factory=_make_conversation,
+            model="claude-opus",
+            max_iterations=5,
+        )
+        mock_loop = MagicMock()
+        mock_loop.process_direct = AsyncMock(return_value="done")
+
+        with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop) as MockLoop:  # noqa: N806
+            await mgr._run(
+                "t1", "task", "label", "cli", "user1", None, None, model="claude-haiku-4-5"
+            )
+
+        _, kwargs = MockLoop.call_args
+        assert kwargs["model"] == "claude-haiku-4-5"
+
+    async def test_run_none_model_falls_back_to_manager_default(self) -> None:
+        bus = _make_bus()
+        mgr = SubagentManager(
+            provider=_make_provider(),
+            bus=bus,
+            conversation_factory=_make_conversation,
+            model="claude-opus",
+            max_iterations=5,
+        )
+        mock_loop = MagicMock()
+        mock_loop.process_direct = AsyncMock(return_value="done")
+
+        with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop) as MockLoop:  # noqa: N806
+            await mgr._run("t1", "task", "label", "cli", "user1", None, None, model=None)
+
+        _, kwargs = MockLoop.call_args
+        assert kwargs["model"] == "claude-opus"
+
+    async def test_spawn_forwards_model_to_run(self) -> None:
+        mgr = _make_manager()
+        captured: dict[str, object] = {}
+
+        async def fake_run(*args: object, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        with patch.object(mgr, "_run", new=fake_run):
+            await mgr.spawn(task="work", model="claude-haiku-4-5")
+            await asyncio.sleep(0.01)
+
+        assert captured.get("model") == "claude-haiku-4-5"
+
     async def test_run_session_key_none_in_announcement(self) -> None:
         bus = _make_bus()
         mgr = _make_manager(bus=bus)
