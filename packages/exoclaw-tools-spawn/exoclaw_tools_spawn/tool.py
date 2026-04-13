@@ -19,6 +19,7 @@ class SpawnManager(Protocol):
         session_key: str | None = None,
         batch: str | None = None,
         skills: list[str] | None = None,
+        model: str | None = None,
     ) -> str: ...
 
     def get_status(self) -> dict: ...
@@ -26,10 +27,23 @@ class SpawnManager(Protocol):
 
 
 class SpawnTool(ToolBase):
-    """Tool to spawn a subagent for background task execution."""
+    """Tool to spawn a subagent for background task execution.
 
-    def __init__(self, manager: SpawnManager):
+    ``allowed_models`` optionally restricts the set of models the agent
+    may request via the ``model`` parameter. When set, the allowlist is
+    advertised directly in the tool schema as an ``enum`` so the LLM
+    sees valid choices up front, and any request outside the list is
+    rejected at the tool boundary. ``None`` disables the check and
+    allows any model string to pass through (backwards compatible).
+    """
+
+    def __init__(
+        self,
+        manager: SpawnManager,
+        allowed_models: list[str] | None = None,
+    ):
         self._manager = manager
+        self._allowed_models = allowed_models
         self._origin_channel = "cli"
         self._origin_chat_id = "direct"
         self._session_key = "cli:direct"
@@ -63,6 +77,21 @@ class SpawnTool(ToolBase):
 
     @property
     def parameters(self) -> dict[str, Any]:
+        model_schema: dict[str, Any] = {
+            "type": "string",
+            "description": (
+                "Optional model override for this subagent. "
+                "Omit to use the manager's default model."
+            ),
+        }
+        if self._allowed_models is not None:
+            model_schema["enum"] = list(self._allowed_models)
+            model_schema["description"] = (
+                "Optional model override for this subagent. Must be one of: "
+                + ", ".join(self._allowed_models)
+                + ". Omit to use the manager's default model."
+            )
+
         return {
             "type": "object",
             "properties": {
@@ -93,9 +122,19 @@ class SpawnTool(ToolBase):
                     "description": "Optional skill names to load in the subagent. "
                     "If not provided, the subagent inherits the parent's active skills.",
                 },
+                "model": model_schema,
             },
             "required": [],
         }
+
+    def _validate_model(self, model: str | None) -> str | None:
+        """Return an error string if ``model`` violates the allowlist, else None."""
+        if model is None or self._allowed_models is None:
+            return None
+        if model not in self._allowed_models:
+            allowed = ", ".join(self._allowed_models)
+            return f"Error: model '{model}' is not in the allowlist. Allowed models: {allowed}."
+        return None
 
     async def execute_with_context(
         self,
@@ -105,6 +144,7 @@ class SpawnTool(ToolBase):
         label: str | None = None,
         batch: str | None = None,
         skills: list[str] | None = None,
+        model: str | None = None,
         **kwargs: Any,
     ) -> str:
         """Execute spawn tool with context."""
@@ -114,6 +154,9 @@ class SpawnTool(ToolBase):
             return json.dumps(self._manager.list_results(), indent=2)
         if not task:
             return "Error: 'task' is required for spawn action."
+        error = self._validate_model(model)
+        if error is not None:
+            return error
         resolved_skills = skills if skills is not None else self._parent_skills
         return await self._manager.spawn(
             task=task,
@@ -123,6 +166,7 @@ class SpawnTool(ToolBase):
             session_key=ctx.session_key,
             batch=batch,
             skills=resolved_skills,
+            model=model,
         )
 
     async def execute(
@@ -132,6 +176,7 @@ class SpawnTool(ToolBase):
         label: str | None = None,
         batch: str | None = None,
         skills: list[str] | None = None,
+        model: str | None = None,
         **kwargs: Any,
     ) -> str:
         """Execute spawn tool."""
@@ -141,6 +186,9 @@ class SpawnTool(ToolBase):
             return json.dumps(self._manager.list_results(), indent=2)
         if not task:
             return "Error: 'task' is required for spawn action."
+        error = self._validate_model(model)
+        if error is not None:
+            return error
         resolved_skills = skills if skills is not None else self._parent_skills
         return await self._manager.spawn(
             task=task,
@@ -150,4 +198,5 @@ class SpawnTool(ToolBase):
             session_key=self._session_key,
             batch=batch,
             skills=resolved_skills,
+            model=model,
         )
