@@ -61,9 +61,7 @@ if _DBOS_AVAILABLE:
         """
         mgr = _active_manager
         if mgr is None:
-            raise RuntimeError(
-                "SubagentManager not initialized — cannot run subagent workflow"
-            )
+            raise RuntimeError("SubagentManager not initialized — cannot run subagent workflow")
         await mgr._run(
             task_id,
             task,

@@ -46,9 +46,7 @@ def dbos_instance() -> Any:
 
 @pytest.mark.asyncio(loop_scope="session")
 class TestSubagentRunsAsChildWorkflow:
-    async def test_spawned_subagent_has_independent_workflow_id(
-        self, dbos_instance: Any
-    ) -> None:
+    async def test_spawned_subagent_has_independent_workflow_id(self, dbos_instance: Any) -> None:
         """The subagent's work must observe a DBOS workflow id distinct from its parent.
 
         Today this fails: ``asyncio.create_task`` copies the parent's context
@@ -107,9 +105,7 @@ class TestSubagentRunsAsChildWorkflow:
             "own wfid."
         )
 
-    async def test_concurrent_spawns_get_distinct_workflow_ids(
-        self, dbos_instance: Any
-    ) -> None:
+    async def test_concurrent_spawns_get_distinct_workflow_ids(self, dbos_instance: Any) -> None:
         """Two subagents spawned from the same parent must each get their own wfid.
 
         This is the exact shape of the original failure — the user spawned 4
