@@ -21,9 +21,9 @@ Durability-friendly contract:
 from __future__ import annotations
 
 import asyncio
-from typing import Awaitable, Callable, Protocol, runtime_checkable
+from typing import Any, Callable, Coroutine, Protocol, runtime_checkable
 
-Runner = Callable[..., Awaitable[None]]
+Runner = Callable[..., Coroutine[Any, Any, None]]
 """Async callable that executes one subagent given its keyword args.
 
 Shape matches ``SubagentManager._run``'s parameters — the manager passes a
