@@ -428,3 +428,48 @@ class TestGetRunningCount:
             await asyncio.sleep(0.01)
 
         assert mgr.get_running_count() == 0
+
+
+# ---------------------------------------------------------------------------
+# cancel_by_session
+# ---------------------------------------------------------------------------
+
+
+class TestCancelBySession:
+    async def test_cancels_only_matching_session(self) -> None:
+        mgr = _make_manager()
+        event = asyncio.Event()
+
+        async def slow_run(*args: object, **kwargs: object) -> None:
+            await event.wait()
+
+        with patch.object(mgr, "_run", new=slow_run):
+            await mgr.spawn(task="a", session_key="sess-a")
+            await mgr.spawn(task="b", session_key="sess-b")
+            assert mgr.get_running_count() == 2
+
+            cancelled = await mgr.cancel_by_session("sess-a")
+            await asyncio.sleep(0.01)
+
+            assert cancelled == 1
+            assert mgr.get_running_count() == 1
+            # sess-b is still running
+            event.set()
+            await asyncio.sleep(0.01)
+
+        assert mgr.get_running_count() == 0
+
+    async def test_returns_zero_for_unknown_session(self) -> None:
+        mgr = _make_manager()
+        event = asyncio.Event()
+
+        async def slow_run(*args: object, **kwargs: object) -> None:
+            await event.wait()
+
+        with patch.object(mgr, "_run", new=slow_run):
+            await mgr.spawn(task="a", session_key="sess-a")
+            cancelled = await mgr.cancel_by_session("nope")
+            assert cancelled == 0
+            assert mgr.get_running_count() == 1
+            event.set()
+            await asyncio.sleep(0.01)

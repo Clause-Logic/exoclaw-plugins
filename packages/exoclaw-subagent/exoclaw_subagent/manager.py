@@ -70,6 +70,7 @@ class SubagentManager:
         self._model = model
         self._max_iterations = max_iterations
         self._handles: dict[str, SubagentHandle] = {}
+        self._sessions: dict[str, str | None] = {}
         self._results_dir: Path | None = None
         self._batches: dict[str, _BatchState] = {}
         if workspace is not None:
@@ -84,6 +85,7 @@ class SubagentManager:
                 await self._run(**kwargs)
             finally:
                 self._handles.pop(tid, None)
+                self._sessions.pop(tid, None)
 
         factory = spawner_factory or AsyncioSpawner
         self._spawner = factory(_runner)
@@ -127,6 +129,7 @@ class SubagentManager:
             model=model,
         )
         self._handles[task_id] = handle
+        self._sessions[task_id] = session_key
 
         logger.info(
             "subagent_spawned",
@@ -353,9 +356,14 @@ class SubagentManager:
         return results
 
     async def cancel_by_session(self, session_key: str) -> int:
-        """Cancel running subagents. Returns count cancelled."""
+        """Cancel running subagents spawned from ``session_key``.
+
+        Returns the number of subagents actually cancelled.
+        """
         cancelled = 0
-        for handle in list(self._handles.values()):
+        for task_id, handle in list(self._handles.items()):
+            if self._sessions.get(task_id) != session_key:
+                continue
             if not handle.done():
                 await handle.cancel()
                 cancelled += 1

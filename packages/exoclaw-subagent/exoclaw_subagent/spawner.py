@@ -100,7 +100,7 @@ class _AsyncioHandle:
     async def wait(self) -> None:
         try:
             await self._task
-        except BaseException:
+        except (Exception, asyncio.CancelledError):
             pass
 
     async def cancel(self) -> None:
