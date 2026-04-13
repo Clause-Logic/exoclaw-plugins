@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import structlog
 from exoclaw.agent.conversation import Conversation
@@ -15,6 +14,8 @@ from exoclaw.agent.tools.protocol import Tool
 from exoclaw.bus.events import InboundMessage
 from exoclaw.bus.protocol import Bus
 from exoclaw.providers.protocol import LLMProvider
+
+from .spawner import AsyncioSpawner, SpawnerFactory, SubagentHandle
 
 logger = structlog.get_logger()
 
@@ -60,6 +61,7 @@ class SubagentManager:
         model: str | None = None,
         max_iterations: int = 15,
         workspace: Path | None = None,
+        spawner_factory: SpawnerFactory | None = None,
     ):
         self._provider = provider
         self._bus = bus
@@ -67,12 +69,26 @@ class SubagentManager:
         self._tools = tools or []
         self._model = model
         self._max_iterations = max_iterations
-        self._running_tasks: dict[str, asyncio.Task[None]] = {}
+        self._handles: dict[str, SubagentHandle] = {}
+        self._sessions: dict[str, str | None] = {}
         self._results_dir: Path | None = None
         self._batches: dict[str, _BatchState] = {}
         if workspace is not None:
             self._results_dir = workspace / "subagents"
             self._results_dir.mkdir(parents=True, exist_ok=True)
+
+        # Runner adapter re-resolves self._run at call time so tests that
+        # patch ``_run`` on the instance are still picked up by the spawner.
+        async def _runner(**kwargs: Any) -> None:
+            tid = kwargs["task_id"]
+            try:
+                await self._run(**kwargs)
+            finally:
+                self._handles.pop(tid, None)
+                self._sessions.pop(tid, None)
+
+        factory = spawner_factory or AsyncioSpawner
+        self._spawner = factory(_runner)
 
     async def spawn(
         self,
@@ -101,25 +117,19 @@ class SubagentManager:
             state.origin_chat_id = origin_chat_id
             state.session_key = session_key
 
-        bg_task = asyncio.create_task(
-            self._run(
-                task_id,
-                task,
-                display_label,
-                origin_channel,
-                origin_chat_id,
-                session_key,
-                batch,
-                skills=skills,
-                model=model,
-            )
+        handle = await self._spawner.start(
+            task_id=task_id,
+            task=task,
+            label=display_label,
+            origin_channel=origin_channel,
+            origin_chat_id=origin_chat_id,
+            session_key=session_key,
+            batch=batch,
+            skills=skills,
+            model=model,
         )
-        self._running_tasks[task_id] = bg_task
-
-        def _cleanup(_: asyncio.Task[None]) -> None:
-            self._running_tasks.pop(task_id, None)
-
-        bg_task.add_done_callback(_cleanup)
+        self._handles[task_id] = handle
+        self._sessions[task_id] = session_key
 
         logger.info(
             "subagent_spawned",
@@ -135,7 +145,7 @@ class SubagentManager:
         origin_channel: str,
         origin_chat_id: str,
         session_key: str | None,
-        batch: str | None,
+        batch: str | None = None,
         skills: list[str] | None = None,
         model: str | None = None,
     ) -> None:
@@ -309,13 +319,11 @@ class SubagentManager:
 
     def get_running_count(self) -> int:
         """Return the number of currently running subagents."""
-        return len(self._running_tasks)
+        return sum(1 for h in self._handles.values() if not h.done())
 
     def get_status(self) -> dict:
         """Return status of all subagents: running, batches, and completed results on disk."""
-        running = []
-        for task_id, task in self._running_tasks.items():
-            running.append({"id": task_id, "done": task.done()})
+        running = [{"id": h.id, "done": h.done()} for h in self._handles.values()]
 
         batches = {}
         for batch_id, state in self._batches.items():
@@ -348,10 +356,15 @@ class SubagentManager:
         return results
 
     async def cancel_by_session(self, session_key: str) -> int:
-        """Cancel running subagents. Returns count cancelled."""
+        """Cancel running subagents spawned from ``session_key``.
+
+        Returns the number of subagents actually cancelled.
+        """
         cancelled = 0
-        for task_id, task in list(self._running_tasks.items()):
-            if not task.done():
-                task.cancel()
+        for task_id, handle in list(self._handles.items()):
+            if self._sessions.get(task_id) != session_key:
+                continue
+            if not handle.done():
+                await handle.cancel()
                 cancelled += 1
         return cancelled
