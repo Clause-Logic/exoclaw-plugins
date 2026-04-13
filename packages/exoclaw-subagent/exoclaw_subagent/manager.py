@@ -83,8 +83,14 @@ class SubagentManager:
         session_key: str | None = None,
         batch: str | None = None,
         skills: list[str] | None = None,
+        model: str | None = None,
     ) -> str:
-        """Spawn a background subagent. Returns immediately."""
+        """Spawn a background subagent. Returns immediately.
+
+        ``model`` overrides the manager-wide default model for this spawn
+        only — useful for routing a single task at a cheaper model while
+        the main agent keeps its configured default.
+        """
         task_id = str(uuid.uuid4())[:8]
         display_label = label or (task[:30] + ("..." if len(task) > 30 else ""))
 
@@ -105,6 +111,7 @@ class SubagentManager:
                 session_key,
                 batch,
                 skills=skills,
+                model=model,
             )
         )
         self._running_tasks[task_id] = bg_task
@@ -130,16 +137,18 @@ class SubagentManager:
         session_key: str | None,
         batch: str | None,
         skills: list[str] | None = None,
+        model: str | None = None,
     ) -> None:
         """Execute the subagent and announce the result."""
         status = "completed"
+        effective_model = model if model is not None else self._model
 
         try:
             loop = AgentLoop(
                 bus=self._bus,
                 provider=self._provider,
                 conversation=self._conversation_factory(),
-                model=self._model,
+                model=effective_model,
                 max_iterations=self._max_iterations,
                 tools=[t for t in self._tools if t.name != "spawn"],
             )
