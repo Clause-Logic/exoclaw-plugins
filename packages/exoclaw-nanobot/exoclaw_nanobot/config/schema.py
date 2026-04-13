@@ -240,6 +240,11 @@ class AgentDefaults(Base):
 
 class AgentsConfig(Base):
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
+    # Optional allowlist of models the agent may request when spawning a
+    # subagent. An empty list (the default) disables the check and lets
+    # subagents inherit the main model. When non-empty, the list is
+    # advertised in the spawn tool schema and unlisted models are rejected.
+    subagent_allowed_models: list[str] = Field(default_factory=list)
 
 
 class ProviderConfig(Base):

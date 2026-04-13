@@ -290,7 +290,10 @@ async def create(
         max_iterations=config.agents.defaults.max_tool_iterations,
         workspace=workspace,
     )
-    spawn_tool = SpawnTool(manager=subagent_mgr)
+    spawn_tool = SpawnTool(
+        manager=subagent_mgr,
+        allowed_models=config.agents.subagent_allowed_models or None,
+    )
     tools.append(spawn_tool)
 
     # MCP servers
