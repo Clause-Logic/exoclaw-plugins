@@ -77,7 +77,7 @@ class TestDBOSExecutorProtocol:
 
     def test_message_buffer_roundtrip(self) -> None:
         executor = DBOSExecutor()
-        msgs = [{"role": "user", "content": "hi"}]
+        msgs: list[dict[str, object]] = [{"role": "user", "content": "hi"}]
         executor.set_messages(msgs)
         assert executor.load_messages() == msgs
         executor.append_messages([{"role": "assistant", "content": "hello"}])
