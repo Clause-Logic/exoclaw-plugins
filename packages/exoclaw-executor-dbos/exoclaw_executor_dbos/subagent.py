@@ -79,19 +79,25 @@ async def _subagent_workflow(
     )
 
 
+_TERMINAL_STATUSES = frozenset({"SUCCESS", "ERROR", "MAX_RECOVERY_ATTEMPTS_EXCEEDED", "CANCELLED"})
+
+
 class _DeferredHandle:
-    """Stub ``SubagentHandle`` returned by ``DBOSSubagentSpawner.start``.
+    """``SubagentHandle`` for a child workflow whose dispatch is deferred.
 
     ``DBOSSubagentSpawner`` cannot start the workflow inline because it
     runs from inside ``_tool_step``, where DBOS forbids
     ``start_workflow_async`` (the assertion at ``_context.py:183``).
-    Instead it queues a ``StartChildWorkflow`` intent that
-    ``DBOSExecutor`` dispatches after the step exits, and returns this
-    stub so ``SubagentManager`` can carry on with its bookkeeping.
+    Instead it queues a ``StartChildWorkflow`` intent and returns this
+    handle. ``DBOSExecutor.execute_tool`` dispatches the queued intent
+    after the wrapping step exits.
 
-    The stub is reported as ``done`` immediately. The manager only ever
-    awaits these handles via ``/stop``, and even then it just wants to
-    join — best-effort cancellation goes through DBOS by workflow ID.
+    Status methods query DBOS by ``workflow_id``. Between ``start()``
+    returning and the executor dispatching the intent, the workflow does
+    not yet exist in the system DB — both ``done()`` and ``wait()`` treat
+    that window as "not yet done", which matches what
+    ``SubagentManager.get_running_count`` and
+    ``SubagentManager.cancel_by_session`` need to behave correctly.
     """
 
     def __init__(self, workflow_id: str) -> None:
@@ -102,10 +108,20 @@ class _DeferredHandle:
         return self._id
 
     def done(self) -> bool:
-        return True
+        try:
+            status = DBOS.get_workflow_status(self._id)
+        except Exception:
+            return False
+        if status is None:
+            return False  # not yet dispatched, or already cleaned up
+        return status.status in _TERMINAL_STATUSES
 
     async def wait(self) -> None:
-        return
+        try:
+            handle = DBOS.retrieve_workflow(self._id)
+            await handle.get_result()
+        except Exception:
+            pass
 
     async def cancel(self) -> None:
         try:

@@ -41,8 +41,15 @@ from exoclaw_tools_spawn.tool import SpawnTool
 _DB_PATH = f"/tmp/dbos_spawn_integration_test_{os.getpid()}.sqlite"
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="module")
 def dbos_instance() -> Any:
+    """Module-scoped DBOS fixture.
+
+    Not session-scoped — DBOS is a process-global singleton and other
+    test modules in this package may have their own DBOS fixtures with
+    their own SQLite paths. Module scope keeps the lifetime contained
+    so we don't fight other modules over the singleton.
+    """
     DBOS.destroy()
     config: DBOSConfig = {
         "name": "spawn-integration-test",
@@ -60,13 +67,8 @@ def dbos_instance() -> Any:
         os.unlink(_DB_PATH)
 
 
-def _build_stack(observe: Any) -> tuple[ToolRegistry, DBOSExecutor]:
-    """Wire the real composition: registry + SpawnTool + manager + executor.
-
-    ``observe`` is the async function the subagent's nested AgentLoop
-    will call in place of ``process_direct`` — use it to record that the
-    child workflow actually ran with the expected task.
-    """
+def _build_stack() -> tuple[ToolRegistry, DBOSExecutor]:
+    """Wire the real composition: registry + SpawnTool + manager + executor."""
     bus = MagicMock()
     bus.publish_inbound = AsyncMock()
 
@@ -108,7 +110,7 @@ class TestSpawnIntegration:
             child_ran.set()
             return "subagent done"
 
-        registry, executor = _build_stack(observe_process_direct)
+        registry, executor = _build_stack()
 
         mock_loop = MagicMock()
         mock_loop.process_direct = observe_process_direct

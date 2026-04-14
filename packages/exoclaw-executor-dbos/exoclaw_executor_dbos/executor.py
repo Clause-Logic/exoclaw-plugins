@@ -188,8 +188,8 @@ class DBOSExecutor:
 
         # Bind a fresh intent buffer for this step. Tools running inside
         # the step append child-workflow start requests via
-        # ``queue_child_workflow``; we drain and dispatch them after the
-        # step body exits, when we are back in workflow context.
+        # ``try_queue_child_workflow``; we drain and dispatch them after
+        # the step body exits, when we are back in workflow context.
         buffer, token = _bind_intent_buffer()
         try:
             result = await _tool_step(
