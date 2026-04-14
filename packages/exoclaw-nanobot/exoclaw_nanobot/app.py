@@ -20,14 +20,7 @@ from exoclaw_conversation.conversation import DefaultConversation
 from exoclaw_conversation.memory import MemoryStore
 from exoclaw_conversation.session.manager import SessionManager
 from exoclaw_conversation.summarizing_policy import SummarizingConsolidationPolicy
-
-try:
-    from exoclaw_executor_dbos import DBOSExecutor, DBOSSubagentSpawner, set_loop_context
-
-    _DBOS_AVAILABLE = True
-except Exception:
-    _DBOS_AVAILABLE = False
-    DBOSSubagentSpawner = None  # type: ignore[assignment,misc]
+from exoclaw_executor_dbos import DBOSExecutor, DBOSSubagentSpawner, set_loop_context
 from exoclaw_loop_detection import LoopDetectionConfig, LoopDetectionPolicy
 from exoclaw_provider_litellm.provider import LiteLLMProvider
 from exoclaw_subagent.manager import SubagentManager
@@ -290,10 +283,10 @@ async def create(
         model=model,
         max_iterations=config.agents.defaults.max_tool_iterations,
         workspace=workspace,
-        # Route subagents through DBOS child workflows when durable execution
-        # is available so concurrent spawns can't race into the parent's
-        # step journal (see 2026-04-13 Feed curator incident).
-        spawner_factory=DBOSSubagentSpawner if _DBOS_AVAILABLE else None,
+        # Route subagents through DBOS child workflows so concurrent spawns
+        # can't race into the parent's step journal (see 2026-04-13 Feed
+        # curator incident).
+        spawner_factory=DBOSSubagentSpawner,
     )
     spawn_tool = SpawnTool(
         manager=subagent_mgr,
@@ -378,7 +371,7 @@ async def create(
         return None
 
     # Durable executor — every LLM call and tool execution is checkpointed
-    executor = DBOSExecutor() if _DBOS_AVAILABLE else None
+    executor = DBOSExecutor()
 
     # Agent loop
     agent_loop = AgentLoop(
@@ -460,8 +453,7 @@ async def create(
     # agent loop reference so replayed workflows can find it. The caller is
     # responsible for constructing DBOS() and calling DBOS.launch() after
     # create() returns but before running the bot.
-    if _DBOS_AVAILABLE:
-        set_loop_context(agent_loop)
+    set_loop_context(agent_loop)
 
     return ExoclawNanobot(
         config=config,
