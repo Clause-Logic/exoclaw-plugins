@@ -68,6 +68,25 @@ class TestDBOSExecutorProtocol:
         assert hasattr(executor, "record")
         assert hasattr(executor, "clear")
         assert hasattr(executor, "run_hook")
+        # The message-buffer methods were added to the Executor protocol
+        # in exoclaw 0.13; subagent spawn paths call them via
+        # AgentLoop.process_direct, so they must be implemented here too.
+        assert hasattr(executor, "set_messages")
+        assert hasattr(executor, "append_messages")
+        assert hasattr(executor, "load_messages")
+
+    def test_message_buffer_roundtrip(self) -> None:
+        executor = DBOSExecutor()
+        msgs = [{"role": "user", "content": "hi"}]
+        executor.set_messages(msgs)
+        assert executor.load_messages() == msgs
+        executor.append_messages([{"role": "assistant", "content": "hello"}])
+        loaded = executor.load_messages()
+        assert len(loaded) == 2
+        assert loaded[1]["role"] == "assistant"
+        # load_messages must return a copy, not the internal buffer
+        loaded.clear()
+        assert len(executor.load_messages()) == 2
 
 
 class TestWorkflowIDUniqueness:
