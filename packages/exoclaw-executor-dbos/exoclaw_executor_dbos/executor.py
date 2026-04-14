@@ -20,7 +20,7 @@ from __future__ import annotations
 import contextvars
 import dataclasses
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from typing import Any
 
 from dbos import DBOS, SetWorkflowID
@@ -30,6 +30,12 @@ from exoclaw.agent.tools.registry import ToolRegistry
 from exoclaw.providers.protocol import LLMProvider
 from exoclaw.providers.types import LLMResponse, ToolCallRequest
 from uuid_utils import uuid7
+
+from .intents import (
+    StartChildWorkflow,
+    _bind_intent_buffer,
+    _release_intent_buffer,
+)
 
 # ── Serialization helpers ────────────────────────────────────────────────────
 
@@ -99,6 +105,26 @@ async def _tool_step(
     return await registry.execute(name, params, ctx)
 
 
+# ── Workflow registry for deferred-intent dispatch ───────────────────────────
+# Workflows that get started via StartChildWorkflow intents register
+# themselves here at import time. The executor resolves the intent's
+# ``workflow_key`` to the actual decorated function so intent producers
+# (e.g. DBOSSubagentSpawner) never need to import DBOS workflow refs.
+
+_WorkflowRef = Callable[..., Coroutine[Any, Any, Any]]
+_workflow_registry: dict[str, _WorkflowRef] = {}
+
+
+def register_intent_workflow(key: str, workflow: _WorkflowRef) -> None:
+    """Register a DBOS workflow function under a string key.
+
+    Called at module import time by packages that ship workflows
+    intended to be started via ``StartChildWorkflow`` intents (e.g.
+    ``exoclaw_executor_dbos.subagent``).
+    """
+    _workflow_registry[key] = workflow
+
+
 # ── DBOSExecutor ─────────────────────────────────────────────────────────────
 
 
@@ -159,11 +185,47 @@ class DBOSExecutor:
     ) -> str:
         _registry_var.set(registry)
         ctx_data = dataclasses.asdict(ctx) if ctx else None
-        return await _tool_step(
-            name=name,
-            params=dict(params),
-            ctx_data=ctx_data,
-        )
+
+        # Bind a fresh intent buffer for this step. Tools running inside
+        # the step append child-workflow start requests via
+        # ``queue_child_workflow``; we drain and dispatch them after the
+        # step body exits, when we are back in workflow context.
+        buffer, token = _bind_intent_buffer()
+        try:
+            result = await _tool_step(
+                name=name,
+                params=dict(params),
+                ctx_data=ctx_data,
+            )
+        finally:
+            _release_intent_buffer(token)
+
+        if buffer:
+            await self._dispatch_intents(buffer)
+
+        return result
+
+    async def _dispatch_intents(self, intents: list[StartChildWorkflow]) -> None:
+        """Start child workflows for queued intents from workflow context.
+
+        Legal here because ``execute_tool`` runs from inside a parent
+        ``@DBOS.workflow()`` (``run_durable_turn``) and the wrapping
+        ``_tool_step`` has already exited. Step retries dispatch the same
+        intents with the same ``workflow_id``s — DBOS dedups duplicate
+        ``start_workflow_async`` calls with identical workflow IDs, so
+        retry safety is automatic.
+        """
+        for intent in intents:
+            workflow = _workflow_registry.get(intent.workflow_key)
+            if workflow is None:
+                raise RuntimeError(
+                    f"No DBOS workflow registered for intent key "
+                    f"{intent.workflow_key!r}. Did the providing module fail "
+                    f"to import, or did you forget to call "
+                    f"register_intent_workflow()?"
+                )
+            with SetWorkflowID(intent.workflow_id):
+                await DBOS.start_workflow_async(workflow, **intent.kwargs)
 
     async def build_prompt(
         self,
