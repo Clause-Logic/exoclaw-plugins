@@ -22,11 +22,12 @@ from exoclaw_conversation.session.manager import SessionManager
 from exoclaw_conversation.summarizing_policy import SummarizingConsolidationPolicy
 
 try:
-    from exoclaw_executor_dbos import DBOSExecutor, set_loop_context
+    from exoclaw_executor_dbos import DBOSExecutor, DBOSSubagentSpawner, set_loop_context
 
     _DBOS_AVAILABLE = True
 except Exception:
     _DBOS_AVAILABLE = False
+    DBOSSubagentSpawner = None  # type: ignore[assignment,misc]
 from exoclaw_loop_detection import LoopDetectionConfig, LoopDetectionPolicy
 from exoclaw_provider_litellm.provider import LiteLLMProvider
 from exoclaw_subagent.manager import SubagentManager
@@ -289,6 +290,10 @@ async def create(
         model=model,
         max_iterations=config.agents.defaults.max_tool_iterations,
         workspace=workspace,
+        # Route subagents through DBOS child workflows when durable execution
+        # is available so concurrent spawns can't race into the parent's
+        # step journal (see 2026-04-13 Feed curator incident).
+        spawner_factory=DBOSSubagentSpawner if _DBOS_AVAILABLE else None,
     )
     spawn_tool = SpawnTool(
         manager=subagent_mgr,
