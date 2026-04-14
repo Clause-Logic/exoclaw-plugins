@@ -27,10 +27,11 @@ is unsupported — the last one wins.
 
 from __future__ import annotations
 
-from typing import Any
-
-from dbos import DBOS
+from dbos import DBOS, SetWorkflowID
 from exoclaw_subagent import Runner, SubagentHandle
+
+from .executor import register_intent_workflow
+from .intents import StartChildWorkflow, try_queue_child_workflow
 
 # ── Module-level runner ref (set at DBOSSubagentSpawner construction) ───────
 # The decorated workflow function reads this at invocation time. Replay does
@@ -78,45 +79,86 @@ async def _subagent_workflow(
     )
 
 
-class _DBOSHandle:
-    """``SubagentHandle`` backed by a DBOS ``WorkflowHandleAsync``."""
+_TERMINAL_STATUSES = frozenset({"SUCCESS", "ERROR", "MAX_RECOVERY_ATTEMPTS_EXCEEDED", "CANCELLED"})
 
-    def __init__(self, wf_handle: Any) -> None:
-        self._wf = wf_handle
-        self._id: str = wf_handle.get_workflow_id()
-        self._done = False
+
+class _DeferredHandle:
+    """``SubagentHandle`` for a child workflow whose dispatch is deferred.
+
+    ``DBOSSubagentSpawner`` cannot start the workflow inline because it
+    runs from inside ``_tool_step``, where DBOS forbids
+    ``start_workflow_async`` (the assertion at ``_context.py:183``).
+    Instead it queues a ``StartChildWorkflow`` intent and returns this
+    handle. ``DBOSExecutor.execute_tool`` dispatches the queued intent
+    after the wrapping step exits.
+
+    Status methods query DBOS by ``workflow_id``. Between ``start()``
+    returning and the executor dispatching the intent, the workflow does
+    not yet exist in the system DB — both ``done()`` and ``wait()`` treat
+    that window as "not yet done", which matches what
+    ``SubagentManager.get_running_count`` and
+    ``SubagentManager.cancel_by_session`` need to behave correctly.
+    """
+
+    def __init__(self, workflow_id: str) -> None:
+        self._id = workflow_id
 
     @property
     def id(self) -> str:
         return self._id
 
     def done(self) -> bool:
-        return self._done
+        try:
+            status = DBOS.get_workflow_status(self._id)
+        except Exception:
+            return False
+        if status is None:
+            return False  # not yet dispatched, or already cleaned up
+        return status.status in _TERMINAL_STATUSES
 
     async def wait(self) -> None:
         try:
-            await self._wf.get_result()
+            handle = DBOS.retrieve_workflow(self._id)
+            await handle.get_result()
         except Exception:
             pass
-        finally:
-            self._done = True
 
     async def cancel(self) -> None:
         try:
             await DBOS.cancel_workflow_async(self._id)
         except Exception:
             pass
-        self._done = True
+
+
+def _intent_workflow_id(task_id: str) -> str:
+    """Deterministic workflow ID so DBOS dedups duplicate dispatches.
+
+    ``task_id`` is set by ``SubagentManager.spawn`` per spawn call. On
+    step retry, the spawner re-queues with the same ``task_id`` and the
+    executor re-dispatches with this same ID — DBOS treats the second
+    ``start_workflow_async`` as a no-op.
+    """
+    return f"subagent:{task_id}"
+
+
+SUBAGENT_WORKFLOW_KEY = "exoclaw_subagent"
+register_intent_workflow(SUBAGENT_WORKFLOW_KEY, _subagent_workflow)
 
 
 class DBOSSubagentSpawner:
-    """Dispatches subagents as DBOS child workflows.
+    """Queues subagent dispatches as deferred DBOS child workflows.
 
-    Matches the ``SpawnerFactory`` signature: the ``SubagentManager`` calls
-    ``DBOSSubagentSpawner(runner)`` during its own ``__init__``. The runner
-    is an async adapter around ``SubagentManager._run`` that handles
-    per-task cleanup; storing it in ``_active_runner`` is safe because it's
-    a live in-process reference, not serialized into the workflow journal.
+    Matches the ``SpawnerFactory`` signature: ``SubagentManager`` calls
+    ``DBOSSubagentSpawner(runner)`` during its own ``__init__``. The
+    runner is an async adapter around ``SubagentManager._run`` that
+    handles per-task cleanup; storing it in ``_active_runner`` is safe
+    because it's a live in-process reference, not serialized into the
+    workflow journal.
+
+    ``start()`` does *not* call ``DBOS.start_workflow_async`` — it runs
+    inside ``_tool_step`` where that's illegal. It queues a
+    ``StartChildWorkflow`` intent on a contextvar that
+    ``DBOSExecutor.execute_tool`` drains once the wrapping step exits.
     """
 
     def __init__(self, runner: Runner) -> None:
@@ -136,19 +178,36 @@ class DBOSSubagentSpawner:
         skills: list[str] | None,
         model: str | None,
     ) -> SubagentHandle:
-        wf_handle = await DBOS.start_workflow_async(
-            _subagent_workflow,
-            task_id,
-            task,
-            label,
-            origin_channel,
-            origin_chat_id,
-            session_key,
-            batch,
-            skills,
-            model,
+        wfid = _intent_workflow_id(task_id)
+        kwargs: dict[str, object] = {
+            "task_id": task_id,
+            "task": task,
+            "label": label,
+            "origin_channel": origin_channel,
+            "origin_chat_id": origin_chat_id,
+            "session_key": session_key,
+            "batch": batch,
+            "skills": skills,
+            "model": model,
+        }
+
+        # If we're inside a `_tool_step` wrapped by `DBOSExecutor`, the
+        # executor has bound an intent buffer; queue the dispatch and let
+        # the executor start the child workflow after the step exits.
+        # Otherwise we're being called from workflow context directly
+        # (e.g. from a top-level @DBOS.workflow), where DBOS allows
+        # `start_workflow_async` — fall through to inline dispatch.
+        intent = StartChildWorkflow(
+            workflow_key=SUBAGENT_WORKFLOW_KEY,
+            kwargs=kwargs,
+            workflow_id=wfid,
         )
-        return _DBOSHandle(wf_handle)
+        if try_queue_child_workflow(intent):
+            return _DeferredHandle(wfid)
+
+        with SetWorkflowID(wfid):
+            await DBOS.start_workflow_async(_subagent_workflow, **kwargs)
+        return _DeferredHandle(wfid)
 
 
 __all__ = ["DBOSSubagentSpawner"]
