@@ -110,6 +110,21 @@ class DBOSExecutor:
     across concurrent workflows.
     """
 
+    def __init__(self) -> None:
+        # Per-turn message buffer. Mirrors DirectExecutor — the buffer
+        # lives for one turn and does not need to be durable across DBOS
+        # recovery because run_durable_turn encapsulates the whole turn.
+        self._messages: list[dict[str, object]] = []
+
+    def append_messages(self, messages: list[dict[str, object]]) -> None:
+        self._messages.extend(messages)
+
+    def load_messages(self) -> list[dict[str, object]]:
+        return list(self._messages)
+
+    def set_messages(self, messages: list[dict[str, object]]) -> None:
+        self._messages = list(messages)
+
     async def chat(
         self,
         provider: LLMProvider,
@@ -162,7 +177,7 @@ class DBOSExecutor:
         plugin_context: list[str] | None = None,
         **kwargs: list[str] | None,
     ) -> list[dict[str, object]]:
-        return await conversation.build_prompt(
+        messages = await conversation.build_prompt(
             session_id,
             message,
             channel=channel,
@@ -171,6 +186,8 @@ class DBOSExecutor:
             plugin_context=plugin_context,
             **kwargs,
         )
+        self.set_messages(messages)
+        return messages
 
     async def record(
         self,
