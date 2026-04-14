@@ -80,7 +80,7 @@ class TestWorkflowIDUniqueness:
 
         original_set_wf = __import__("dbos").SetWorkflowID
 
-        class CapturingSetWorkflowID(original_set_wf):  # type: ignore[misc]
+        class CapturingSetWorkflowID(original_set_wf):
             def __init__(self, wfid: str) -> None:
                 captured_ids.append(wfid)
                 super().__init__(wfid)
@@ -112,7 +112,7 @@ class TestWorkflowIDUniqueness:
 
         original_set_wf = __import__("dbos").SetWorkflowID
 
-        class CapturingSetWorkflowID(original_set_wf):  # type: ignore[misc]
+        class CapturingSetWorkflowID(original_set_wf):
             def __init__(self, wfid: str) -> None:
                 captured_ids.append(wfid)
                 super().__init__(wfid)

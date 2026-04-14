@@ -677,6 +677,7 @@ source = { editable = "packages/exoclaw-executor-dbos" }
 dependencies = [
     { name = "dbos" },
     { name = "exoclaw" },
+    { name = "exoclaw-subagent" },
     { name = "structlog" },
     { name = "uuid-utils" },
 ]
@@ -685,6 +686,7 @@ dependencies = [
 requires-dist = [
     { name = "dbos", specifier = ">=1.0.0" },
     { name = "exoclaw", specifier = ">=0.12.0" },
+    { name = "exoclaw-subagent", editable = "packages/exoclaw-subagent" },
     { name = "structlog", specifier = ">=24.0.0" },
     { name = "uuid-utils", specifier = ">=0.9.0" },
 ]
@@ -804,7 +806,7 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-subagent"
-version = "0.7.0"
+version = "0.8.0"
 source = { editable = "packages/exoclaw-subagent" }
 dependencies = [
     { name = "exoclaw" },
