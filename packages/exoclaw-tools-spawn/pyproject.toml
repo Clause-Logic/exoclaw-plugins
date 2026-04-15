@@ -1,11 +1,11 @@
 [project]
 name = "exoclaw-tools-spawn"
-version = "0.7.0"
-description = "Subagent spawn tool for exoclaw"
+version = "0.8.0"
+description = "Deprecated — re-export shim for exoclaw-subagent's SpawnTool"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "exoclaw>=0.1.0",
+    "exoclaw-subagent>=0.9.0",
 ]
 
 [project.entry-points."exoclaw.skills"]

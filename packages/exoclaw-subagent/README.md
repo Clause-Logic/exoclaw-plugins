@@ -26,8 +26,8 @@ subagent_manager = SubagentManager(
     max_iterations=15,
 )
 
-# Pass to SpawnTool
-from exoclaw_tools_spawn.tool import SpawnTool
+# Pass to SpawnTool — moved into this package in 0.9.0
+from exoclaw_subagent import SpawnTool
 spawn_tool = SpawnTool(manager=subagent_manager)
 ```
 

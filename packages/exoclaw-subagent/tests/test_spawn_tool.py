@@ -1,11 +1,18 @@
-"""Tests for exoclaw-tools-spawn package."""
+"""Tests for the SpawnTool + SpawnManager protocol.
+
+Lived in ``exoclaw-tools-spawn`` until the merge into ``exoclaw-subagent``
+in 0.9.0. Imports below use the canonical ``exoclaw_subagent`` location;
+the legacy ``from exoclaw_tools_spawn.tool import …`` path still works
+via a shim for one release cycle and is exercised by a separate test in
+the ``exoclaw-tools-spawn`` package.
+"""
 
 from __future__ import annotations
 
 from unittest.mock import AsyncMock
 
 import pytest
-from exoclaw_tools_spawn.tool import SpawnManager, SpawnTool
+from exoclaw_subagent import SpawnManager, SpawnTool
 
 # ---------------------------------------------------------------------------
 # SpawnManager protocol

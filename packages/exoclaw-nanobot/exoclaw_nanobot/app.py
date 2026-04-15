@@ -23,14 +23,13 @@ from exoclaw_conversation.summarizing_policy import SummarizingConsolidationPoli
 from exoclaw_executor_dbos import DBOSExecutor, DBOSSubagentSpawner, set_loop_context
 from exoclaw_loop_detection import LoopDetectionConfig, LoopDetectionPolicy
 from exoclaw_provider_litellm.provider import LiteLLMProvider
-from exoclaw_subagent.manager import SubagentManager
+from exoclaw_subagent import SpawnTool, SubagentManager
 from exoclaw_tools_cron.service import CronService, LocalCronBackend
 from exoclaw_tools_cron.tool import CronTool
 from exoclaw_tools_cron.types import CronJob
 from exoclaw_tools_mcp.config import MCPServerConfig as MCPConfig
 from exoclaw_tools_mcp.tool import connect_mcp_servers
 from exoclaw_tools_message.tool import MessageTool
-from exoclaw_tools_spawn.tool import SpawnTool
 from exoclaw_tools_workspace.filesystem import (
     EditFileTool,
     ListDirTool,
