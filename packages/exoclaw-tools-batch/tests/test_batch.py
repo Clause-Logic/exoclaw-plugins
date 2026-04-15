@@ -111,12 +111,20 @@ async def test_no_registry() -> None:
 
 @pytest.mark.asyncio
 async def test_error_handling(batch: BatchTool) -> None:
+    # Per-item exceptions land in an ``error`` slot, not the ``result``
+    # slot. exoclaw 0.14 stopped catching tool exceptions inside
+    # ``ToolRegistry.execute`` (they now propagate to the agent loop
+    # for proper logging), so BatchTool's per-item ``try/except`` is
+    # the only thing that catches them — and it writes
+    # ``{"error": str(e)}``. Before exoclaw 0.14 this test passed
+    # because registry.execute stringified exceptions into the
+    # ``result`` slot directly.
     result = await batch.execute(tool="fail", items=[{}, {}])
     data = _read_output(result)
     assert data["count"] == 2
     for r in data["results"]:
-        assert "result" in r
-        assert "boom" in r["result"]
+        assert "error" in r
+        assert "boom" in r["error"]
 
 
 @pytest.mark.asyncio
