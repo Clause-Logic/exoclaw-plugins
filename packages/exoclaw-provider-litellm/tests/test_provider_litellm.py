@@ -7,7 +7,6 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from exoclaw.providers.types import LLMResponse
 from exoclaw_provider_litellm.provider import (
     _ALLOWED_MSG_KEYS,
