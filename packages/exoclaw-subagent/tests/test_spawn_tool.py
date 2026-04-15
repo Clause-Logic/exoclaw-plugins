@@ -116,6 +116,8 @@ class TestSpawnToolExecute:
             batch=None,
             skills=None,
             model=None,
+            parent_turn_chain=None,
+            parent_turn_id=None,
         )
 
     async def test_spawn_with_label(self, tool: SpawnTool, manager: AsyncMock) -> None:
@@ -129,6 +131,8 @@ class TestSpawnToolExecute:
             batch=None,
             skills=None,
             model=None,
+            parent_turn_chain=None,
+            parent_turn_id=None,
         )
 
     async def test_spawn_inherits_parent_skills(self, manager: AsyncMock) -> None:
@@ -144,6 +148,8 @@ class TestSpawnToolExecute:
             batch=None,
             skills=["research"],
             model=None,
+            parent_turn_chain=None,
+            parent_turn_id=None,
         )
 
     async def test_spawn_explicit_skills_override(self, manager: AsyncMock) -> None:
@@ -159,6 +165,8 @@ class TestSpawnToolExecute:
             batch=None,
             skills=["other-skill"],
             model=None,
+            parent_turn_chain=None,
+            parent_turn_id=None,
         )
 
     async def test_spawn_passes_model(self, tool: SpawnTool, manager: AsyncMock) -> None:
@@ -223,3 +231,72 @@ class TestSpawnToolModelAllowlist:
         assert "started" in result
         _, kwargs = manager.spawn.call_args
         assert kwargs["model"] is None
+
+
+# ---------------------------------------------------------------------------
+# Parent turn ancestry forwarding (stage 3)
+# ---------------------------------------------------------------------------
+
+
+class TestSpawnToolParentTurnPropagation:
+    """``SpawnTool`` reads ``turn.chain`` / ``turn.id`` from structlog
+    contextvars at call time and forwards them as ``parent_turn_chain``
+    / ``parent_turn_id`` to the manager. The agent loop binds those
+    contextvars for the duration of every ``_process_turn_inline``
+    call (exoclaw 0.15 stage 1), so when the LLM invokes ``spawn``
+    inside its tool dispatch, the parent turn is always on the stack.
+    """
+
+    async def test_execute_forwards_bound_chain(self, tool: SpawnTool, manager: AsyncMock) -> None:
+        import structlog
+        import structlog.contextvars
+
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(
+            **{"turn.id": "p1", "turn.chain": "root:p1", "turn.root_id": "root"}
+        )
+        try:
+            await tool.execute(task="child task")
+        finally:
+            structlog.contextvars.clear_contextvars()
+
+        _, kwargs = manager.spawn.call_args
+        assert kwargs["parent_turn_chain"] == "root:p1"
+        assert kwargs["parent_turn_id"] == "p1"
+
+    async def test_execute_with_no_parent_passes_none(
+        self, tool: SpawnTool, manager: AsyncMock
+    ) -> None:
+        """When no parent turn is bound (spawn called outside an
+        agent turn), both fields are ``None`` — manager.spawn should
+        not see stale or partial values."""
+        import structlog
+        import structlog.contextvars
+
+        structlog.contextvars.clear_contextvars()
+        await tool.execute(task="child task")
+
+        _, kwargs = manager.spawn.call_args
+        assert kwargs["parent_turn_chain"] is None
+        assert kwargs["parent_turn_id"] is None
+
+    async def test_execute_with_context_forwards_bound_chain(self, manager: AsyncMock) -> None:
+        import structlog
+        import structlog.contextvars
+        from exoclaw.agent.tools.protocol import ToolContext
+
+        t = SpawnTool(manager=manager)
+        ctx = ToolContext(session_key="cli:user1", channel="cli", chat_id="user1")
+
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(
+            **{"turn.id": "p1", "turn.chain": "root:a:b:p1", "turn.root_id": "root"}
+        )
+        try:
+            await t.execute_with_context(ctx, task="child task")
+        finally:
+            structlog.contextvars.clear_contextvars()
+
+        _, kwargs = manager.spawn.call_args
+        assert kwargs["parent_turn_chain"] == "root:a:b:p1"
+        assert kwargs["parent_turn_id"] == "p1"

@@ -3,12 +3,27 @@
 import json
 from typing import Any, Protocol, runtime_checkable
 
+import structlog
+import structlog.contextvars
 from exoclaw.agent.tools.protocol import ToolBase, ToolContext
 
 
 @runtime_checkable
 class SpawnManager(Protocol):
-    """Protocol for subagent lifecycle management."""
+    """Protocol for subagent lifecycle management.
+
+    ``parent_turn_chain`` and ``parent_turn_id`` thread the per-turn
+    trace context (added in exoclaw 0.15) through to the child agent
+    loop running inside the subagent. They are read at spawn-call time
+    from the parent's structlog contextvars by ``SpawnTool`` and
+    forwarded to the manager so a durable backend can journal them as
+    workflow arguments — that is what makes the trace ancestry survive
+    workflow recovery across the parent → child boundary.
+
+    Both default to ``None`` so existing call sites keep working
+    unchanged; only ``SpawnTool`` populates them, and only when the
+    parent turn is actually bound (it always is in the agent loop).
+    """
 
     async def spawn(
         self,
@@ -20,10 +35,30 @@ class SpawnManager(Protocol):
         batch: str | None = None,
         skills: list[str] | None = None,
         model: str | None = None,
+        parent_turn_chain: str | None = None,
+        parent_turn_id: str | None = None,
     ) -> str: ...
 
     def get_status(self) -> dict: ...
     def list_results(self, limit: int = 20) -> list[dict[str, str]]: ...
+
+
+def _current_parent_turn() -> tuple[str | None, str | None]:
+    """Read the parent's turn ancestry from structlog contextvars.
+
+    Called inside ``SpawnTool.execute*`` while the parent turn is on
+    the stack — the agent loop binds ``turn.*`` for the duration of
+    every ``_process_turn_inline`` call (exoclaw 0.15 stage 1). Returns
+    ``(turn.chain, turn.id)`` or ``(None, None)`` if no parent turn is
+    bound (e.g. spawn called outside an agent turn entirely).
+    """
+    ctx = structlog.contextvars.get_contextvars()
+    chain = ctx.get("turn.chain")
+    turn_id = ctx.get("turn.id")
+    return (
+        chain if isinstance(chain, str) else None,
+        turn_id if isinstance(turn_id, str) else None,
+    )
 
 
 class SpawnTool(ToolBase):
@@ -158,6 +193,7 @@ class SpawnTool(ToolBase):
         if error is not None:
             return error
         resolved_skills = skills if skills is not None else self._parent_skills
+        parent_chain, parent_turn_id = _current_parent_turn()
         return await self._manager.spawn(
             task=task,
             label=label,
@@ -167,6 +203,8 @@ class SpawnTool(ToolBase):
             batch=batch,
             skills=resolved_skills,
             model=model,
+            parent_turn_chain=parent_chain,
+            parent_turn_id=parent_turn_id,
         )
 
     async def execute(
@@ -190,6 +228,7 @@ class SpawnTool(ToolBase):
         if error is not None:
             return error
         resolved_skills = skills if skills is not None else self._parent_skills
+        parent_chain, parent_turn_id = _current_parent_turn()
         return await self._manager.spawn(
             task=task,
             label=label,
@@ -199,4 +238,6 @@ class SpawnTool(ToolBase):
             batch=batch,
             skills=resolved_skills,
             model=model,
+            parent_turn_chain=parent_chain,
+            parent_turn_id=parent_turn_id,
         )

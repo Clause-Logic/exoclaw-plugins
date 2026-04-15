@@ -48,6 +48,8 @@ class _RecordingSpawner:
         batch: str | None = None,
         skills: list[str] | None = None,
         model: str | None = None,
+        parent_turn_chain: str | None = None,
+        parent_turn_id: str | None = None,
     ) -> str:
         self.calls.append(
             {
@@ -55,6 +57,8 @@ class _RecordingSpawner:
                 "label": label,
                 "batch": batch,
                 "model": model,
+                "parent_turn_chain": parent_turn_chain,
+                "parent_turn_id": parent_turn_id,
             }
         )
         return f"Subagent [{label or task[:20]}] started (id: t{len(self.calls)})."
