@@ -594,14 +594,14 @@ wheels = [
 
 [[package]]
 name = "exoclaw"
-version = "0.12.0"
+version = "0.15.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "structlog" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/17/2a/60c7b5bc4d66c0ed7de9b8765d08fa92543bc31196cc6b469a8c69d61019/exoclaw-0.12.0.tar.gz", hash = "sha256:73daec9e69f9a969eb34a2bb7eb7bc0e0acd60bf71a3483fbfa3483382213edd", size = 23004, upload-time = "2026-04-04T14:15:49.745Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/19/ea/d4377fd808d950c40bd93c3e74941024c5e9c2f27806bc794b37855fcec7/exoclaw-0.15.0.tar.gz", hash = "sha256:6a987391eb1bb1c0c4d46a9476c0a8f1ff55f5ceadec38b7018c41cc5e9b83c8", size = 26378, upload-time = "2026-04-15T17:07:36.27Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d6/40/d1b4a319229798e2f27cbef26d95d812cdfb58f06a7965bec57f0bfa2207/exoclaw-0.12.0-py3-none-any.whl", hash = "sha256:f5c0723c1857f8361c3c489c37c54d297a4cacb8fa6d867b74958b00bf5d43bc", size = 24046, upload-time = "2026-04-04T14:15:50.805Z" },
+    { url = "https://files.pythonhosted.org/packages/2a/3f/6b9ec498ed51dee9f4ec961d7e990f117762ba0fd013169dcf71a0d59e86/exoclaw-0.15.0-py3-none-any.whl", hash = "sha256:4e31233245a5e9b10e262d8474b0a671410ea41786b8fc50ba14e61642264f41", size = 26925, upload-time = "2026-04-15T17:07:37.081Z" },
 ]
 
 [[package]]
@@ -672,7 +672,7 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-executor-dbos"
-version = "0.5.2"
+version = "0.6.0"
 source = { editable = "packages/exoclaw-executor-dbos" }
 dependencies = [
     { name = "dbos" },
@@ -685,7 +685,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "dbos", specifier = ">=1.0.0" },
-    { name = "exoclaw", specifier = ">=0.12.0" },
+    { name = "exoclaw", specifier = ">=0.15.0" },
     { name = "exoclaw-subagent", editable = "packages/exoclaw-subagent" },
     { name = "structlog", specifier = ">=24.0.0" },
     { name = "uuid-utils", specifier = ">=0.9.0" },
@@ -787,7 +787,7 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-provider-litellm"
-version = "0.3.3"
+version = "0.4.0"
 source = { editable = "packages/exoclaw-provider-litellm" }
 dependencies = [
     { name = "exoclaw" },
