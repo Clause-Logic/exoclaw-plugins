@@ -192,17 +192,19 @@ class SubagentManager:
             if parent_turn_chain is not None:
                 bind_payload["turn.chain"] = parent_turn_chain
                 _bound_keys.append("turn.chain")
+                # Derive ``turn.root_id`` from the chain independently
+                # of whether ``turn.id`` was provided. The chain is a
+                # ``root:child:…``-joined string so the first segment
+                # is the root; if a caller only gave us a chain (e.g.
+                # a custom spawner that routed through a channel that
+                # only carries the chain field), we still want log
+                # lines emitted before the child mints its own
+                # ``turn.id`` to be queryable by ``turn.root_id``.
+                bind_payload["turn.root_id"] = parent_turn_chain.split(":", 1)[0]
+                _bound_keys.append("turn.root_id")
             if parent_turn_id is not None:
                 bind_payload["turn.id"] = parent_turn_id
                 _bound_keys.append("turn.id")
-                # ``turn.root_id`` is only set by the agent loop on
-                # binding a turn; for the child to inherit it, we
-                # have to derive it from the chain. The chain is
-                # ``root[:children:]``-joined, so the first segment
-                # is the root.
-                if parent_turn_chain:
-                    bind_payload["turn.root_id"] = parent_turn_chain.split(":", 1)[0]
-                    _bound_keys.append("turn.root_id")
             structlog.contextvars.bind_contextvars(**bind_payload)
 
         try:

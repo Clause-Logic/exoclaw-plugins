@@ -419,6 +419,54 @@ class TestParentTurnAncestry:
                 f"{key} leaked out of _run after exception — must unbind in finally"
             )
 
+    async def test_run_binds_root_id_from_chain_even_without_turn_id(self) -> None:
+        """Passing ``parent_turn_chain`` alone (without
+        ``parent_turn_id``) must still bind ``turn.root_id`` from the
+        first segment. Otherwise log lines emitted by the subagent
+        before the child mints its own ``turn.id`` would drop out of
+        ``turn.root_id`` queries entirely — a silent observability
+        hole. Caught by Copilot review on PR #36.
+        """
+        import structlog
+        import structlog.contextvars
+
+        bus = _make_bus()
+        mgr = _make_manager(bus=bus)
+
+        captured: dict[str, object] = {}
+
+        async def capture_inside_loop(_task: str, **_kwargs: object) -> str:
+            captured.update(structlog.contextvars.get_contextvars())
+            return "done"
+
+        mock_loop = MagicMock()
+        mock_loop.process_direct = capture_inside_loop
+
+        structlog.contextvars.clear_contextvars()
+        try:
+            with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop):
+                await mgr._run(
+                    "t1",
+                    "task",
+                    "label",
+                    "cli",
+                    "user1",
+                    None,
+                    parent_turn_chain="rootA:parentB",
+                    parent_turn_id=None,
+                )
+        finally:
+            structlog.contextvars.clear_contextvars()
+
+        assert captured.get("turn.chain") == "rootA:parentB"
+        assert captured.get("turn.root_id") == "rootA", (
+            "root_id must be derived from the chain whether or not "
+            "the caller also passed parent_turn_id"
+        )
+        assert "turn.id" not in captured, (
+            "turn.id must remain unbound when only parent_turn_chain was provided"
+        )
+
     async def test_run_with_no_parent_does_not_bind(self) -> None:
         """Existing call sites that don't pass parent_turn_* must not
         get spurious empty bindings."""
