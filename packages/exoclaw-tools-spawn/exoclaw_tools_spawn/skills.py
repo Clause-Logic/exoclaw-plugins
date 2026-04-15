@@ -1,13 +1,10 @@
-"""Entry point for exoclaw skill discovery."""
+"""Deprecated entry-point shim — delegates to ``exoclaw_subagent.skills``.
 
-from pathlib import Path
+Existing host configs that list ``exoclaw-tools-spawn`` in their
+skills package list keep getting the spawn skill via this entry
+point. The actual SKILL.md and loader live in ``exoclaw_subagent``.
+"""
 
+from exoclaw_subagent.skills import spawn
 
-def spawn() -> dict[str, str]:
-    """Return the spawn/subagent skill for agent context."""
-    skill_dir = Path(__file__).parent
-    return {
-        "name": "spawn",
-        "content": (skill_dir / "SKILL.md").read_text(),
-        "path": str(skill_dir),
-    }
+__all__ = ["spawn"]

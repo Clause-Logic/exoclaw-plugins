@@ -35,8 +35,7 @@ from dbos import DBOS, DBOSConfig, SetWorkflowID
 from exoclaw.agent.tools.protocol import ToolContext
 from exoclaw.agent.tools.registry import ToolRegistry
 from exoclaw_executor_dbos import DBOSExecutor, DBOSSubagentSpawner
-from exoclaw_subagent.manager import SubagentManager
-from exoclaw_tools_spawn.tool import SpawnTool
+from exoclaw_subagent import SpawnTool, SubagentManager
 
 _DB_PATH = f"/tmp/dbos_spawn_integration_test_{os.getpid()}.sqlite"
 

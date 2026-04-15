@@ -1,23 +1,26 @@
-# exoclaw-tools-spawn
+# exoclaw-tools-spawn (deprecated)
 
-Subagent spawn tool implementing the exoclaw `ToolBase` protocol — lets the agent delegate tasks to background subagents and receive results asynchronously.
+> **Deprecated.** ``SpawnTool`` and the ``SpawnManager`` protocol moved
+> into [`exoclaw-subagent`](../exoclaw-subagent) in **0.9.0**. This
+> package now exists only as a re-export shim so existing imports keep
+> working for one release cycle. New code should depend on
+> ``exoclaw-subagent`` directly. This package will be removed in a
+> future release.
 
-## Install
-
-```
-pip install exoclaw-tools-spawn
-```
-
-## Usage
+## Migration
 
 ```python
+# Old (still works via the shim)
 from exoclaw_tools_spawn.tool import SpawnTool, SpawnManager
 
-# SpawnManager is a Protocol — implement it or use exoclaw-subagent's SubagentManager
-spawn_tool = SpawnTool(manager=subagent_manager)
-
-# Update context per turn
-spawn_tool.set_context(channel="cli", chat_id="direct")
+# New
+from exoclaw_subagent import SpawnTool, SpawnManager
 ```
 
-`SpawnTool` exposes a `spawn` action to the LLM. The `SpawnManager` protocol requires a single `spawn(task, label, origin_channel, origin_chat_id, session_key, search)` coroutine. The concrete implementation is provided by `exoclaw-subagent`.
+The two were always paired in practice — every consumer that used
+``SpawnTool`` also pulled in ``exoclaw-subagent`` for ``SubagentManager``
+— and the split was forcing cross-package version bumps on every
+change to the spawn surface. Merging them removes that coordination
+tax. The shim package keeps the entry point ``exoclaw_tools_spawn.skills:spawn``
+functional so host configs that list ``exoclaw-tools-spawn`` as a
+skills package keep getting the spawn skill until they migrate.

@@ -727,7 +727,7 @@ requires-dist = [{ name = "exoclaw", specifier = ">=0.7.0" }]
 
 [[package]]
 name = "exoclaw-nanobot"
-version = "0.15.0"
+version = "0.16.0"
 source = { editable = "packages/exoclaw-nanobot" }
 dependencies = [
     { name = "exoclaw" },
@@ -741,7 +741,6 @@ dependencies = [
     { name = "exoclaw-tools-cron" },
     { name = "exoclaw-tools-mcp" },
     { name = "exoclaw-tools-message" },
-    { name = "exoclaw-tools-spawn" },
     { name = "exoclaw-tools-workspace" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -761,7 +760,6 @@ requires-dist = [
     { name = "exoclaw-tools-cron", editable = "packages/exoclaw-tools-cron" },
     { name = "exoclaw-tools-mcp", editable = "packages/exoclaw-tools-mcp" },
     { name = "exoclaw-tools-message", editable = "packages/exoclaw-tools-message" },
-    { name = "exoclaw-tools-spawn", editable = "packages/exoclaw-tools-spawn" },
     { name = "exoclaw-tools-workspace", editable = "packages/exoclaw-tools-workspace" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pydantic-settings", specifier = ">=2.0" },
@@ -806,7 +804,7 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-subagent"
-version = "0.8.0"
+version = "0.9.0"
 source = { editable = "packages/exoclaw-subagent" }
 dependencies = [
     { name = "exoclaw" },
@@ -894,14 +892,14 @@ requires-dist = [{ name = "exoclaw", specifier = ">=0.1.0" }]
 
 [[package]]
 name = "exoclaw-tools-spawn"
-version = "0.7.0"
+version = "0.8.0"
 source = { editable = "packages/exoclaw-tools-spawn" }
 dependencies = [
-    { name = "exoclaw" },
+    { name = "exoclaw-subagent" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "exoclaw", specifier = ">=0.1.0" }]
+requires-dist = [{ name = "exoclaw-subagent", editable = "packages/exoclaw-subagent" }]
 
 [[package]]
 name = "exoclaw-tools-workspace"

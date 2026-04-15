@@ -1,7 +1,7 @@
 [project]
 name = "exoclaw-subagent"
-version = "0.8.0"
-description = "Subagent manager for exoclaw — nested agent execution via AgentLoop"
+version = "0.9.0"
+description = "Subagent manager and LLM-facing spawn tool for exoclaw"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -9,6 +9,16 @@ dependencies = [
     "structlog>=25.0.0",
 ]
 
+[project.entry-points."exoclaw.skills"]
+spawn = "exoclaw_subagent.skills:spawn"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = [
+    "exoclaw_subagent/**/*.py",
+    "exoclaw_subagent/**/*.md",
+    "exoclaw_subagent/py.typed",
+]
