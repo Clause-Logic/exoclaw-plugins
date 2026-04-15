@@ -6,6 +6,7 @@ import hashlib
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from exoclaw.providers.types import LLMResponse
 from exoclaw_provider_litellm.provider import (
     _ALLOWED_MSG_KEYS,
@@ -305,13 +306,12 @@ class TestLiteLLMProvider:
             result = await p.chat([{"role": "user", "content": "run"}])
         assert result.tool_calls[0].arguments["command"] == "ls"
 
-    async def test_chat_exception_returns_error_response(self) -> None:
+    async def test_chat_exception_propagates(self) -> None:
         p = LiteLLMProvider()
         with patch("exoclaw_provider_litellm.provider.acompletion", new_callable=AsyncMock) as mock:
             mock.side_effect = Exception("network error")
-            result = await p.chat([{"role": "user", "content": "hi"}])
-        assert result.finish_reason == "error"
-        assert "network error" in (result.content or "")
+            with pytest.raises(Exception, match="network error"):
+                await p.chat([{"role": "user", "content": "hi"}])
 
     async def test_chat_with_reasoning_effort(self) -> None:
         p = LiteLLMProvider()
@@ -386,8 +386,8 @@ class TestLiteLLMProviderExtra:
         mock_resp.usage.total_tokens = 0
         with patch("exoclaw_provider_litellm.provider.acompletion", new_callable=AsyncMock) as mock:
             mock.return_value = mock_resp
-            result = await p.chat([{"role": "user", "content": "hi"}])
-        assert result.finish_reason == "error" or result.content is None or result.content == ""
+            with pytest.raises(IndexError):
+                await p.chat([{"role": "user", "content": "hi"}])
 
     async def test_chat_with_anthropic_model_thinking(self) -> None:
         choice = MagicMock()

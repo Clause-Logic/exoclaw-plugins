@@ -342,13 +342,6 @@ class LiteLLMProvider:
             return self._parse_response(response)
         except litellm.ContextWindowExceededError:
             raise ContextWindowExceededError("Prompt exceeds model context window")
-        except TimeoutError:
-            raise
-        except Exception as e:
-            return LLMResponse(
-                content=f"Error calling LLM: {str(e)}",
-                finish_reason="error",
-            )
 
     async def _stream_to_completion(self, kwargs: dict[str, Any]) -> Any:
         """Stream the response and reassemble into a non-streaming response object.
