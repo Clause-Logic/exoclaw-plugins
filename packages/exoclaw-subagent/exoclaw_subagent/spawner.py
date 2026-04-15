@@ -57,6 +57,11 @@ class SubagentSpawner(Protocol):
     Implementations wrap whatever durability layer is in use (bare
     asyncio, DBOS, Temporal, …). The subagent package never imports any
     of them — the wiring layer injects a concrete spawner factory.
+
+    ``parent_turn_chain`` and ``parent_turn_id`` carry the parent
+    turn's trace ancestry so the child workflow inherits it across the
+    spawn boundary. Durable backends (DBOS, Temporal) must journal
+    these as workflow arguments so the ancestry survives recovery.
     """
 
     async def start(
@@ -71,6 +76,8 @@ class SubagentSpawner(Protocol):
         batch: str | None,
         skills: list[str] | None,
         model: str | None,
+        parent_turn_chain: str | None = None,
+        parent_turn_id: str | None = None,
     ) -> SubagentHandle: ...
 
 
@@ -131,6 +138,8 @@ class AsyncioSpawner:
         batch: str | None,
         skills: list[str] | None,
         model: str | None,
+        parent_turn_chain: str | None = None,
+        parent_turn_id: str | None = None,
     ) -> SubagentHandle:
         bg_task: asyncio.Task[None] = asyncio.create_task(
             self._runner(
@@ -143,6 +152,8 @@ class AsyncioSpawner:
                 batch=batch,
                 skills=skills,
                 model=model,
+                parent_turn_chain=parent_turn_chain,
+                parent_turn_id=parent_turn_id,
             )
         )
         return _AsyncioHandle(task_id, bg_task)

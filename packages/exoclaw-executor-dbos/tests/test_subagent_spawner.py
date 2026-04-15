@@ -152,3 +152,148 @@ class TestDBOSSubagentSpawner:
             f"concurrent subagents shared workflow ids {child_wfids!r} — "
             "they will race into the same DBOS step journal"
         )
+
+    async def test_parent_turn_chain_threaded_into_child_workflow(self, dbos_instance: Any) -> None:
+        """``parent_turn_chain`` and ``parent_turn_id`` flow from
+        ``SubagentManager.spawn`` → ``DBOSSubagentSpawner.start`` →
+        ``_subagent_workflow`` workflow arguments → ``_run`` →
+        rebound into structlog contextvars before the child agent
+        loop starts.
+
+        This is the stage-3 propagation contract end-to-end on the
+        DBOS substrate. We observe the contextvars from inside the
+        child's mocked ``process_direct`` to confirm the chain
+        actually arrives at the agent loop boundary.
+        """
+        import structlog
+        import structlog.contextvars
+
+        observed: dict[str, object] = {}
+        child_ran = asyncio.Event()
+
+        async def observe_process_direct(task: str, **kwargs: Any) -> str:
+            observed.update(structlog.contextvars.get_contextvars())
+            child_ran.set()
+            return "done"
+
+        mock_loop = MagicMock()
+        mock_loop.process_direct = observe_process_direct
+
+        mgr = _make_manager()
+
+        @DBOS.workflow()
+        async def parent_workflow() -> None:
+            with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop):
+                await mgr.spawn(
+                    task="work",
+                    label="child",
+                    parent_turn_chain="rootA:parentB",
+                    parent_turn_id="parentB",
+                )
+                await asyncio.wait_for(child_ran.wait(), timeout=2.0)
+
+        with SetWorkflowID(f"parent-{uuid.uuid4()}"):
+            await parent_workflow()
+
+        assert observed.get("turn.chain") == "rootA:parentB", (
+            "child agent loop did not see parent_turn_chain as turn.chain — "
+            "DBOSSubagentSpawner failed to thread the workflow argument through"
+        )
+        assert observed.get("turn.id") == "parentB"
+        assert observed.get("turn.root_id") == "rootA"
+
+    async def test_parent_turn_chain_replayed_on_recovery(self, dbos_instance: Any) -> None:
+        """The hard invariant: after a workflow crash the recovered
+        child workflow re-enters with the *same* parent turn ancestry
+        it had on the original run.
+
+        Proves that ``parent_turn_chain`` is journaled as a durable
+        workflow argument rather than derived from ambient state at
+        execution time — the latter would leave recovered subagents
+        bound to nothing, and their post-recovery log lines would
+        drop out of ``turn.root_id`` queries.
+
+        Mirrors the stage-2 ``test_mint_turn_id_replayed_on_recovery``
+        template: run once, force status back to PENDING, call
+        ``DBOS._recover_pending_workflows()``, assert the recovered
+        workflow saw the same ancestry as the original.
+        """
+        import sqlalchemy as sa
+        import structlog
+        import structlog.contextvars
+        from dbos._schemas.system_database import SystemSchema
+        from exoclaw_executor_dbos.subagent import _subagent_workflow
+
+        observed_chains: list[object] = []
+        observed_ids: list[object] = []
+        observed_roots: list[object] = []
+
+        async def observe(task: str, **kwargs: Any) -> str:
+            ctx = structlog.contextvars.get_contextvars()
+            observed_chains.append(ctx.get("turn.chain"))
+            observed_ids.append(ctx.get("turn.id"))
+            observed_roots.append(ctx.get("turn.root_id"))
+            return "done"
+
+        mock_loop = MagicMock()
+        mock_loop.process_direct = observe
+
+        # _make_manager() has the side effect of binding the runner
+        # adapter as the module-level _active_runner that
+        # _subagent_workflow reads — construct it even though we
+        # don't hold the reference.
+        _make_manager()
+
+        wfid = f"replay-test-{uuid.uuid4()}"
+        with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop):
+            with SetWorkflowID(wfid):
+                await _subagent_workflow(
+                    task_id="t1",
+                    task="task",
+                    label="label",
+                    origin_channel="cli",
+                    origin_chat_id="user1",
+                    session_key="cli:user1",
+                    batch=None,
+                    skills=None,
+                    model=None,
+                    parent_turn_chain="rootA:parentB",
+                    parent_turn_id="parentB",
+                )
+
+            assert observed_chains == ["rootA:parentB"]
+            assert observed_ids == ["parentB"]
+            assert observed_roots == ["rootA"]
+
+            # Force workflow status back to PENDING to simulate a
+            # crash mid-workflow. DBOS recovery re-enters the body
+            # with the originally-journaled workflow arguments.
+            with dbos_instance._sys_db.engine.begin() as conn:
+                conn.execute(
+                    sa.update(SystemSchema.workflow_status)
+                    .values({"status": "PENDING"})
+                    .where(SystemSchema.workflow_status.c.workflow_uuid == wfid)
+                )
+
+            handles = DBOS._recover_pending_workflows()
+            recovered = [h for h in handles if h.workflow_id == wfid]
+            assert len(recovered) == 1, (
+                f"expected to recover the target workflow, got handles "
+                f"{[h.workflow_id for h in handles]}"
+            )
+            # ``get_result`` is sync on DBOS workflow handles — same
+            # pattern as the stage-2 ``test_mint_turn_id_replayed_on_recovery``
+            # test. Await the event instead to know the replay body
+            # has actually run and updated ``observed_*``.
+            recovered[0].get_result()
+
+        # The recovered run must have observed the exact same ancestry
+        # as the original. If this fails, ``parent_turn_chain`` was
+        # being sourced from something non-durable on replay.
+        assert observed_chains[-1] == "rootA:parentB", (
+            f"recovered workflow saw turn.chain={observed_chains[-1]!r}, "
+            f"expected 'rootA:parentB' — workflow arguments were not "
+            f"re-journaled across replay"
+        )
+        assert observed_ids[-1] == "parentB"
+        assert observed_roots[-1] == "rootA"

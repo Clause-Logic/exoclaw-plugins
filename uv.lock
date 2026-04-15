@@ -672,7 +672,7 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-executor-dbos"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "packages/exoclaw-executor-dbos" }
 dependencies = [
     { name = "dbos" },
@@ -804,7 +804,7 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-subagent"
-version = "0.9.0"
+version = "0.10.0"
 source = { editable = "packages/exoclaw-subagent" }
 dependencies = [
     { name = "exoclaw" },
@@ -813,7 +813,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", specifier = ">=0.10.1" },
+    { name = "exoclaw", specifier = ">=0.15.0" },
     { name = "structlog", specifier = ">=25.0.0" },
 ]
 

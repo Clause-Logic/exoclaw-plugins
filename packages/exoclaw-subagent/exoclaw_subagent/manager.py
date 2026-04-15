@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import structlog
+import structlog.contextvars
 from exoclaw.agent.conversation import Conversation
 from exoclaw.agent.loop import AgentLoop
 from exoclaw.agent.tools.protocol import Tool
@@ -100,12 +101,21 @@ class SubagentManager:
         batch: str | None = None,
         skills: list[str] | None = None,
         model: str | None = None,
+        parent_turn_chain: str | None = None,
+        parent_turn_id: str | None = None,
     ) -> str:
         """Spawn a background subagent. Returns immediately.
 
         ``model`` overrides the manager-wide default model for this spawn
         only — useful for routing a single task at a cheaper model while
         the main agent keeps its configured default.
+
+        ``parent_turn_chain`` and ``parent_turn_id`` carry the parent
+        turn's trace ancestry through to the child; ``_run`` rebinds
+        them into structlog contextvars before the child agent loop
+        starts so the child's own ``_process_turn_inline`` extends the
+        chain instead of starting a fresh root. Durable spawners pass
+        these as workflow arguments so the ancestry survives replay.
         """
         task_id = str(uuid.uuid4())[:8]
         display_label = label or (task[:30] + ("..." if len(task) > 30 else ""))
@@ -127,13 +137,21 @@ class SubagentManager:
             batch=batch,
             skills=skills,
             model=model,
+            parent_turn_chain=parent_turn_chain,
+            parent_turn_id=parent_turn_id,
         )
         self._handles[task_id] = handle
         self._sessions[task_id] = session_key
 
         logger.info(
             "subagent_spawned",
-            **{"subagent.id": task_id, "subagent.label": display_label, "batch.id": batch},
+            **{
+                "subagent.id": task_id,
+                "subagent.label": display_label,
+                "batch.id": batch,
+                "parent_turn.id": parent_turn_id,
+                "parent_turn.chain": parent_turn_chain,
+            },
         )
         return f"Subagent [{display_label}] started (id: {task_id})."
 
@@ -148,50 +166,92 @@ class SubagentManager:
         batch: str | None = None,
         skills: list[str] | None = None,
         model: str | None = None,
+        parent_turn_chain: str | None = None,
+        parent_turn_id: str | None = None,
     ) -> None:
-        """Execute the subagent and announce the result."""
+        """Execute the subagent and announce the result.
+
+        If the parent passed a turn ancestry, rebind it into the local
+        structlog contextvars before the child agent loop starts. The
+        child's ``_process_turn_inline`` reads these contextvars when
+        deciding its own ``turn.root_id`` / ``turn.parent_id`` /
+        ``turn.chain``, so the binding here is what makes the trace
+        ancestry extend across the spawn boundary instead of resetting.
+
+        Wrapped in try/finally so the binding is unwound even on
+        crash; structlog contextvars are per-asyncio-Task and cleaning
+        up matters when the same worker reuses a task for the next
+        subagent.
+        """
         status = "completed"
         effective_model = model if model is not None else self._model
 
+        _bound_keys: list[str] = []
+        if parent_turn_chain is not None or parent_turn_id is not None:
+            bind_payload: dict[str, str] = {}
+            if parent_turn_chain is not None:
+                bind_payload["turn.chain"] = parent_turn_chain
+                _bound_keys.append("turn.chain")
+                # Derive ``turn.root_id`` from the chain independently
+                # of whether ``turn.id`` was provided. The chain is a
+                # ``root:child:…``-joined string so the first segment
+                # is the root; if a caller only gave us a chain (e.g.
+                # a custom spawner that routed through a channel that
+                # only carries the chain field), we still want log
+                # lines emitted before the child mints its own
+                # ``turn.id`` to be queryable by ``turn.root_id``.
+                bind_payload["turn.root_id"] = parent_turn_chain.split(":", 1)[0]
+                _bound_keys.append("turn.root_id")
+            if parent_turn_id is not None:
+                bind_payload["turn.id"] = parent_turn_id
+                _bound_keys.append("turn.id")
+            structlog.contextvars.bind_contextvars(**bind_payload)
+
         try:
-            loop = AgentLoop(
-                bus=self._bus,
-                provider=self._provider,
-                conversation=self._conversation_factory(),
-                model=effective_model,
-                max_iterations=self._max_iterations,
-                tools=[t for t in self._tools if t.name != "spawn"],
+            try:
+                loop = AgentLoop(
+                    bus=self._bus,
+                    provider=self._provider,
+                    conversation=self._conversation_factory(),
+                    model=effective_model,
+                    max_iterations=self._max_iterations,
+                    tools=[t for t in self._tools if t.name != "spawn"],
+                )
+                kwargs: dict = {}
+                if skills is not None:
+                    kwargs["skills"] = skills
+                result = await loop.process_direct(task, **kwargs)
+            except Exception as e:
+                result = f"Error: {e}"
+                status = "failed"
+                logger.error("subagent_failed", **{"subagent.id": task_id}, error=e)
+
+            logger.info(
+                "subagent_done",
+                **{"subagent.id": task_id, "subagent.status": status, "batch.id": batch},
             )
-            kwargs: dict = {}
-            if skills is not None:
-                kwargs["skills"] = skills
-            result = await loop.process_direct(task, **kwargs)
-        except Exception as e:
-            result = f"Error: {e}"
-            status = "failed"
-            logger.error("subagent_failed", **{"subagent.id": task_id}, error=e)
 
-        logger.info(
-            "subagent_done",
-            **{"subagent.id": task_id, "subagent.status": status, "batch.id": batch},
-        )
+            # Write result to disk so it survives compaction
+            result_path = self._write_result(task_id, label, task, result, status)
 
-        # Write result to disk so it survives compaction
-        result_path = self._write_result(task_id, label, task, result, status)
-
-        if batch is not None:
-            await self._record_batch_completion(batch, label, status, result_path, result)
-        else:
-            await self._announce_single(
-                label,
-                task,
-                result,
-                result_path,
-                status,
-                origin_channel,
-                origin_chat_id,
-                session_key,
-            )
+            if batch is not None:
+                await self._record_batch_completion(batch, label, status, result_path, result)
+            else:
+                await self._announce_single(
+                    label,
+                    task,
+                    result,
+                    result_path,
+                    status,
+                    origin_channel,
+                    origin_chat_id,
+                    session_key,
+                )
+        finally:
+            # Unbind only after the announcement and disk write so all
+            # of the subagent's own log lines carry the parent ancestry.
+            if _bound_keys:
+                structlog.contextvars.unbind_contextvars(*_bound_keys)
 
     def _write_result(
         self,

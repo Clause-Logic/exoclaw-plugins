@@ -78,7 +78,7 @@ class TestSubagentManagerInit:
         assert mgr._max_iterations == 5
 
     def test_satisfies_spawn_manager_protocol(self) -> None:
-        from exoclaw_tools_spawn.tool import SpawnManager
+        from exoclaw_subagent import SpawnManager
 
         mgr = _make_manager()
         assert isinstance(mgr, SpawnManager)
@@ -303,6 +303,220 @@ class TestRun:
         msg: InboundMessage = bus.publish_inbound.call_args[0][0]
         assert msg.chat_id == "telegram:chat99"
         assert msg.session_key_override is None
+
+
+# ---------------------------------------------------------------------------
+# Turn ancestry propagation (stage 3)
+# ---------------------------------------------------------------------------
+
+
+class TestParentTurnAncestry:
+    """``SubagentManager._run`` rebinds parent ``turn.*`` contextvars
+    before the child agent loop starts, so the child's
+    ``_process_turn_inline`` extends the trace chain instead of
+    starting a fresh root.
+
+    Without these tests the propagation chain has no end-to-end gate;
+    any future refactor that drops the bind/unbind would silently
+    break ``turn.root_id:<uuid>`` queries across subagent boundaries.
+    """
+
+    async def test_run_binds_parent_chain_before_loop(self) -> None:
+        import structlog
+        import structlog.contextvars
+
+        bus = _make_bus()
+        mgr = _make_manager(bus=bus)
+
+        captured: dict[str, object] = {}
+
+        async def capture_inside_loop(_task: str, **_kwargs: object) -> str:
+            captured.update(structlog.contextvars.get_contextvars())
+            return "child done"
+
+        mock_loop = MagicMock()
+        mock_loop.process_direct = capture_inside_loop
+
+        structlog.contextvars.clear_contextvars()
+        try:
+            with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop):
+                await mgr._run(
+                    "t1",
+                    "child task",
+                    "label",
+                    "cli",
+                    "user1",
+                    "cli:user1",
+                    parent_turn_chain="rootA:parentB",
+                    parent_turn_id="parentB",
+                )
+        finally:
+            structlog.contextvars.clear_contextvars()
+
+        assert captured.get("turn.chain") == "rootA:parentB"
+        assert captured.get("turn.id") == "parentB"
+        assert captured.get("turn.root_id") == "rootA", (
+            "root_id must be derived from the first segment of the chain"
+        )
+
+    async def test_run_unbinds_after_completion(self) -> None:
+        import structlog
+        import structlog.contextvars
+
+        bus = _make_bus()
+        mgr = _make_manager(bus=bus)
+        mock_loop = MagicMock()
+        mock_loop.process_direct = AsyncMock(return_value="done")
+
+        structlog.contextvars.clear_contextvars()
+        try:
+            with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop):
+                await mgr._run(
+                    "t1",
+                    "task",
+                    "label",
+                    "cli",
+                    "user1",
+                    None,
+                    parent_turn_chain="root:parent",
+                    parent_turn_id="parent",
+                )
+            after = structlog.contextvars.get_contextvars()
+        finally:
+            structlog.contextvars.clear_contextvars()
+
+        for key in ("turn.id", "turn.chain", "turn.root_id"):
+            assert key not in after, f"{key} leaked out of _run"
+
+    async def test_run_unbinds_on_exception(self) -> None:
+        import structlog
+        import structlog.contextvars
+
+        bus = _make_bus()
+        mgr = _make_manager(bus=bus)
+        mock_loop = MagicMock()
+        mock_loop.process_direct = AsyncMock(side_effect=RuntimeError("boom"))
+
+        structlog.contextvars.clear_contextvars()
+        try:
+            with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop):
+                await mgr._run(
+                    "t1",
+                    "task",
+                    "label",
+                    "cli",
+                    "user1",
+                    None,
+                    parent_turn_chain="root:parent",
+                    parent_turn_id="parent",
+                )
+            after = structlog.contextvars.get_contextvars()
+        finally:
+            structlog.contextvars.clear_contextvars()
+
+        for key in ("turn.id", "turn.chain", "turn.root_id"):
+            assert key not in after, (
+                f"{key} leaked out of _run after exception — must unbind in finally"
+            )
+
+    async def test_run_binds_root_id_from_chain_even_without_turn_id(self) -> None:
+        """Passing ``parent_turn_chain`` alone (without
+        ``parent_turn_id``) must still bind ``turn.root_id`` from the
+        first segment. Otherwise log lines emitted by the subagent
+        before the child mints its own ``turn.id`` would drop out of
+        ``turn.root_id`` queries entirely — a silent observability
+        hole. Caught by Copilot review on PR #36.
+        """
+        import structlog
+        import structlog.contextvars
+
+        bus = _make_bus()
+        mgr = _make_manager(bus=bus)
+
+        captured: dict[str, object] = {}
+
+        async def capture_inside_loop(_task: str, **_kwargs: object) -> str:
+            captured.update(structlog.contextvars.get_contextvars())
+            return "done"
+
+        mock_loop = MagicMock()
+        mock_loop.process_direct = capture_inside_loop
+
+        structlog.contextvars.clear_contextvars()
+        try:
+            with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop):
+                await mgr._run(
+                    "t1",
+                    "task",
+                    "label",
+                    "cli",
+                    "user1",
+                    None,
+                    parent_turn_chain="rootA:parentB",
+                    parent_turn_id=None,
+                )
+        finally:
+            structlog.contextvars.clear_contextvars()
+
+        assert captured.get("turn.chain") == "rootA:parentB"
+        assert captured.get("turn.root_id") == "rootA", (
+            "root_id must be derived from the chain whether or not "
+            "the caller also passed parent_turn_id"
+        )
+        assert "turn.id" not in captured, (
+            "turn.id must remain unbound when only parent_turn_chain was provided"
+        )
+
+    async def test_run_with_no_parent_does_not_bind(self) -> None:
+        """Existing call sites that don't pass parent_turn_* must not
+        get spurious empty bindings."""
+        import structlog
+        import structlog.contextvars
+
+        bus = _make_bus()
+        mgr = _make_manager(bus=bus)
+
+        captured: dict[str, object] = {}
+
+        async def capture_inside_loop(_task: str, **_kwargs: object) -> str:
+            captured.update(structlog.contextvars.get_contextvars())
+            return "done"
+
+        mock_loop = MagicMock()
+        mock_loop.process_direct = capture_inside_loop
+
+        structlog.contextvars.clear_contextvars()
+        try:
+            with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop):
+                await mgr._run("t1", "task", "label", "cli", "user1", None)
+        finally:
+            structlog.contextvars.clear_contextvars()
+
+        for key in ("turn.id", "turn.chain", "turn.root_id"):
+            assert key not in captured, f"unexpected binding {key} when no parent passed"
+
+    async def test_spawn_forwards_parent_chain_to_run(self) -> None:
+        """``SubagentManager.spawn`` must forward ``parent_turn_*`` to
+        ``_run`` (which the spawner's runner adapter calls). This is
+        the seam stage-3 stitches together — if it's missing, the
+        ``SpawnTool`` reads contextvars for nothing.
+        """
+        mgr = _make_manager()
+        captured: dict[str, object] = {}
+
+        async def fake_run(*args: object, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        with patch.object(mgr, "_run", new=fake_run):
+            await mgr.spawn(
+                task="work",
+                parent_turn_chain="root:parent",
+                parent_turn_id="parent",
+            )
+            await asyncio.sleep(0.01)
+
+        assert captured.get("parent_turn_chain") == "root:parent"
+        assert captured.get("parent_turn_id") == "parent"
 
 
 # ---------------------------------------------------------------------------

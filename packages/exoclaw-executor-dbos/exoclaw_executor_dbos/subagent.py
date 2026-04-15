@@ -52,12 +52,26 @@ async def _subagent_workflow(
     batch: str | None,
     skills: list[str] | None,
     model: str | None,
+    parent_turn_chain: str | None = None,
+    parent_turn_id: str | None = None,
 ) -> None:
     """Durable child workflow wrapping one subagent run.
 
     Invoked via ``DBOS.start_workflow_async``; each invocation gets its
     own wfid and step journal so concurrent subagents don't interleave
     writes into a shared log.
+
+    ``parent_turn_chain`` and ``parent_turn_id`` are explicit workflow
+    arguments — DBOS journals workflow arguments durably so on
+    crash-recovery the child workflow re-enters with the *same* parent
+    ancestry it had on the original run. That is the load-bearing
+    invariant for stage-3 turn observability: trace lines emitted by
+    a subagent before vs after a recovery boundary still land in the
+    same ``turn.root_id`` query.
+
+    The ``runner`` (``SubagentManager._run``) is responsible for
+    re-binding these into structlog contextvars before invoking the
+    child agent loop.
     """
     runner = _active_runner
     if runner is None:
@@ -76,6 +90,8 @@ async def _subagent_workflow(
         batch=batch,
         skills=skills,
         model=model,
+        parent_turn_chain=parent_turn_chain,
+        parent_turn_id=parent_turn_id,
     )
 
 
@@ -177,6 +193,8 @@ class DBOSSubagentSpawner:
         batch: str | None,
         skills: list[str] | None,
         model: str | None,
+        parent_turn_chain: str | None = None,
+        parent_turn_id: str | None = None,
     ) -> SubagentHandle:
         wfid = _intent_workflow_id(task_id)
         kwargs: dict[str, object] = {
@@ -189,6 +207,8 @@ class DBOSSubagentSpawner:
             "batch": batch,
             "skills": skills,
             "model": model,
+            "parent_turn_chain": parent_turn_chain,
+            "parent_turn_id": parent_turn_id,
         }
 
         # If we're inside a `_tool_step` wrapped by `DBOSExecutor`, the
