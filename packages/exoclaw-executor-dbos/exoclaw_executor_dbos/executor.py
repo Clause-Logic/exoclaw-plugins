@@ -105,6 +105,19 @@ async def _tool_step(
     return await registry.execute(name, params, ctx)
 
 
+@DBOS.step()
+async def _mint_turn_id_step() -> str:
+    """Replay-safe turn id minted via uuidv7.
+
+    Wraps the only non-deterministic part — the uuidv7 mint itself —
+    in a DBOS step so the same id is journaled on first run and
+    returned from the journal on workflow recovery. Without the step
+    boundary, a recovered workflow would mint a *new* turn id on
+    replay and break ``turn.root_id`` correlation across the crash.
+    """
+    return str(uuid7())
+
+
 # ── Workflow registry for deferred-intent dispatch ───────────────────────────
 # Workflows that get started via StartChildWorkflow intents register
 # themselves here at import time. The executor resolves the intent's
@@ -313,3 +326,19 @@ class DBOSExecutor:
         **kwargs: object,
     ) -> object:
         return await fn(*args, **kwargs)
+
+    async def mint_turn_id(self) -> str:
+        """Mint a replay-safe per-turn id via a DBOS step.
+
+        ``AgentLoop._process_turn_inline`` calls this once at the top
+        of every turn (added in exoclaw 0.15) and binds the result as
+        ``turn.id`` in structlog's contextvars. Wrapping ``uuid7()``
+        in a ``@DBOS.step()`` is what makes it survive workflow
+        recovery: on the first execution DBOS records the value to
+        the step journal, and on replay the body is skipped and the
+        recorded value is returned. Without this, a recovered
+        workflow would rebind a new ``turn.id`` and downstream log
+        lines emitted before vs after the crash would land in two
+        different ``turn.root_id`` buckets.
+        """
+        return await _mint_turn_id_step()
