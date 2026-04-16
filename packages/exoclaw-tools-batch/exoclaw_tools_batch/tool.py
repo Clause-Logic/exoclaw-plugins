@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from exoclaw.agent.tools.protocol import ToolBase
+from exoclaw.agent.tools.protocol import ToolBase, ToolContext
 from exoclaw.agent.tools.registry import ToolRegistry
 
 
@@ -113,6 +113,47 @@ class BatchTool(ToolBase):
         concurrency: int | None = None,
         **kwargs: Any,
     ) -> str:
+        """Fan-out without a tool context.
+
+        Agent loops always dispatch with ``ToolContext``, so the normal
+        path is :meth:`execute_with_context`. This method is kept for
+        tests and callers that drive ``BatchTool`` directly without a
+        context. Per-item dispatches call ``registry.execute(tool,
+        params)`` with ``ctx=None``.
+        """
+        return await self._fan_out(tool, items, concurrency, ctx=None)
+
+    async def execute_with_context(
+        self,
+        ctx: ToolContext,
+        tool: str,
+        items: list[dict[str, Any]],
+        concurrency: int | None = None,
+        **kwargs: Any,
+    ) -> str:
+        """Fan-out with the agent loop's tool context threaded through.
+
+        This is the path that fixes the "subagent announcement goes to
+        the wrong session" bug observed in production on 2026-04-16.
+        When the LLM invokes ``batch(tool="spawn", items=[…])``, the
+        agent loop calls this method with the *current turn's*
+        ``ToolContext`` (the correct ``channel``, ``chat_id``,
+        ``session_key``). That ctx is forwarded to
+        ``registry.execute(spawn, params, ctx)`` for every item, so
+        ``SpawnTool.execute_with_context`` reads the right origin and
+        the subagent announcements route back to the originating
+        session instead of the stale default ``cli:direct``.
+        """
+        return await self._fan_out(tool, items, concurrency, ctx=ctx)
+
+    async def _fan_out(
+        self,
+        tool: str,
+        items: list[dict[str, Any]],
+        concurrency: int | None,
+        *,
+        ctx: ToolContext | None,
+    ) -> str:
         registry = self._resolve_registry()
         if registry is None:
             return "Error: BatchTool has no registry — cannot execute tools."
@@ -132,7 +173,7 @@ class BatchTool(ToolBase):
         async def _run_one(index: int, params: dict[str, Any]) -> dict[str, Any]:
             async with semaphore:
                 try:
-                    result = await registry.execute(tool, params)
+                    result = await registry.execute(tool, params, ctx)
                     return {"index": index, "result": result}
                 except Exception as e:
                     return {"index": index, "error": str(e)}

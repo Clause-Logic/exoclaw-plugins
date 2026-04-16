@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from exoclaw.agent.tools.protocol import ToolBase
+from exoclaw.agent.tools.protocol import ToolBase, ToolContext
 from exoclaw.agent.tools.registry import ToolRegistry
 
 
@@ -200,6 +200,65 @@ class ReduceTool(ToolBase):
         output: str | None = None,
         **kwargs: Any,
     ) -> str:
+        return await self._run(
+            files=files,
+            dir=dir,
+            key=key,
+            dedup=dedup,
+            chunk_size=chunk_size,
+            until=until,
+            then=then,
+            output=output,
+            ctx=None,
+        )
+
+    async def execute_with_context(
+        self,
+        ctx: ToolContext,
+        files: list[str] | None = None,
+        dir: str | None = None,
+        key: str = "results",
+        dedup: str | None = None,
+        chunk_size: int | None = None,
+        until: int | None = None,
+        then: dict[str, Any] | None = None,
+        output: str | None = None,
+        **kwargs: Any,
+    ) -> str:
+        """Reduce with the agent loop's ``ToolContext`` threaded through.
+
+        Matches ``BatchTool.execute_with_context``: when reduce is
+        invoked via the agent loop's tool dispatcher (which always
+        passes ctx), the ctx flows into ``_tree_reduce`` and out to
+        ``registry.execute(tool_name, params, ctx)`` so downstream
+        tools that depend on context (e.g. ``SpawnTool`` for the
+        origin channel/chat_id) see the right values.
+        """
+        return await self._run(
+            files=files,
+            dir=dir,
+            key=key,
+            dedup=dedup,
+            chunk_size=chunk_size,
+            until=until,
+            then=then,
+            output=output,
+            ctx=ctx,
+        )
+
+    async def _run(
+        self,
+        *,
+        files: list[str] | None,
+        dir: str | None,
+        key: str,
+        dedup: str | None,
+        chunk_size: int | None,
+        until: int | None,
+        then: dict[str, Any] | None,
+        output: str | None,
+        ctx: ToolContext | None,
+    ) -> str:
         # Resolve file list
         paths: list[Path] = []
         if files:
@@ -224,7 +283,9 @@ class ReduceTool(ToolBase):
 
         # Tree-reduce mode
         if until is not None and then is not None:
-            return await self._tree_reduce(merged, until, then, chunk_size or 20, errors, output)
+            return await self._tree_reduce(
+                merged, until, then, chunk_size or 20, errors, output, ctx=ctx
+            )
 
         # Chunk mode — split into multiple files
         if chunk_size and len(merged) > chunk_size:
@@ -253,6 +314,8 @@ class ReduceTool(ToolBase):
         chunk_size: int,
         errors: list[str],
         output: str | None,
+        *,
+        ctx: ToolContext | None = None,
     ) -> str:
         """Repeatedly chunk → call tool → merge until count <= until."""
         registry = self._resolve_registry()
@@ -295,7 +358,7 @@ class ReduceTool(ToolBase):
 
                     # Build params with input_path injected
                     params = {**base_params, "input_path": chunk_path}
-                    return await registry.execute(tool_name, params)
+                    return await registry.execute(tool_name, params, ctx)
 
             tasks = [_process_chunk(chunk) for chunk in chunks]
             results = await asyncio.gather(*tasks)
