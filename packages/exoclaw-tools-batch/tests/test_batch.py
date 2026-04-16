@@ -161,3 +161,86 @@ async def test_output_file_cleanup(batch: BatchTool) -> None:
     with open(path) as f:
         data = json.load(f)
     assert data["results"][0]["result"] == "echo:x"
+
+
+@pytest.mark.asyncio
+async def test_batch_uses_dispatching_registry_not_stored_ref(tmp_path: Path) -> None:
+    """When invoked via ``ToolRegistry.execute``, BatchTool dispatches
+    against the registry doing the dispatching — not whichever registry
+    happened to be stored last via ``set_registry``.
+
+    Pins the production bug from 2026-04-15 where a single ``BatchTool``
+    instance was shared between the main agent loop and every subagent
+    loop. Each subagent's ``AgentLoop.__init__`` called
+    ``batch_tool.set_registry(subagent_registry)``, clobbering the main
+    agent's reference. Minutes later the main agent's next batch call
+    dispatched against a stale subagent registry that didn't include
+    ``spawn``. The ContextVar-based lookup added in exoclaw 0.15.2
+    fixes the race: ``ToolRegistry.execute`` binds the current registry
+    for the duration of the tool body and BatchTool reads from
+    ``ToolRegistry.current()``.
+    """
+    batch_tool = BatchTool(output_dir=str(tmp_path))
+
+    main_reg = ToolRegistry()
+    sub_reg = ToolRegistry()
+
+    # Only register echo in main. The subagent registry has a different
+    # tool set — call it 'echo' too but with a distinct return value so
+    # we can tell which registry handled the dispatch.
+    class _MainEcho:
+        name = "echo"
+        description = "main"
+        parameters = {"type": "object", "properties": {}, "required": []}
+
+        async def execute(self, **kwargs: object) -> str:
+            return "from-main"
+
+    class _SubEcho:
+        name = "echo"
+        description = "sub"
+        parameters = {"type": "object", "properties": {}, "required": []}
+
+        async def execute(self, **kwargs: object) -> str:
+            return "from-sub"
+
+    main_reg.register(_MainEcho())
+    sub_reg.register(_SubEcho())
+    main_reg.register(batch_tool)  # type: ignore[arg-type]
+    sub_reg.register(batch_tool)  # type: ignore[arg-type]
+
+    # Simulate the production race: the subagent's AgentLoop.__init__
+    # calls set_registry LAST, which used to clobber the stored ref.
+    batch_tool.set_registry(main_reg)
+    batch_tool.set_registry(sub_reg)  # stale — points at sub
+
+    # Dispatch via the MAIN registry. With the old stored-ref
+    # behavior this would dispatch against sub_reg (because
+    # set_registry was last called with sub_reg) and return
+    # 'from-sub'. With the ContextVar fix, it must see main_reg via
+    # ``ToolRegistry.current()`` and return 'from-main'.
+    result = await main_reg.execute("batch", {"tool": "echo", "items": [{}]})
+    meta = json.loads(result)
+    with open(meta["output_path"]) as f:
+        payload = json.load(f)
+    assert payload["results"][0]["result"] == "from-main", (
+        f"batch dispatched against the stale stored registry instead of "
+        f"the dispatching one — payload={payload}"
+    )
+
+    # Now dispatch via the SUB registry. Same batch_tool instance, but
+    # the dispatch context swaps. Must see sub_reg and return 'from-sub'.
+    result = await sub_reg.execute("batch", {"tool": "echo", "items": [{}]})
+    meta = json.loads(result)
+    with open(meta["output_path"]) as f:
+        payload = json.load(f)
+    assert payload["results"][0]["result"] == "from-sub", (
+        f"batch failed to switch registries per dispatch — payload={payload}"
+    )
+
+    # And one more from main to prove it's not sticky after sub.
+    result = await main_reg.execute("batch", {"tool": "echo", "items": [{}]})
+    meta = json.loads(result)
+    with open(meta["output_path"]) as f:
+        payload = json.load(f)
+    assert payload["results"][0]["result"] == "from-main"
