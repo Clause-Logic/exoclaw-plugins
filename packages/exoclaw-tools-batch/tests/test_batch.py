@@ -164,6 +164,90 @@ async def test_output_file_cleanup(batch: BatchTool) -> None:
 
 
 @pytest.mark.asyncio
+async def test_batch_threads_toolcontext_to_per_item_dispatch(tmp_path: Path) -> None:
+    """When invoked via ``ToolRegistry.execute(..., ctx=...)``, BatchTool
+    must forward the *same* ToolContext into every per-item dispatch.
+
+    Fixes the production bug from 2026-04-16 where
+    ``batch(tool="spawn", items=[13])`` dispatched ``SpawnTool`` without
+    a context, so spawn fell through to ``execute`` (not
+    ``execute_with_context``) and read the stored origin channel/chat_id
+    — which was a stale ``cli:direct`` left over from a prior cron fire.
+    Every one of the 13 resulting subagent completion announcements
+    went to ``cli:direct`` instead of the zulip session the user was
+    actually in, so the user never saw them.
+
+    The fix routes ctx → ``BatchTool.execute_with_context`` →
+    ``registry.execute(tool, params, ctx)`` for every item, so
+    context-aware tools (``SpawnTool``, anything with
+    ``execute_with_context``) see the caller's real turn context.
+    """
+    from exoclaw.agent.tools.protocol import ToolContext
+
+    seen_ctx: list[ToolContext | None] = []
+
+    class _RecordingTool:
+        name = "record_ctx"
+        description = "records the ctx it was given"
+        parameters = {"type": "object", "properties": {}, "required": []}
+
+        async def execute(self, **kwargs: object) -> str:
+            seen_ctx.append(None)  # fell through to context-less path
+            return "no-ctx"
+
+        async def execute_with_context(self, ctx: ToolContext, **kwargs: object) -> str:
+            seen_ctx.append(ctx)
+            return f"ctx:{ctx.channel}:{ctx.chat_id}"
+
+    registry = ToolRegistry()
+    registry.register(_RecordingTool())
+    batch_tool = BatchTool(output_dir=str(tmp_path))
+    registry.register(batch_tool)  # type: ignore[arg-type]
+
+    ctx = ToolContext(channel="zulip", chat_id="583983:feeds", session_key="zulip:583983:feeds")
+    items = [{}, {}, {}]
+    result = await registry.execute("batch", {"tool": "record_ctx", "items": items}, ctx)
+
+    meta = json.loads(result)
+    assert meta["count"] == 3
+    assert len(seen_ctx) == 3, f"expected 3 per-item dispatches, got {len(seen_ctx)}"
+    for observed in seen_ctx:
+        assert observed is not None, (
+            "per-item dispatch landed in execute() instead of "
+            "execute_with_context() — ctx was not threaded"
+        )
+        assert observed.channel == "zulip"
+        assert observed.chat_id == "583983:feeds"
+        assert observed.session_key == "zulip:583983:feeds"
+
+
+@pytest.mark.asyncio
+async def test_batch_execute_without_ctx_still_works(tmp_path: Path) -> None:
+    """``BatchTool.execute`` (no ctx) keeps working for tests and
+    callers that drive the tool directly without going through
+    ``ToolRegistry.execute``. Per-item dispatches use ``ctx=None``.
+    """
+    batch_tool = BatchTool(output_dir=str(tmp_path))
+    registry = ToolRegistry()
+
+    class _EchoTool:
+        name = "echo"
+        description = "echo"
+        parameters = {"type": "object", "properties": {}, "required": []}
+
+        async def execute(self, **kwargs: object) -> str:
+            return "ok"
+
+    registry.register(_EchoTool())
+    registry.register(batch_tool)  # type: ignore[arg-type]
+    batch_tool.set_registry(registry)
+
+    result = await batch_tool.execute(tool="echo", items=[{}, {}])
+    meta = json.loads(result)
+    assert meta["count"] == 2
+
+
+@pytest.mark.asyncio
 async def test_batch_uses_dispatching_registry_not_stored_ref(tmp_path: Path) -> None:
     """When invoked via ``ToolRegistry.execute``, BatchTool dispatches
     against the registry doing the dispatching — not whichever registry
