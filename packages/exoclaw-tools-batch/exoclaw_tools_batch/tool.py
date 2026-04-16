@@ -20,8 +20,20 @@ class BatchTool(ToolBase):
     Results are written to a temp file and the path is returned,
     keeping the agent's context window clean.
 
-    Receives the registry via duck-typed set_registry() called at
-    registration time (same pattern as set_bus).
+    **Registry lookup is ContextVar-based as of exoclaw 0.15.2.**
+    On each ``execute`` call we read ``ToolRegistry.current()`` — the
+    *dispatching* registry that the outer ``registry.execute("batch",
+    …)`` bound for the duration of the tool body. ``set_registry``
+    stores a fallback reference for callers that drive the tool
+    directly (tests, custom wiring) without going through
+    ``ToolRegistry.execute``.
+
+    The stored-reference pattern alone was last-write-wins across
+    multiple ``AgentLoop`` instances sharing a ``BatchTool`` — each
+    loop's ctor would clobber the pointer, so the main agent's
+    ``BatchTool`` would end up pointing at the last-constructed
+    subagent's (spawn-less) registry. The ContextVar is
+    per-asyncio-task so concurrent dispatches don't interfere.
     """
 
     DEFAULT_CONCURRENCY = 10
@@ -36,8 +48,25 @@ class BatchTool(ToolBase):
         self._output_dir = output_dir
 
     def set_registry(self, registry: ToolRegistry) -> None:
-        """Called at registration time by AgentLoop."""
+        """Stored as a fallback for non-``execute``-driven callers.
+
+        The preferred path is ``ToolRegistry.current()`` from inside
+        ``execute`` — it matches the dispatching registry on a
+        per-asyncio-task basis and avoids the shared-instance race
+        that broke production on 2026-04-15.
+        """
         self._registry = registry
+
+    def _resolve_registry(self) -> ToolRegistry | None:
+        """Return the registry batch should dispatch against.
+
+        Prefer ``ToolRegistry.current()`` (set by the outer
+        ``registry.execute("batch", …)`` frame) over the stored
+        fallback. Direct tool-body invocations that bypass the
+        registry (e.g. unit tests that call ``batch_tool.execute``)
+        still see the stored reference.
+        """
+        return ToolRegistry.current() or self._registry
 
     @property
     def name(self) -> str:
@@ -84,11 +113,12 @@ class BatchTool(ToolBase):
         concurrency: int | None = None,
         **kwargs: Any,
     ) -> str:
-        if not self._registry:
+        registry = self._resolve_registry()
+        if registry is None:
             return "Error: BatchTool has no registry — cannot execute tools."
 
-        if not self._registry.has(tool):
-            available = ", ".join(self._registry.tool_names)
+        if not registry.has(tool):
+            available = ", ".join(registry.tool_names)
             return f"Error: Tool '{tool}' not found. Available: {available}"
 
         if not items:
@@ -102,7 +132,7 @@ class BatchTool(ToolBase):
         async def _run_one(index: int, params: dict[str, Any]) -> dict[str, Any]:
             async with semaphore:
                 try:
-                    result = await self._registry.execute(tool, params)  # type: ignore[union-attr]
+                    result = await registry.execute(tool, params)
                     return {"index": index, "result": result}
                 except Exception as e:
                     return {"index": index, "error": str(e)}

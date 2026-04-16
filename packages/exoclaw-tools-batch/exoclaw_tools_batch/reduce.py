@@ -36,8 +36,16 @@ class ReduceTool(ToolBase):
         self._registry: ToolRegistry | None = None
 
     def set_registry(self, registry: ToolRegistry) -> None:
-        """Called at registration time by AgentLoop."""
+        """Stored as a fallback; the preferred lookup is
+        ``ToolRegistry.current()`` from inside ``execute``. See
+        ``BatchTool`` for the full story on why stored references
+        are racy when a tool is shared across ``AgentLoop``s.
+        """
         self._registry = registry
+
+    def _resolve_registry(self) -> ToolRegistry | None:
+        """Prefer the dispatching registry over the stored fallback."""
+        return ToolRegistry.current() or self._registry
 
     @property
     def name(self) -> str:
@@ -247,14 +255,15 @@ class ReduceTool(ToolBase):
         output: str | None,
     ) -> str:
         """Repeatedly chunk → call tool → merge until count <= until."""
-        if not self._registry:
+        registry = self._resolve_registry()
+        if registry is None:
             return "Error: tree-reduce requires registry (set_registry not wired)."
 
         tool_name = then.get("tool", "")
         if not tool_name:
             return "Error: then.tool is required for tree-reduce."
-        if not self._registry.has(tool_name):
-            available = ", ".join(self._registry.tool_names)
+        if not registry.has(tool_name):
+            available = ", ".join(registry.tool_names)
             return f"Error: tool '{tool_name}' not found. Available: {available}"
 
         base_params = then.get("params") or {}
@@ -286,7 +295,7 @@ class ReduceTool(ToolBase):
 
                     # Build params with input_path injected
                     params = {**base_params, "input_path": chunk_path}
-                    return await self._registry.execute(tool_name, params)  # type: ignore[union-attr]
+                    return await registry.execute(tool_name, params)
 
             tasks = [_process_chunk(chunk) for chunk in chunks]
             results = await asyncio.gather(*tasks)
