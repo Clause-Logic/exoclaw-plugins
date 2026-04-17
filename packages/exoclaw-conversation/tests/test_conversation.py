@@ -137,6 +137,61 @@ class TestSession:
         assert history[1]["tool_calls"] == [{"id": "1"}]
         assert history[2]["tool_call_id"] == "1"
 
+    def test_get_history_repairs_orphan_tool_results(self) -> None:
+        """Sessions persisted before the pair-split fix have orphan tool_results
+        in the kept tail. get_history() must strip them so the request shape is
+        valid for strict providers (MiniMax).
+        """
+        s = Session(key="test")
+        # Simulates a tail loaded from disk: first message is a tool_result
+        # whose tool_call was archived. No user message exists so the
+        # leading-non-user peel can't save us.
+        s.messages = [
+            {"role": "tool", "content": "orphan result", "tool_call_id": "T7"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "T8"}]},
+            {"role": "tool", "content": "ok", "tool_call_id": "T8"},
+            {"role": "assistant", "content": "done"},
+        ]
+        history = s.get_history()
+        tool_ids_in_history = {m.get("tool_call_id") for m in history if m.get("role") == "tool"}
+        assert "T7" not in tool_ids_in_history
+        assert "T8" in tool_ids_in_history
+
+    def test_get_history_strips_orphan_tool_calls_from_assistant(self) -> None:
+        """Dangling in the other direction: assistant declares tool_calls but
+        the matching tool_result is archived. Drop those tool_calls entries.
+        """
+        s = Session(key="test")
+        s.messages = [
+            {"role": "user", "content": "go"},
+            {
+                "role": "assistant",
+                "content": "thinking",
+                "tool_calls": [{"id": "unanswered"}, {"id": "answered"}],
+            },
+            {"role": "tool", "content": "r", "tool_call_id": "answered"},
+        ]
+        history = s.get_history()
+        asst = [m for m in history if m.get("role") == "assistant"][0]
+        assert asst["tool_calls"] == [{"id": "answered"}]
+
+    def test_get_history_drops_assistant_with_only_orphan_tool_calls(self) -> None:
+        """If an assistant message has no content and all its tool_calls are
+        orphaned, drop the message entirely rather than send an empty shell.
+        """
+        s = Session(key="test")
+        s.messages = [
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "orphan"}]},
+            {"role": "assistant", "content": "recovered"},
+        ]
+        history = s.get_history()
+        # The orphan-only assistant message is gone; only the user and the
+        # "recovered" assistant remain.
+        assert len(history) == 2
+        assert history[0]["content"] == "go"
+        assert history[1]["content"] == "recovered"
+
     def test_clear(self) -> None:
         s = Session(key="test")
         s.add_message("user", "hi")
