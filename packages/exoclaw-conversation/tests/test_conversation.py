@@ -137,6 +137,61 @@ class TestSession:
         assert history[1]["tool_calls"] == [{"id": "1"}]
         assert history[2]["tool_call_id"] == "1"
 
+    def test_get_history_repairs_orphan_tool_results(self) -> None:
+        """Sessions persisted before the pair-split fix have orphan tool_results
+        in the kept tail. get_history() must strip them so the request shape is
+        valid for strict providers (MiniMax).
+        """
+        s = Session(key="test")
+        # Simulates a tail loaded from disk: first message is a tool_result
+        # whose tool_call was archived. No user message exists so the
+        # leading-non-user peel can't save us.
+        s.messages = [
+            {"role": "tool", "content": "orphan result", "tool_call_id": "T7"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "T8"}]},
+            {"role": "tool", "content": "ok", "tool_call_id": "T8"},
+            {"role": "assistant", "content": "done"},
+        ]
+        history = s.get_history()
+        tool_ids_in_history = {m.get("tool_call_id") for m in history if m.get("role") == "tool"}
+        assert "T7" not in tool_ids_in_history
+        assert "T8" in tool_ids_in_history
+
+    def test_get_history_strips_orphan_tool_calls_from_assistant(self) -> None:
+        """Dangling in the other direction: assistant declares tool_calls but
+        the matching tool_result is archived. Drop those tool_calls entries.
+        """
+        s = Session(key="test")
+        s.messages = [
+            {"role": "user", "content": "go"},
+            {
+                "role": "assistant",
+                "content": "thinking",
+                "tool_calls": [{"id": "unanswered"}, {"id": "answered"}],
+            },
+            {"role": "tool", "content": "r", "tool_call_id": "answered"},
+        ]
+        history = s.get_history()
+        asst = [m for m in history if m.get("role") == "assistant"][0]
+        assert asst["tool_calls"] == [{"id": "answered"}]
+
+    def test_get_history_drops_assistant_with_only_orphan_tool_calls(self) -> None:
+        """If an assistant message has no content and all its tool_calls are
+        orphaned, drop the message entirely rather than send an empty shell.
+        """
+        s = Session(key="test")
+        s.messages = [
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "orphan"}]},
+            {"role": "assistant", "content": "recovered"},
+        ]
+        history = s.get_history()
+        # The orphan-only assistant message is gone; only the user and the
+        # "recovered" assistant remain.
+        assert len(history) == 2
+        assert history[0]["content"] == "go"
+        assert history[1]["content"] == "recovered"
+
     def test_clear(self) -> None:
         s = Session(key="test")
         s.add_message("user", "hi")
@@ -1026,6 +1081,90 @@ class TestMemoryStoreEdgeCases:
         session.messages = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
         result = await store.consolidate(session, archive_all=True)
         assert result is False
+
+    async def test_consolidate_does_not_split_tool_pair(self, tmp_path: Path) -> None:
+        """Regression: consolidation boundary must not leave orphan tool_results.
+
+        Reproduces the MiniMax "tool result's tool id(...) not found" 400 seen
+        in Luna's long autonomous agent runs. Scenario: one user message at the
+        start, then a long sequence of assistant-tool_calls / tool-result pairs
+        with no further user messages. When consolidation cuts between an
+        assistant message and its corresponding tool result, the kept tail
+        starts with a tool_result whose tool_call_id is in the archived region.
+        get_history()'s "drop leading non-user" guard relies on a user message
+        existing in the tail — it doesn't fire here, so the orphan passes
+        through to the provider.
+        """
+        response = MagicMock()
+        response.has_tool_calls = True
+        tc = MagicMock()
+        tc.arguments = {"history_entry": "summary", "memory_update": "facts"}
+        response.tool_calls = [tc]
+        provider = MagicMock()
+        provider.chat = AsyncMock(return_value=response)
+        store = MemoryStore(tmp_path, provider=provider, model="m")
+
+        # 20 messages: 1 user at start, then 9 asst/tool pairs, then asst "done".
+        # With memory_window=12, keep_count=6, last_consolidated lands at 14 —
+        # between the asst at idx 13 and its tool result at idx 14.
+        messages: list[dict[str, Any]] = [
+            {"role": "user", "content": "start", "timestamp": "2024-01-01T00:00"},
+        ]
+        for n in range(1, 10):  # pairs 1..9 → indices 1..18
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": f"T{n}",
+                            "type": "function",
+                            "function": {"name": "x", "arguments": "{}"},
+                        }
+                    ],
+                    "timestamp": f"2024-01-01T00:{n:02d}",
+                }
+            )
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": f"T{n}",
+                    "content": f"result {n}",
+                    "timestamp": f"2024-01-01T00:{n:02d}",
+                }
+            )
+        messages.append({"role": "assistant", "content": "done", "timestamp": "2024-01-01T00:19"})
+
+        session = Session(key="test")
+        session.messages = messages
+        session.last_consolidated = 0
+
+        result = await store.consolidate(session, archive_all=False, memory_window=12)
+        assert result is True
+        # Naive boundary would be total-keep_count = 20-6 = 14, splitting the
+        # asst(tool_calls=T7) at idx 13 from its tool(T7) at idx 14. The fix
+        # advances the boundary past the orphan so the kept tail starts at 15.
+        assert session.last_consolidated >= 15
+
+        # Every tool message returned must have its tool_call_id introduced
+        # earlier in the returned history by an assistant message's tool_calls.
+        history = session.get_history(max_messages=500)
+        seen_tool_ids: set[str] = set()
+        orphans: list[str] = []
+        for m in history:
+            if m.get("role") == "assistant":
+                for tc_entry in m.get("tool_calls") or []:
+                    if tid := tc_entry.get("id"):
+                        seen_tool_ids.add(tid)
+            elif m.get("role") == "tool":
+                tid = m.get("tool_call_id")
+                if tid and tid not in seen_tool_ids:
+                    orphans.append(tid)
+        assert not orphans, (
+            f"get_history leaked orphan tool_call_ids {orphans} — "
+            f"consolidation boundary split a tool_use/tool_result pair. "
+            f"This is what makes MiniMax return 400 invalid_params."
+        )
 
 
 class TestContextBuilderExtra:

@@ -77,6 +77,41 @@ class Session:
                 sliced = sliced[i:]
                 break
 
+        # Repair pass: strip orphan tool references. Handles sessions that were
+        # persisted before the consolidation-boundary fix (pair-split bug), or
+        # any other source of dangling tool_call_ids. MiniMax and other strict
+        # providers 400 with "tool result's tool id(...) not found" otherwise.
+        declared_ids: set[str] = set()
+        responded_ids: set[str] = set()
+        for m in sliced:
+            if m.get("role") == "assistant":
+                for tc in m.get("tool_calls") or []:
+                    if tid := tc.get("id"):
+                        declared_ids.add(tid)
+            elif m.get("role") == "tool":
+                if tid := m.get("tool_call_id"):
+                    responded_ids.add(tid)
+        valid_ids = declared_ids & responded_ids
+
+        if declared_ids != valid_ids or responded_ids != valid_ids:
+            repaired: list[dict[str, Any]] = []
+            for m in sliced:
+                role = m.get("role")
+                if role == "tool":
+                    if m.get("tool_call_id") in valid_ids:
+                        repaired.append(m)
+                    # else drop: orphan tool_result
+                elif role == "assistant" and m.get("tool_calls"):
+                    kept = [tc for tc in m["tool_calls"] if tc.get("id") in valid_ids]
+                    if kept:
+                        repaired.append({**m, "tool_calls": kept})
+                    elif m.get("content"):
+                        repaired.append({k: v for k, v in m.items() if k != "tool_calls"})
+                    # else drop: no content and all tool_calls unmatched
+                else:
+                    repaired.append(m)
+            sliced = repaired
+
         out: list[dict[str, Any]] = []
         for m in sliced:
             entry: dict[str, Any] = {"role": m["role"], "content": m.get("content", "")}
