@@ -206,7 +206,36 @@ class MemoryStore:
                     self.write_long_term(update)
 
             total = getattr(session, "total_messages", len(session.messages))
-            session.last_consolidated = 0 if archive_all else total - keep_count
+            if archive_all:
+                session.last_consolidated = 0
+            else:
+                # Advance the boundary past any tool_use/tool_result group it
+                # would split. Leaving a tool_result in the kept tail whose
+                # tool_call_id lives in the archived region causes providers
+                # like MiniMax to reject the next request with
+                # "tool result's tool id(...) not found". Prefer sacrificing
+                # a few messages at the boundary (they're neither summarized
+                # nor kept) over producing an invalid conversation shape.
+                boundary = total - keep_count
+                offset = getattr(session, "_messages_offset", 0)
+                while boundary < total:
+                    rel = boundary - offset
+                    if rel < 0 or rel >= len(session.messages):
+                        break
+                    curr = session.messages[rel]
+                    prev = session.messages[rel - 1] if rel > 0 else None
+                    if curr.get("role") == "tool":
+                        boundary += 1
+                        continue
+                    if (
+                        prev is not None
+                        and prev.get("role") == "assistant"
+                        and prev.get("tool_calls")
+                    ):
+                        boundary += 1
+                        continue
+                    break
+                session.last_consolidated = boundary
             logger.info(
                 "memory_consolidated",
                 **{
