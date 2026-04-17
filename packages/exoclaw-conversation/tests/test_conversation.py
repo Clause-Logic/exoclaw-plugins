@@ -1115,7 +1115,13 @@ class TestMemoryStoreEdgeCases:
                 {
                     "role": "assistant",
                     "content": "",
-                    "tool_calls": [{"id": f"T{n}", "type": "function", "function": {"name": "x", "arguments": "{}"}}],
+                    "tool_calls": [
+                        {
+                            "id": f"T{n}",
+                            "type": "function",
+                            "function": {"name": "x", "arguments": "{}"},
+                        }
+                    ],
                     "timestamp": f"2024-01-01T00:{n:02d}",
                 }
             )
@@ -1127,9 +1133,7 @@ class TestMemoryStoreEdgeCases:
                     "timestamp": f"2024-01-01T00:{n:02d}",
                 }
             )
-        messages.append(
-            {"role": "assistant", "content": "done", "timestamp": "2024-01-01T00:19"}
-        )
+        messages.append({"role": "assistant", "content": "done", "timestamp": "2024-01-01T00:19"})
 
         session = Session(key="test")
         session.messages = messages
