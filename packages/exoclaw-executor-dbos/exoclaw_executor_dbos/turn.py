@@ -33,6 +33,24 @@ def set_loop_context(loop: Any) -> None:
 
 
 @DBOS.step()
+async def _check_sent_in_turn_step(chat_id: str) -> bool:
+    """Snapshot "did any tool already send a user-facing message to this
+    chat during the turn" as a durable step.
+
+    The ``message`` tool tracks ``sent_in_turn`` on its in-memory instance
+    and that flag would be lost across a container restart — on recovery
+    the journaled ``_tool_step`` outputs are replayed without re-running
+    the tool body, so the flag would read False and we'd publish a
+    redundant final reply. Wrapping the read in a step captures the
+    first-run answer in the journal; replay returns the same boolean.
+    """
+    loop = _loop
+    if loop is None:
+        raise RuntimeError("AgentLoop not set — call set_loop_context() at startup")
+    return any(getattr(t, "sent_in_turn", False) for t in loop.tools._tools.values())
+
+
+@DBOS.step()
 async def _publish_outbound_step(
     session_id: str,
     channel: str,
@@ -47,6 +65,10 @@ async def _publish_outbound_step(
     workflow recovery, so the reply would sit in ``workflow_status.output``
     unsent.
 
+    Logging lives inside the step so observability matches reality — on
+    replay DBOS returns the journaled completion without re-executing the
+    body, so we don't double-log a send that didn't actually happen.
+
     Idempotency: on partial completion (bus write succeeded, step record
     didn't commit) recovery re-sends, which means one duplicate message.
     Accepting that risk — the send window is ~50 ms and OOMs during it
@@ -55,6 +77,8 @@ async def _publish_outbound_step(
     loop = _loop
     if loop is None:
         raise RuntimeError("AgentLoop not set — call set_loop_context() at startup")
+    preview = content[:120] + "..." if len(content) > 120 else content
+    loop._log.info("response_send", preview=preview)
     await loop.bus.publish_outbound(
         OutboundMessage(
             channel=channel,
@@ -111,16 +135,15 @@ async def run_durable_turn(
     )
 
     if publish_response and channel and chat_id:
-        # Skip publish if any tool already sent a message to this chat
-        # during the turn (the existing ``message`` tool sets this flag
-        # after a successful user-facing send).
-        already_sent = any(getattr(t, "sent_in_turn", False) for t in loop.tools._tools.values())
+        # Skip publish if any tool already sent a user-facing message to
+        # this chat during the turn. Reading through a @DBOS.step keeps
+        # the answer replay-stable — tool flags are in-memory and wouldn't
+        # survive a container restart.
+        already_sent = await _check_sent_in_turn_step(chat_id)
         if not already_sent:
             reply = final_content
             if reply is None:
                 reply = "I've completed processing but have no response to give."
-            preview = reply[:120] + "..." if len(reply) > 120 else reply
-            loop._log.info("response_send", preview=preview)
             await _publish_outbound_step(
                 session_id=session_id,
                 channel=channel,
