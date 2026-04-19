@@ -210,9 +210,7 @@ class TestRun:
         mock_loop.process_direct = AsyncMock(return_value="done")
 
         with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop):
-            await mgr._run(
-                "t1", "task", "label", "telegram", "chat99", "telegram:chat99", None
-            )
+            await mgr._run("t1", "task", "label", "telegram", "chat99", "telegram:chat99", None)
 
         kwargs = mock_loop.process_direct.call_args.kwargs
         assert kwargs["channel"] == "telegram"
