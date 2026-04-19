@@ -753,3 +753,134 @@ class TestCancelBySession:
             assert mgr.get_running_count() == 1
             event.set()
             await asyncio.sleep(0.01)
+
+
+# ---------------------------------------------------------------------------
+# AsyncioSpawner concurrency cap
+# ---------------------------------------------------------------------------
+
+
+class TestAsyncioSpawnerConcurrency:
+    async def test_uncapped_spawner_runs_all_concurrently(self) -> None:
+        """Default (max_concurrent=None) preserves pre-cap behavior —
+        every spawned runner starts immediately."""
+        from exoclaw_subagent.spawner import AsyncioSpawner
+
+        running = 0
+        peak = 0
+        gate = asyncio.Event()
+
+        async def runner(**kwargs: object) -> None:
+            nonlocal running, peak
+            running += 1
+            peak = max(peak, running)
+            await gate.wait()
+            running -= 1
+
+        spawner = AsyncioSpawner(runner)
+        handles = []
+        for i in range(10):
+            h = await spawner.start(
+                task_id=f"t{i}",
+                task=f"task {i}",
+                label=f"t{i}",
+                origin_channel="cli",
+                origin_chat_id="chat",
+                session_key=None,
+                batch=None,
+                skills=None,
+                model=None,
+            )
+            handles.append(h)
+
+        # Let all tasks enter the runner body.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert peak == 10
+        gate.set()
+        for h in handles:
+            await h.wait()
+
+    async def test_max_concurrent_caps_running_count(self) -> None:
+        """With max_concurrent=3, no more than 3 runners execute concurrently
+        even when 10 are spawned."""
+        from exoclaw_subagent.spawner import AsyncioSpawner
+
+        running = 0
+        peak = 0
+        gate = asyncio.Event()
+
+        async def runner(**kwargs: object) -> None:
+            nonlocal running, peak
+            running += 1
+            peak = max(peak, running)
+            await gate.wait()
+            running -= 1
+
+        spawner = AsyncioSpawner(runner, max_concurrent=3)
+        handles = []
+        for i in range(10):
+            h = await spawner.start(
+                task_id=f"t{i}",
+                task=f"task {i}",
+                label=f"t{i}",
+                origin_channel="cli",
+                origin_chat_id="chat",
+                session_key=None,
+                batch=None,
+                skills=None,
+                model=None,
+            )
+            handles.append(h)
+
+        # Let the first batch enter the runner body — semaphore holds the rest.
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert peak == 3
+        gate.set()
+        for h in handles:
+            await h.wait()
+        assert peak == 3  # capped throughout, not just at start
+
+    async def test_start_returns_immediately_even_when_cap_hit(self) -> None:
+        """``start()`` always returns a handle fast. The wait-for-a-slot
+        happens inside the task body, not inside ``start()``."""
+        from exoclaw_subagent.spawner import AsyncioSpawner
+
+        gate = asyncio.Event()
+
+        async def runner(**kwargs: object) -> None:
+            await gate.wait()
+
+        spawner = AsyncioSpawner(runner, max_concurrent=1)
+        # First spawn takes the only slot and blocks.
+        h1 = await spawner.start(
+            task_id="t1",
+            task="first",
+            label="t1",
+            origin_channel="cli",
+            origin_chat_id="chat",
+            session_key=None,
+            batch=None,
+            skills=None,
+            model=None,
+        )
+        # Second spawn must still return its handle without blocking.
+        h2 = await asyncio.wait_for(
+            spawner.start(
+                task_id="t2",
+                task="second",
+                label="t2",
+                origin_channel="cli",
+                origin_chat_id="chat",
+                session_key=None,
+                batch=None,
+                skills=None,
+                model=None,
+            ),
+            timeout=0.5,
+        )
+        assert h2.done() is False
+        gate.set()
+        await h1.wait()
+        await h2.wait()

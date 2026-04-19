@@ -23,7 +23,7 @@ import json
 from collections.abc import Awaitable, Callable, Coroutine
 from typing import Any
 
-from dbos import DBOS, SetWorkflowID
+from dbos import DBOS, Queue, SetWorkflowID
 from exoclaw.agent.conversation import Conversation
 from exoclaw.agent.tools.protocol import ToolContext
 from exoclaw.agent.tools.registry import ToolRegistry
@@ -126,6 +126,7 @@ async def _mint_turn_id_step() -> str:
 
 _WorkflowRef = Callable[..., Coroutine[Any, Any, Any]]
 _workflow_registry: dict[str, _WorkflowRef] = {}
+_queue_registry: dict[str, "Queue"] = {}
 
 
 def register_intent_workflow(key: str, workflow: _WorkflowRef) -> None:
@@ -136,6 +137,26 @@ def register_intent_workflow(key: str, workflow: _WorkflowRef) -> None:
     ``exoclaw_executor_dbos.subagent``).
     """
     _workflow_registry[key] = workflow
+
+
+def register_intent_queue(key: str, queue: "Queue") -> None:
+    """Attach a DBOS ``Queue`` to a previously-registered intent workflow.
+
+    When present, intent dispatch uses ``queue.enqueue_async(...)``
+    instead of ``DBOS.start_workflow_async(...)`` so the queue's
+    concurrency / rate-limit config governs execution. Passing no queue
+    (the default) preserves the original direct-start behavior.
+
+    Intended call site is the spawner's ``__init__`` — the spawner owns
+    its queue config (e.g. ``max_concurrent``) and attaches it here
+    once, at wiring time.
+    """
+    _queue_registry[key] = queue
+
+
+def unregister_intent_queue(key: str) -> None:
+    """Detach a queue from an intent workflow. Used by tests for cleanup."""
+    _queue_registry.pop(key, None)
 
 
 # ── DBOSExecutor ─────────────────────────────────────────────────────────────
@@ -243,8 +264,12 @@ class DBOSExecutor:
                     f"to import, or did you forget to call "
                     f"register_intent_workflow()?"
                 )
+            queue = _queue_registry.get(intent.workflow_key)
             with SetWorkflowID(intent.workflow_id):
-                await DBOS.start_workflow_async(workflow, **intent.kwargs)
+                if queue is not None:
+                    await queue.enqueue_async(workflow, **intent.kwargs)
+                else:
+                    await DBOS.start_workflow_async(workflow, **intent.kwargs)
 
     async def build_prompt(
         self,

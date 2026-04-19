@@ -297,3 +297,59 @@ class TestDBOSSubagentSpawner:
         )
         assert observed_ids[-1] == "parentB"
         assert observed_roots[-1] == "rootA"
+
+
+@pytest.mark.asyncio(loop_scope="session")
+class TestDBOSSubagentSpawnerConcurrencyCap:
+    async def test_no_queue_registered_by_default(self, dbos_instance: Any) -> None:
+        """Without ``max_concurrent``, no queue is attached — dispatch
+        falls through to ``DBOS.start_workflow_async`` so the new code
+        path is fully opt-in."""
+        from exoclaw_executor_dbos.executor import _queue_registry
+        from exoclaw_executor_dbos.subagent import SUBAGENT_WORKFLOW_KEY, DBOSSubagentSpawner
+
+        async def noop_runner(**kwargs: Any) -> None:
+            return None
+
+        DBOSSubagentSpawner(noop_runner)  # max_concurrent defaults to None
+
+        assert SUBAGENT_WORKFLOW_KEY not in _queue_registry
+
+    async def test_max_concurrent_registers_queue(self, dbos_instance: Any) -> None:
+        """With ``max_concurrent=N``, the spawner owns a ``DBOS.Queue``
+        and registers it under the subagent workflow key so intent
+        dispatch routes through ``queue.enqueue_async``."""
+        from dbos import Queue
+        from exoclaw_executor_dbos.executor import _queue_registry
+        from exoclaw_executor_dbos.subagent import SUBAGENT_WORKFLOW_KEY, DBOSSubagentSpawner
+
+        async def noop_runner(**kwargs: Any) -> None:
+            return None
+
+        spawner = DBOSSubagentSpawner(noop_runner, max_concurrent=2)
+        try:
+            registered = _queue_registry.get(SUBAGENT_WORKFLOW_KEY)
+            assert registered is not None
+            assert isinstance(registered, Queue)
+            assert registered is spawner._queue
+        finally:
+            # Cleanup so other tests don't see a stale queue registration.
+            DBOSSubagentSpawner(noop_runner, max_concurrent=None)
+
+    async def test_reconstruction_without_cap_clears_stale_registration(
+        self, dbos_instance: Any
+    ) -> None:
+        """If a capped spawner is replaced by an uncapped one in the same
+        process, the stale queue registration is removed. Important for
+        tests and config reloads that re-init the manager."""
+        from exoclaw_executor_dbos.executor import _queue_registry
+        from exoclaw_executor_dbos.subagent import SUBAGENT_WORKFLOW_KEY, DBOSSubagentSpawner
+
+        async def noop_runner(**kwargs: Any) -> None:
+            return None
+
+        DBOSSubagentSpawner(noop_runner, max_concurrent=4)
+        assert SUBAGENT_WORKFLOW_KEY in _queue_registry
+
+        DBOSSubagentSpawner(noop_runner, max_concurrent=None)
+        assert SUBAGENT_WORKFLOW_KEY not in _queue_registry

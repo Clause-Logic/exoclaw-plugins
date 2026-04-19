@@ -27,10 +27,10 @@ is unsupported — the last one wins.
 
 from __future__ import annotations
 
-from dbos import DBOS, SetWorkflowID
+from dbos import DBOS, Queue, SetWorkflowID
 from exoclaw_subagent import Runner, SubagentHandle
 
-from .executor import register_intent_workflow
+from .executor import register_intent_queue, register_intent_workflow, unregister_intent_queue
 from .intents import StartChildWorkflow, try_queue_child_workflow
 
 # ── Module-level runner ref (set at DBOSSubagentSpawner construction) ───────
@@ -158,7 +158,16 @@ def _intent_workflow_id(task_id: str) -> str:
 
 
 SUBAGENT_WORKFLOW_KEY = "exoclaw_subagent"
+SUBAGENT_QUEUE_NAME = "exoclaw-subagent"
 register_intent_workflow(SUBAGENT_WORKFLOW_KEY, _subagent_workflow)
+
+# DBOS ``Queue`` declares itself into a process-global registry on
+# construction and raises if declared twice under the same name. The
+# spawner may be reconstructed (config reloads, tests) so we cache the
+# queue object here and reuse it across reconstructions. Concurrency is
+# fixed at first-declare; changing the cap requires a process restart —
+# document that as a limitation of the underlying primitive.
+_cached_queue: Queue | None = None
 
 
 class DBOSSubagentSpawner:
@@ -175,11 +184,29 @@ class DBOSSubagentSpawner:
     inside ``_tool_step`` where that's illegal. It queues a
     ``StartChildWorkflow`` intent on a contextvar that
     ``DBOSExecutor.execute_tool`` drains once the wrapping step exits.
+
+    ``max_concurrent`` caps how many subagent workflows DBOS runs at
+    once. When set, the spawner creates a ``DBOS.Queue`` and attaches it
+    to the subagent workflow key so dispatch goes through
+    ``queue.enqueue_async`` instead of ``start_workflow_async``.
+    Subagents beyond the cap stay ``ENQUEUED`` in the DBOS system DB and
+    drain as slots open — behavior survives crash recovery natively.
+    ``None`` preserves the uncapped behavior.
     """
 
-    def __init__(self, runner: Runner) -> None:
-        global _active_runner
+    def __init__(self, runner: Runner, max_concurrent: int | None = None) -> None:
+        global _active_runner, _cached_queue
         _active_runner = runner
+        self._queue: Queue | None = None
+        if max_concurrent is not None:
+            if _cached_queue is None:
+                _cached_queue = Queue(SUBAGENT_QUEUE_NAME, concurrency=max_concurrent)
+            self._queue = _cached_queue
+            register_intent_queue(SUBAGENT_WORKFLOW_KEY, self._queue)
+        else:
+            # Clear any stale registration from a previous spawner (tests,
+            # re-init). Harmless if nothing is registered.
+            unregister_intent_queue(SUBAGENT_WORKFLOW_KEY)
 
     async def start(
         self,
@@ -226,7 +253,10 @@ class DBOSSubagentSpawner:
             return _DeferredHandle(wfid)
 
         with SetWorkflowID(wfid):
-            await DBOS.start_workflow_async(_subagent_workflow, **kwargs)
+            if self._queue is not None:
+                await self._queue.enqueue_async(_subagent_workflow, **kwargs)
+            else:
+                await DBOS.start_workflow_async(_subagent_workflow, **kwargs)
         return _DeferredHandle(wfid)
 
 
