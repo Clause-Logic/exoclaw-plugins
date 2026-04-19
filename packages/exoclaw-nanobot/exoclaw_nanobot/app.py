@@ -418,6 +418,7 @@ async def create(
                     chat_id=chat_id,
                     on_progress=None,
                     skills=cron_skills,
+                    model=job.payload.model,
                 )
             finally:
                 spawn_tool.set_context(channel, chat_id, session_key=sid, skills=None)

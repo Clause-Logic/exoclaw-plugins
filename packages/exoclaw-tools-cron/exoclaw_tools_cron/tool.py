@@ -87,6 +87,10 @@ class CronTool(ToolBase):
                     "type": "boolean",
                     "description": "Run without session history (default false — keeps full context)",
                 },
+                "model": {
+                    "type": "string",
+                    "description": "Override the agent's default model for this job's turn (e.g. 'openrouter/google/gemma-4-26b-a4b-it'). Defaults to the agent's main model.",
+                },
             },
             "required": ["action"],
         }
@@ -114,18 +118,23 @@ class CronTool(ToolBase):
         to: str | None = None,
         skills: list[str] | None = None,
         stateless: bool | None = None,
+        model: str | None = None,
         **kwargs: Any,
     ) -> str:
         if action == "add":
             if self._in_cron_context.get():
                 return "Error: cannot schedule new jobs from within a cron job execution"
-            return await self._add_job(message, every_seconds, cron_expr, tz, at, skills, stateless)
+            return await self._add_job(
+                message, every_seconds, cron_expr, tz, at, skills, stateless, model
+            )
         elif action == "list":
             return await self._list_jobs()
         elif action == "remove":
             return await self._remove_job(job_id)
         elif action == "update":
-            return await self._update_job(job_id, message or None, deliver, to, skills, stateless)
+            return await self._update_job(
+                job_id, message or None, deliver, to, skills, stateless, model
+            )
         elif action == "enable":
             return await self._enable_job(job_id, enabled=True)
         elif action == "disable":
@@ -141,6 +150,7 @@ class CronTool(ToolBase):
         at: str | None,
         skills: list[str] | None = None,
         stateless: bool | None = None,
+        model: str | None = None,
     ) -> str:
         if not message:
             return "Error: message is required for add"
@@ -185,6 +195,7 @@ class CronTool(ToolBase):
             delete_after_run=delete_after,
             skills=skills,
             stateless=stateless or False,
+            model=model,
         )
         return f"Created job '{job.name}' (id: {job.id})"
 
@@ -203,11 +214,18 @@ class CronTool(ToolBase):
         to: str | None,
         skills: list[str] | None,
         stateless: bool | None = None,
+        model: str | None = None,
     ) -> str:
         if not job_id:
             return "Error: job_id is required for update"
         job = await self._backend.update(
-            job_id, message=message, deliver=deliver, to=to, skills=skills, stateless=stateless
+            job_id,
+            message=message,
+            deliver=deliver,
+            to=to,
+            skills=skills,
+            stateless=stateless,
+            model=model,
         )
         if job:
             return f"Updated job {job_id}"

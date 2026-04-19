@@ -633,6 +633,78 @@ class TestCreate:
             "this causes history to accumulate across runs."
         )
 
+    async def test_cron_job_model_override_passed_to_process_direct(self) -> None:
+        """When payload.model is set, the cron dispatch must forward it to
+        process_direct so the override reaches the provider call.
+        """
+        fake_bus = MagicMock()
+        fake_bus.publish_inbound = AsyncMock()
+        fake_bus.publish_outbound = AsyncMock()
+
+        fake_loop = MagicMock()
+        fake_loop.run = AsyncMock()
+        fake_loop.process_direct = AsyncMock(return_value="Done.")
+
+        on_job = await self._get_on_cron_job(fake_bus, fake_loop)
+        assert on_job is not None
+
+        job = CronJob(
+            id="model-test",
+            name="model-job",
+            schedule=CronSchedule(kind="every", every_ms=3600000),
+            payload=CronPayload(
+                message="summarize my day",
+                channel="telegram",
+                to="123",
+                deliver=False,
+                model="openrouter/google/gemma-4-26b-a4b-it",
+            ),
+            state=CronJobState(),
+        )
+
+        await on_job(job)
+
+        fake_loop.process_direct.assert_called_once()
+        call = fake_loop.process_direct.call_args
+        assert call.kwargs.get("model") == "openrouter/google/gemma-4-26b-a4b-it", (
+            f"Expected model=openrouter/google/gemma-4-26b-a4b-it to reach process_direct, "
+            f"got call args: {call}"
+        )
+
+    async def test_cron_job_without_model_passes_none(self) -> None:
+        """When payload.model is unset, process_direct receives model=None
+        so the loop falls back to its default.
+        """
+        fake_bus = MagicMock()
+        fake_bus.publish_inbound = AsyncMock()
+        fake_bus.publish_outbound = AsyncMock()
+
+        fake_loop = MagicMock()
+        fake_loop.run = AsyncMock()
+        fake_loop.process_direct = AsyncMock(return_value="Done.")
+
+        on_job = await self._get_on_cron_job(fake_bus, fake_loop)
+        assert on_job is not None
+
+        job = CronJob(
+            id="default-model-test",
+            name="default-model-job",
+            schedule=CronSchedule(kind="every", every_ms=3600000),
+            payload=CronPayload(
+                message="use the default",
+                channel="telegram",
+                to="123",
+                deliver=False,
+            ),
+            state=CronJobState(),
+        )
+
+        await on_job(job)
+
+        fake_loop.process_direct.assert_called_once()
+        call = fake_loop.process_direct.call_args
+        assert call.kwargs.get("model") is None
+
     async def test_create_loads_config_from_path(self, tmp_path: object) -> None:
         import json as _json
         from pathlib import Path as _Path
