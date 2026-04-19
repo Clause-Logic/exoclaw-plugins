@@ -24,6 +24,24 @@ class TestConfigDefaults:
         cfg.agents.subagent_allowed_models = ["haiku", "nano"]
         assert cfg.agents.subagent_allowed_models == ["haiku", "nano"]
 
+    def test_models_empty_by_default(self) -> None:
+        cfg = Config()
+        assert cfg.agents.models == {}
+
+    def test_models_per_model_max_concurrent(self) -> None:
+        cfg = Config.model_validate(
+            {"agents": {"models": {"anthropic/claude-opus-4-5": {"max_concurrent": 3}}}}
+        )
+        assert cfg.agents.models["anthropic/claude-opus-4-5"].max_concurrent == 3
+
+    def test_models_max_concurrent_defaults_to_zero(self) -> None:
+        cfg = Config.model_validate({"agents": {"models": {"gpt-4o": {}}}})
+        assert cfg.agents.models["gpt-4o"].max_concurrent == 0
+
+    def test_models_accepts_camel_case(self) -> None:
+        cfg = Config.model_validate({"agents": {"models": {"gpt-4o": {"maxConcurrent": 2}}}})
+        assert cfg.agents.models["gpt-4o"].max_concurrent == 2
+
     def test_workspace_path_expanded(self) -> None:
         cfg = Config()
         path = cfg.workspace_path

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -476,3 +477,78 @@ class TestLiteLLMProviderExtra:
         sent_msgs = mock.call_args[1]["messages"]
         sys_msg = next(m for m in sent_msgs if m["role"] == "system")
         assert isinstance(sys_msg["content"], str)
+
+
+class TestModelConcurrency:
+    def test_init_builds_semaphores(self) -> None:
+        p = LiteLLMProvider(model_max_concurrent={"gpt-4o": 2, "claude": 5})
+        assert set(p._model_semaphores) == {"gpt-4o", "claude"}
+
+    def test_init_skips_non_positive(self) -> None:
+        p = LiteLLMProvider(model_max_concurrent={"a": 0, "b": -1, "c": 3})
+        assert set(p._model_semaphores) == {"c"}
+
+    def test_init_no_semaphores_by_default(self) -> None:
+        assert LiteLLMProvider()._model_semaphores == {}
+
+    async def test_chat_limits_concurrency_for_configured_model(self) -> None:
+        p = LiteLLMProvider(model_max_concurrent={"gpt-4o": 2})
+        in_flight = 0
+        peak = 0
+        gate = asyncio.Event()
+
+        async def fake_acompletion(**_: Any) -> Any:
+            nonlocal in_flight, peak
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await gate.wait()
+            in_flight -= 1
+            return _make_litellm_response("ok")
+
+        with patch(
+            "exoclaw_provider_litellm.provider.acompletion",
+            side_effect=fake_acompletion,
+        ):
+            tasks = [
+                asyncio.create_task(p.chat([{"role": "user", "content": "hi"}], model="gpt-4o"))
+                for _ in range(5)
+            ]
+            # Yield enough times for the first wave to reach the gate.
+            for _ in range(10):
+                await asyncio.sleep(0)
+            gate.set()
+            await asyncio.gather(*tasks)
+
+        assert peak == 2
+
+    async def test_chat_unlimited_for_unconfigured_model(self) -> None:
+        p = LiteLLMProvider(model_max_concurrent={"gpt-4o": 1})
+        in_flight = 0
+        peak = 0
+        gate = asyncio.Event()
+
+        async def fake_acompletion(**_: Any) -> Any:
+            nonlocal in_flight, peak
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await gate.wait()
+            in_flight -= 1
+            return _make_litellm_response("ok")
+
+        with patch(
+            "exoclaw_provider_litellm.provider.acompletion",
+            side_effect=fake_acompletion,
+        ):
+            tasks = [
+                asyncio.create_task(
+                    p.chat([{"role": "user", "content": "hi"}], model="claude-opus-4-5")
+                )
+                for _ in range(4)
+            ]
+            for _ in range(10):
+                await asyncio.sleep(0)
+            observed_peak = peak
+            gate.set()
+            await asyncio.gather(*tasks)
+
+        assert observed_peak == 4

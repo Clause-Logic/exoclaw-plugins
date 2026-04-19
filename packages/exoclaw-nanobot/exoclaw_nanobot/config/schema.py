@@ -238,6 +238,11 @@ class AgentDefaults(Base):
     loop_detection: LoopDetectionDefaults = Field(default_factory=LoopDetectionDefaults)
 
 
+class ModelConfig(Base):
+    # 0 (the default) means unlimited concurrency for this model.
+    max_concurrent: int = 0
+
+
 class AgentsConfig(Base):
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
     # Optional allowlist of models the agent may request when spawning a
@@ -245,6 +250,9 @@ class AgentsConfig(Base):
     # subagents inherit the main model. When non-empty, the list is
     # advertised in the spawn tool schema and unlisted models are rejected.
     subagent_allowed_models: list[str] = Field(default_factory=list)
+    # Per-model settings keyed by the exact model name used in requests
+    # (e.g. "anthropic/claude-opus-4-5"). Models not listed use provider defaults.
+    models: dict[str, ModelConfig] = Field(default_factory=dict)
 
 
 class ProviderConfig(Base):
