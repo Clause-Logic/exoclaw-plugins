@@ -253,6 +253,13 @@ class AgentsConfig(Base):
     # subagents inherit the main model. When non-empty, the list is
     # advertised in the spawn tool schema and unlisted models are rejected.
     subagent_allowed_models: list[str] = Field(default_factory=list)
+    # Cap on simultaneously-executing subagents. ``None`` (default) is
+    # unbounded. Set this when subagent fan-out would otherwise blow the
+    # container's memory cap — each active subagent holds its prompt,
+    # tool-result buffers, and an in-flight LLM HTTP call (~1–10 MB
+    # each). Forwarded to the spawner factory so the underlying backend
+    # (DBOS queue, asyncio semaphore, etc.) enforces the cap natively.
+    subagent_max_concurrent: int | None = None
     # Per-model settings keyed by the exact model name used in requests
     # (e.g. "anthropic/claude-opus-4-5"). Models not listed use provider defaults.
     models: dict[str, ModelConfig] = Field(default_factory=dict)
