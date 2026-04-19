@@ -227,13 +227,18 @@ class SubagentManager:
                 # build_prompt loads the tail of prior subagents' turns
                 # as "history" and the child mimics whatever pattern
                 # was in that shared tail.
+                #
+                # Channel/chat_id stay on the parent's origin so
+                # ToolContext-consuming tools (cron job scheduling,
+                # nested SpawnTool announcements, etc.) still route
+                # deliveries back to the originating conversation.
                 parent_session = session_key or f"{origin_channel}:{origin_chat_id}"
                 child_session = f"subagent:{parent_session}:{task_id}"
                 result = await loop.process_direct(
                     task,
                     session_key=child_session,
-                    channel="subagent",
-                    chat_id=task_id,
+                    channel=origin_channel,
+                    chat_id=origin_chat_id,
                     **kwargs,
                 )
             except Exception as e:
