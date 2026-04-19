@@ -164,7 +164,73 @@ class TestRun:
         with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop):
             await mgr._run("t1", "do task", "do task", "cli", "user1", "cli:user1", None)
 
-        mock_loop.process_direct.assert_called_once_with("do task")
+        mock_loop.process_direct.assert_called_once()
+        args, kwargs = mock_loop.process_direct.call_args
+        assert args == ("do task",)
+        assert kwargs["session_key"] == "subagent:cli:user1:t1"
+        # Origin channel/chat_id flow through so ToolContext-consuming
+        # tools (cron, nested spawn) still route deliveries back to the
+        # originating conversation.
+        assert kwargs["channel"] == "cli"
+        assert kwargs["chat_id"] == "user1"
+
+    async def test_run_isolates_child_session_from_parent(self) -> None:
+        """Every child gets its own on-disk session derived from the
+        parent's session_key and the task_id. Two spawns from the same
+        parent must not share a session key — otherwise build_prompt
+        would load sibling-subagent history as the child's context.
+        """
+        bus = _make_bus()
+        mgr = _make_manager(bus=bus)
+
+        mock_loop = MagicMock()
+        mock_loop.process_direct = AsyncMock(return_value="done")
+
+        with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop):
+            await mgr._run("t1", "a", "a", "telegram", "chat99", "telegram:chat99", None)
+            await mgr._run("t2", "b", "b", "telegram", "chat99", "telegram:chat99", None)
+
+        first_key = mock_loop.process_direct.call_args_list[0].kwargs["session_key"]
+        second_key = mock_loop.process_direct.call_args_list[1].kwargs["session_key"]
+        assert first_key == "subagent:telegram:chat99:t1"
+        assert second_key == "subagent:telegram:chat99:t2"
+        assert first_key != second_key
+
+    async def test_run_preserves_origin_channel_and_chat_id(self) -> None:
+        """Child inherits parent's channel/chat_id. ToolContext-consuming
+        tools (cron scheduling, nested SpawnTool) read those fields for
+        delivery routing; if we pass anything else, cron jobs scheduled
+        from a subagent land at a dead destination instead of the real
+        user conversation.
+        """
+        bus = _make_bus()
+        mgr = _make_manager(bus=bus)
+
+        mock_loop = MagicMock()
+        mock_loop.process_direct = AsyncMock(return_value="done")
+
+        with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop):
+            await mgr._run("t1", "task", "label", "telegram", "chat99", "telegram:chat99", None)
+
+        kwargs = mock_loop.process_direct.call_args.kwargs
+        assert kwargs["channel"] == "telegram"
+        assert kwargs["chat_id"] == "chat99"
+
+    async def test_run_falls_back_when_parent_session_key_missing(self) -> None:
+        """If the parent didn't supply a session_key, derive one from
+        channel:chat_id so the child still gets a unique on-disk session.
+        """
+        bus = _make_bus()
+        mgr = _make_manager(bus=bus)
+
+        mock_loop = MagicMock()
+        mock_loop.process_direct = AsyncMock(return_value="done")
+
+        with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop):
+            await mgr._run("t1", "do task", "label", "cli", "user1", None, None)
+
+        kwargs = mock_loop.process_direct.call_args.kwargs
+        assert kwargs["session_key"] == "subagent:cli:user1:t1"
 
     async def test_run_announces_result(self) -> None:
         bus = _make_bus()
@@ -596,7 +662,7 @@ class TestBatch:
 
         call_count = 0
 
-        async def mock_process(task: str) -> str:
+        async def mock_process(task: str, **_kwargs: object) -> str:
             nonlocal call_count
             call_count += 1
             if call_count == 2:

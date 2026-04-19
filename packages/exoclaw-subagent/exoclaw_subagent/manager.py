@@ -220,7 +220,27 @@ class SubagentManager:
                 kwargs: dict = {}
                 if skills is not None:
                     kwargs["skills"] = skills
-                result = await loop.process_direct(task, **kwargs)
+                # Isolate the child's on-disk conversation. Without an
+                # explicit session_key, every child falls through to
+                # process_direct's ``cli:direct`` default and
+                # reads/writes the same JSONL as every sibling, so
+                # build_prompt loads the tail of prior subagents' turns
+                # as "history" and the child mimics whatever pattern
+                # was in that shared tail.
+                #
+                # Channel/chat_id stay on the parent's origin so
+                # ToolContext-consuming tools (cron job scheduling,
+                # nested SpawnTool announcements, etc.) still route
+                # deliveries back to the originating conversation.
+                parent_session = session_key or f"{origin_channel}:{origin_chat_id}"
+                child_session = f"subagent:{parent_session}:{task_id}"
+                result = await loop.process_direct(
+                    task,
+                    session_key=child_session,
+                    channel=origin_channel,
+                    chat_id=origin_chat_id,
+                    **kwargs,
+                )
             except Exception as e:
                 result = f"Error: {e}"
                 status = "failed"
