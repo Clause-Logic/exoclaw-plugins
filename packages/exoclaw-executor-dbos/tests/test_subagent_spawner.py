@@ -297,3 +297,100 @@ class TestDBOSSubagentSpawner:
         )
         assert observed_ids[-1] == "parentB"
         assert observed_roots[-1] == "rootA"
+
+
+@pytest.mark.asyncio(loop_scope="session")
+class TestDBOSSubagentSpawnerConcurrencyCap:
+    async def test_no_queue_registered_by_default(self, dbos_instance: Any) -> None:
+        """Without ``max_concurrent``, no queue is attached — dispatch
+        falls through to ``DBOS.start_workflow_async`` so the new code
+        path is fully opt-in."""
+        from exoclaw_executor_dbos.executor import _queue_registry
+        from exoclaw_executor_dbos.subagent import SUBAGENT_WORKFLOW_KEY, DBOSSubagentSpawner
+
+        async def noop_runner(**kwargs: Any) -> None:
+            return None
+
+        DBOSSubagentSpawner(noop_runner)  # max_concurrent defaults to None
+
+        assert SUBAGENT_WORKFLOW_KEY not in _queue_registry
+
+    async def test_max_concurrent_registers_queue(self, dbos_instance: Any) -> None:
+        """With ``max_concurrent=N``, the spawner owns a ``DBOS.Queue``
+        and registers it under the subagent workflow key so intent
+        dispatch routes through ``queue.enqueue_async``."""
+        from dbos import Queue
+        from exoclaw_executor_dbos.executor import _queue_registry
+        from exoclaw_executor_dbos.subagent import SUBAGENT_WORKFLOW_KEY, DBOSSubagentSpawner
+
+        async def noop_runner(**kwargs: Any) -> None:
+            return None
+
+        spawner = DBOSSubagentSpawner(noop_runner, max_concurrent=2)
+        try:
+            registered = _queue_registry.get(SUBAGENT_WORKFLOW_KEY)
+            assert registered is not None
+            assert isinstance(registered, Queue)
+            assert registered is spawner._queue
+        finally:
+            # Cleanup so other tests don't see a stale queue registration.
+            DBOSSubagentSpawner(noop_runner, max_concurrent=None)
+
+    async def test_reconstruction_without_cap_clears_stale_registration(
+        self, dbos_instance: Any
+    ) -> None:
+        """If a capped spawner is replaced by an uncapped one in the same
+        process, the stale queue registration is removed. Important for
+        tests and config reloads that re-init the manager."""
+        from exoclaw_executor_dbos.executor import _queue_registry
+        from exoclaw_executor_dbos.subagent import SUBAGENT_WORKFLOW_KEY, DBOSSubagentSpawner
+
+        async def noop_runner(**kwargs: Any) -> None:
+            return None
+
+        DBOSSubagentSpawner(noop_runner, max_concurrent=2)
+        assert SUBAGENT_WORKFLOW_KEY in _queue_registry
+
+        DBOSSubagentSpawner(noop_runner, max_concurrent=None)
+        assert SUBAGENT_WORKFLOW_KEY not in _queue_registry
+
+    async def test_rejects_invalid_max_concurrent(self, dbos_instance: Any) -> None:
+        """Zero or negative caps are rejected at construction — DBOS's own
+        ``Queue(concurrency=0)`` would create a queue that silently never
+        runs anything."""
+        import pytest
+        from exoclaw_executor_dbos.subagent import DBOSSubagentSpawner
+
+        async def noop_runner(**kwargs: Any) -> None:
+            return None
+
+        with pytest.raises(ValueError, match=">= 1 or None"):
+            DBOSSubagentSpawner(noop_runner, max_concurrent=0)
+        with pytest.raises(ValueError, match=">= 1 or None"):
+            DBOSSubagentSpawner(noop_runner, max_concurrent=-5)
+
+    async def test_rejects_mismatched_concurrency_after_first_declare(
+        self, dbos_instance: Any
+    ) -> None:
+        """DBOS ``Queue`` caps are fixed at first declaration — silently
+        ignoring a later different value would mask misconfigurations.
+        Raise so operators notice and restart to apply the new cap."""
+        import pytest
+        from exoclaw_executor_dbos.subagent import DBOSSubagentSpawner
+
+        async def noop_runner(**kwargs: Any) -> None:
+            return None
+
+        # Seed the cache with concurrency=2 (shared value across this
+        # test class — DBOS's queue registration is process-global and
+        # can't be torn down between tests).
+        DBOSSubagentSpawner(noop_runner, max_concurrent=2)
+
+        with pytest.raises(RuntimeError, match="fixed at first declaration"):
+            DBOSSubagentSpawner(noop_runner, max_concurrent=99)
+
+        # Re-declaring with the same value is fine (idempotent).
+        DBOSSubagentSpawner(noop_runner, max_concurrent=2)
+
+        # Reset registration so subsequent tests aren't affected.
+        DBOSSubagentSpawner(noop_runner, max_concurrent=None)

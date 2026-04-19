@@ -121,10 +121,21 @@ class AsyncioSpawner:
     Appropriate for CLI/one-shot use and for host apps that don't need
     crash-recovery of in-flight subagents. Durable hosts should inject a
     backend-specific spawner factory via ``SubagentManager(spawner_factory=…)``.
+
+    ``max_concurrent`` caps how many spawned subagents run concurrently.
+    ``start()`` always returns a handle immediately; subagents beyond the
+    cap wait inside their own task body (on an ``asyncio.Semaphore``)
+    before the runner executes. ``None`` means unbounded — preserves the
+    pre-cap behavior.
     """
 
-    def __init__(self, runner: Runner) -> None:
+    def __init__(self, runner: Runner, max_concurrent: int | None = None) -> None:
+        if max_concurrent is not None and max_concurrent < 1:
+            raise ValueError(f"max_concurrent must be >= 1 or None, got {max_concurrent!r}")
         self._runner = runner
+        self._semaphore: asyncio.Semaphore | None = (
+            asyncio.Semaphore(max_concurrent) if max_concurrent is not None else None
+        )
 
     async def start(
         self,
@@ -141,21 +152,30 @@ class AsyncioSpawner:
         parent_turn_chain: str | None = None,
         parent_turn_id: str | None = None,
     ) -> SubagentHandle:
-        bg_task: asyncio.Task[None] = asyncio.create_task(
-            self._runner(
-                task_id=task_id,
-                task=task,
-                label=label,
-                origin_channel=origin_channel,
-                origin_chat_id=origin_chat_id,
-                session_key=session_key,
-                batch=batch,
-                skills=skills,
-                model=model,
-                parent_turn_chain=parent_turn_chain,
-                parent_turn_id=parent_turn_id,
-            )
-        )
+        semaphore = self._semaphore
+        runner = self._runner
+        kwargs = {
+            "task_id": task_id,
+            "task": task,
+            "label": label,
+            "origin_channel": origin_channel,
+            "origin_chat_id": origin_chat_id,
+            "session_key": session_key,
+            "batch": batch,
+            "skills": skills,
+            "model": model,
+            "parent_turn_chain": parent_turn_chain,
+            "parent_turn_id": parent_turn_id,
+        }
+
+        async def _gated() -> None:
+            if semaphore is None:
+                await runner(**kwargs)
+                return
+            async with semaphore:
+                await runner(**kwargs)
+
+        bg_task: asyncio.Task[None] = asyncio.create_task(_gated())
         return _AsyncioHandle(task_id, bg_task)
 
 
