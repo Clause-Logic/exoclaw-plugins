@@ -208,6 +208,9 @@ async def create(
         api_base=config.get_api_base(model),
         default_model=model,
         extra_headers=prov.extra_headers if prov else None,
+        model_max_concurrent={
+            name: cfg.max_concurrent for name, cfg in config.agents.models.items()
+        },
     )
 
     bus = MessageBus()

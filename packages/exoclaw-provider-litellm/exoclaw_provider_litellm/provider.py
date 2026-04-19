@@ -1,6 +1,7 @@
 """LiteLLM provider implementation for exoclaw."""
 
 import asyncio
+import contextlib
 import hashlib
 import os
 import secrets
@@ -174,6 +175,7 @@ class LiteLLMProvider:
         extra_headers: dict[str, str] | None = None,
         stream: bool = False,
         stream_ttft_timeout: float = 15.0,
+        model_max_concurrent: dict[str, int] | None = None,
     ):
         self.api_key = api_key
         self.api_base = api_base
@@ -181,6 +183,11 @@ class LiteLLMProvider:
         self.extra_headers = extra_headers or {}
         self._stream = stream
         self._stream_ttft_timeout = stream_ttft_timeout
+        self._model_semaphores: dict[str, asyncio.Semaphore] = {
+            model: asyncio.Semaphore(n)
+            for model, n in (model_max_concurrent or {}).items()
+            if n > 0
+        }
 
         if api_key and api_base:
             # Custom / gateway endpoint — set as OpenAI-compatible
@@ -302,12 +309,14 @@ class LiteLLMProvider:
                 logger.info("llm_request_msg", **{"message.role": role, "message.text": text})
 
         try:
+            sem = self._model_semaphores.get(resolved_model)
             t0 = time.monotonic()
 
-            if self._stream:
-                response = await self._stream_to_completion(kwargs)
-            else:
-                response = await acompletion(**kwargs)
+            async with sem if sem else contextlib.nullcontext():
+                if self._stream:
+                    response = await self._stream_to_completion(kwargs)
+                else:
+                    response = await acompletion(**kwargs)
 
             elapsed = time.monotonic() - t0
 
