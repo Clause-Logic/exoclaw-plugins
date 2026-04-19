@@ -124,6 +124,7 @@ class CronService:
                                 to=j["payload"].get("to"),
                                 skills=j["payload"].get("skills", []),
                                 stateless=j["payload"].get("stateless", False),
+                                model=j["payload"].get("model"),
                             ),
                             state=CronJobState(
                                 next_run_at_ms=j.get("state", {}).get("nextRunAtMs"),
@@ -174,6 +175,7 @@ class CronService:
                         "to": j.payload.to,
                         "skills": j.payload.skills,
                         "stateless": j.payload.stateless,
+                        "model": j.payload.model,
                     },
                     "state": {
                         "nextRunAtMs": j.state.next_run_at_ms,
@@ -322,6 +324,7 @@ class CronService:
         delete_after_run: bool = False,
         skills: list[str] | None = None,
         stateless: bool = False,
+        model: str | None = None,
     ) -> CronJob:
         """Add a new job."""
         store = self._load_store()
@@ -341,6 +344,7 @@ class CronService:
                 to=to,
                 skills=skills or [],
                 stateless=stateless,
+                model=model,
             ),
             state=CronJobState(next_run_at_ms=_compute_next_run(schedule, now)),
             created_at_ms=now,
@@ -378,6 +382,7 @@ class CronService:
         to: str | None = None,
         skills: list[str] | None = None,
         stateless: bool | None = None,
+        model: str | None = None,
         schedule: CronSchedule | None = None,
     ) -> CronJob | None:
         """Update fields on an existing job."""
@@ -397,6 +402,8 @@ class CronService:
                     job.payload.skills = skills
                 if stateless is not None:
                     job.payload.stateless = stateless
+                if model is not None:
+                    job.payload.model = model
                 if schedule is not None:
                     _validate_schedule_for_add(schedule)
                     job.schedule = schedule
@@ -472,6 +479,7 @@ class LocalCronBackend:
         delete_after_run: bool = False,
         skills: list[str] | None = None,
         stateless: bool = False,
+        model: str | None = None,
     ) -> CronJob:
         return self._svc.add_job(
             name=name,
@@ -483,6 +491,7 @@ class LocalCronBackend:
             delete_after_run=delete_after_run,
             skills=skills,
             stateless=stateless,
+            model=model,
         )
 
     async def list_jobs(self, *, include_disabled: bool = False) -> list[CronJob]:
@@ -502,6 +511,7 @@ class LocalCronBackend:
         to: str | None = None,
         skills: list[str] | None = None,
         stateless: bool | None = None,
+        model: str | None = None,
     ) -> CronJob | None:
         return self._svc.update_job(
             job_id,
@@ -512,6 +522,7 @@ class LocalCronBackend:
             to=to,
             skills=skills,
             stateless=stateless,
+            model=model,
         )
 
     async def remove(self, job_id: str) -> bool:

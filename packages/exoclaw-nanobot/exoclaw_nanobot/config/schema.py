@@ -166,6 +166,9 @@ class IpcRouteConfig(Base):
     skills: list[str] = Field(default_factory=list)
     script: str | None = None
     script_timeout: int = 30
+    # Override the agent's default model for turns dispatched by this route
+    # (None = inherit). Only applies when handler == "agent".
+    model: str | None = None
 
 
 class IpcHttpConfig(Base):

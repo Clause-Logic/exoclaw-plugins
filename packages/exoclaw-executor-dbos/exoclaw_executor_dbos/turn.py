@@ -39,11 +39,16 @@ async def run_durable_turn(
     chat_id: str = "",
     media: list[str] | None = None,
     plugin_context: list[str] | None = None,
+    model: str | None = None,
 ) -> tuple[str | None, list[dict[str, Any]]]:
     """Run one full agent turn as a durable DBOS workflow.
 
     Delegates to AgentLoop._process_turn_inline(), which calls build_prompt,
     _run_agent_loop (with durable chat/tool steps), and record.
+
+    ``model`` overrides the loop's default model for this turn; ``None``
+    inherits. The override is part of the workflow argument set so replays
+    on crash recovery reuse the same model.
 
     If the process restarts, DBOS replays completed steps and continues.
     Returns ``(final_content, new_messages)``.
@@ -62,4 +67,5 @@ async def run_durable_turn(
         media=media,
         plugin_context=plugin_context,
         on_progress=on_progress,
+        model=model,
     )

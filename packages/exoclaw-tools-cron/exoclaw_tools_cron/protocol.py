@@ -29,6 +29,7 @@ class CronBackend(Protocol):
         delete_after_run: bool = False,
         skills: list[str] | None = None,
         stateless: bool = False,
+        model: str | None = None,
     ) -> CronJob: ...
 
     async def list_jobs(self, *, include_disabled: bool = False) -> list[CronJob]: ...
@@ -46,6 +47,7 @@ class CronBackend(Protocol):
         to: str | None = None,
         skills: list[str] | None = None,
         stateless: bool | None = None,
+        model: str | None = None,
     ) -> CronJob | None: ...
 
     async def remove(self, job_id: str) -> bool: ...

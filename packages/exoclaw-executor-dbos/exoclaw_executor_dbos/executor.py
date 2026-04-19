@@ -290,6 +290,7 @@ class DBOSExecutor:
         media: list[str] | None = None,
         plugin_context: list[str] | None = None,
         on_progress: Any = None,
+        model: str | None = None,
         **kwargs: Any,
     ) -> tuple[str | None, list[dict[str, Any]]]:
         """Run a full agent turn inside a DBOS workflow.
@@ -316,6 +317,7 @@ class DBOSExecutor:
                 chat_id=chat_id or "",
                 media=media,
                 plugin_context=plugin_context,
+                model=model,
             )
 
     async def run_hook(
