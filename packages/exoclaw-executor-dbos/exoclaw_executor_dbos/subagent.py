@@ -166,8 +166,10 @@ register_intent_workflow(SUBAGENT_WORKFLOW_KEY, _subagent_workflow)
 # spawner may be reconstructed (config reloads, tests) so we cache the
 # queue object here and reuse it across reconstructions. Concurrency is
 # fixed at first-declare; changing the cap requires a process restart —
-# document that as a limitation of the underlying primitive.
+# we remember the first cap and raise on any subsequent mismatch so
+# misconfigurations fail loudly instead of silently ignoring the new value.
 _cached_queue: Queue | None = None
+_cached_queue_concurrency: int | None = None
 
 
 class DBOSSubagentSpawner:
@@ -195,12 +197,24 @@ class DBOSSubagentSpawner:
     """
 
     def __init__(self, runner: Runner, max_concurrent: int | None = None) -> None:
-        global _active_runner, _cached_queue
+        global _active_runner, _cached_queue, _cached_queue_concurrency
+        if max_concurrent is not None and max_concurrent < 1:
+            raise ValueError(f"max_concurrent must be >= 1 or None, got {max_concurrent!r}")
         _active_runner = runner
         self._queue: Queue | None = None
         if max_concurrent is not None:
             if _cached_queue is None:
                 _cached_queue = Queue(SUBAGENT_QUEUE_NAME, concurrency=max_concurrent)
+                _cached_queue_concurrency = max_concurrent
+            elif _cached_queue_concurrency != max_concurrent:
+                raise RuntimeError(
+                    f"DBOSSubagentSpawner already declared queue "
+                    f"{SUBAGENT_QUEUE_NAME!r} with concurrency="
+                    f"{_cached_queue_concurrency}; cannot rebind to "
+                    f"concurrency={max_concurrent} — DBOS queue caps are "
+                    f"fixed at first declaration. Restart the process to "
+                    f"change the cap."
+                )
             self._queue = _cached_queue
             register_intent_queue(SUBAGENT_WORKFLOW_KEY, self._queue)
         else:

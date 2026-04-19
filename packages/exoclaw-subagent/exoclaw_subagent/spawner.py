@@ -130,6 +130,8 @@ class AsyncioSpawner:
     """
 
     def __init__(self, runner: Runner, max_concurrent: int | None = None) -> None:
+        if max_concurrent is not None and max_concurrent < 1:
+            raise ValueError(f"max_concurrent must be >= 1 or None, got {max_concurrent!r}")
         self._runner = runner
         self._semaphore: asyncio.Semaphore | None = (
             asyncio.Semaphore(max_concurrent) if max_concurrent is not None else None

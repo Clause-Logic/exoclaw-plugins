@@ -842,6 +842,20 @@ class TestAsyncioSpawnerConcurrency:
             await h.wait()
         assert peak == 3  # capped throughout, not just at start
 
+    async def test_rejects_invalid_max_concurrent(self) -> None:
+        """Zero or negative caps are nonsense — reject at construction time
+        rather than blocking all subagents forever on Semaphore(0)."""
+        import pytest
+        from exoclaw_subagent.spawner import AsyncioSpawner
+
+        async def noop(**kwargs: object) -> None:
+            return None
+
+        with pytest.raises(ValueError, match=">= 1 or None"):
+            AsyncioSpawner(noop, max_concurrent=0)
+        with pytest.raises(ValueError, match=">= 1 or None"):
+            AsyncioSpawner(noop, max_concurrent=-3)
+
     async def test_start_returns_immediately_even_when_cap_hit(self) -> None:
         """``start()`` always returns a handle fast. The wait-for-a-slot
         happens inside the task body, not inside ``start()``."""

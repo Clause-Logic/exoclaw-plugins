@@ -348,8 +348,49 @@ class TestDBOSSubagentSpawnerConcurrencyCap:
         async def noop_runner(**kwargs: Any) -> None:
             return None
 
-        DBOSSubagentSpawner(noop_runner, max_concurrent=4)
+        DBOSSubagentSpawner(noop_runner, max_concurrent=2)
         assert SUBAGENT_WORKFLOW_KEY in _queue_registry
 
         DBOSSubagentSpawner(noop_runner, max_concurrent=None)
         assert SUBAGENT_WORKFLOW_KEY not in _queue_registry
+
+    async def test_rejects_invalid_max_concurrent(self, dbos_instance: Any) -> None:
+        """Zero or negative caps are rejected at construction — DBOS's own
+        ``Queue(concurrency=0)`` would create a queue that silently never
+        runs anything."""
+        import pytest
+        from exoclaw_executor_dbos.subagent import DBOSSubagentSpawner
+
+        async def noop_runner(**kwargs: Any) -> None:
+            return None
+
+        with pytest.raises(ValueError, match=">= 1 or None"):
+            DBOSSubagentSpawner(noop_runner, max_concurrent=0)
+        with pytest.raises(ValueError, match=">= 1 or None"):
+            DBOSSubagentSpawner(noop_runner, max_concurrent=-5)
+
+    async def test_rejects_mismatched_concurrency_after_first_declare(
+        self, dbos_instance: Any
+    ) -> None:
+        """DBOS ``Queue`` caps are fixed at first declaration — silently
+        ignoring a later different value would mask misconfigurations.
+        Raise so operators notice and restart to apply the new cap."""
+        import pytest
+        from exoclaw_executor_dbos.subagent import DBOSSubagentSpawner
+
+        async def noop_runner(**kwargs: Any) -> None:
+            return None
+
+        # Seed the cache with concurrency=2 (shared value across this
+        # test class — DBOS's queue registration is process-global and
+        # can't be torn down between tests).
+        DBOSSubagentSpawner(noop_runner, max_concurrent=2)
+
+        with pytest.raises(RuntimeError, match="fixed at first declaration"):
+            DBOSSubagentSpawner(noop_runner, max_concurrent=99)
+
+        # Re-declaring with the same value is fine (idempotent).
+        DBOSSubagentSpawner(noop_runner, max_concurrent=2)
+
+        # Reset registration so subsequent tests aren't affected.
+        DBOSSubagentSpawner(noop_runner, max_concurrent=None)
