@@ -149,6 +149,12 @@ class DBOSExecutor:
     across concurrent workflows.
     """
 
+    # Signals to AgentLoop._process_message that the executor will publish
+    # the final reply to the bus from inside the workflow. When True and
+    # the caller opted in via ``publish_response=True``, _process_message
+    # returns None so _dispatch doesn't double-publish.
+    handles_response_send: bool = True
+
     def __init__(self) -> None:
         # Per-turn message buffer. Mirrors DirectExecutor — the buffer
         # lives for one turn and does not need to be durable across DBOS
@@ -291,6 +297,7 @@ class DBOSExecutor:
         plugin_context: list[str] | None = None,
         on_progress: Any = None,
         model: str | None = None,
+        publish_response: bool = False,
         **kwargs: Any,
     ) -> tuple[str | None, list[dict[str, Any]]]:
         """Run a full agent turn inside a DBOS workflow.
@@ -298,6 +305,11 @@ class DBOSExecutor:
         Called by AgentLoop.process_turn() when the executor provides this
         method. Sets the loop context (for crash recovery) and wraps the
         turn in a @DBOS.workflow() so it is recoverable on restart.
+
+        When ``publish_response`` is True the workflow also publishes the
+        final reply to the bus via a durable step, so the send survives
+        OOM kills mid-turn. Callers who read the returned content
+        directly (e.g. ``process_direct`` for subagents) leave it False.
         """
         from .turn import run_durable_turn, set_loop_context
 
@@ -318,6 +330,7 @@ class DBOSExecutor:
                 media=media,
                 plugin_context=plugin_context,
                 model=model,
+                publish_response=publish_response,
             )
 
     async def run_hook(

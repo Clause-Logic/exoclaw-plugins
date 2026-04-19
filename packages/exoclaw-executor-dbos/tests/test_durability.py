@@ -188,6 +188,70 @@ class TestDurability:
             "second turn id was re-minted on replay — DBOS step journal not honored"
         )
 
+    async def test_publish_outbound_step_replayed_on_recovery(self, dbos_instance: Any) -> None:
+        """``_publish_outbound_step`` is a @DBOS.step, so on recovery DBOS
+        replays the journaled completion without calling ``bus.publish_outbound``
+        a second time. This is what makes the final reply send survive a
+        container restart mid-turn."""
+        from dbos._schemas.system_database import SystemSchema
+        from exoclaw_executor_dbos import turn as turn_mod
+        from exoclaw_executor_dbos.turn import _publish_outbound_step
+
+        fake_loop = MagicMock()
+        fake_loop.bus.publish_outbound = AsyncMock()
+        prior_loop = turn_mod._loop
+        turn_mod._loop = fake_loop
+        try:
+
+            @DBOS.workflow()
+            async def single_publish_workflow() -> None:
+                await _publish_outbound_step(
+                    session_id="sess1",
+                    channel="cli",
+                    chat_id="main",
+                    content="final reply",
+                )
+
+            wfid = str(uuid.uuid4())
+            with SetWorkflowID(wfid):
+                await single_publish_workflow()
+
+            assert fake_loop.bus.publish_outbound.await_count == 1
+            call_args = fake_loop.bus.publish_outbound.await_args
+            assert call_args is not None
+            sent = call_args[0][0]
+            assert sent.content == "final reply"
+            assert sent.channel == "cli"
+            assert sent.chat_id == "main"
+
+            # Force workflow back to PENDING and recover.
+            with dbos_instance._sys_db.engine.begin() as conn:
+                conn.execute(
+                    sa.update(SystemSchema.workflow_status)
+                    .values({"status": "PENDING"})
+                    .where(SystemSchema.workflow_status.c.workflow_uuid == wfid)
+                )
+
+            handles = DBOS._recover_pending_workflows()
+            assert len(handles) == 1
+            handles[0].get_result()
+
+            # Step was replayed from the journal — bus.publish_outbound
+            # must NOT have been called a second time.
+            assert fake_loop.bus.publish_outbound.await_count == 1, (
+                "publish_outbound was called on replay — step journal not honored"
+            )
+        finally:
+            turn_mod._loop = prior_loop
+
+    async def test_executor_advertises_handles_response_send(self) -> None:
+        """``DBOSExecutor`` tells the core it will own the publish so
+        ``_process_message`` returns None and the outer agent loop skips
+        the non-workflow publish path."""
+        from exoclaw_executor_dbos.executor import DBOSExecutor
+
+        assert DBOSExecutor.handles_response_send is True
+
     async def test_dbos_executor_mint_turn_id_returns_uuid7(self, dbos_instance: Any) -> None:
         """``DBOSExecutor.mint_turn_id`` (the public entrypoint exoclaw's
         ``_process_turn_inline`` calls) must return a uuidv7 string when
