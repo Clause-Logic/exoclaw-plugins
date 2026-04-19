@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from contextlib import AsyncExitStack
+from functools import partial
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -272,6 +273,13 @@ async def create(
     _skill_pkgs = config.skills.packages or None
     # Pass the tools list by reference — it's mutated in-place below (MCP, extra_tools),
     # so subagents will have the full tool set when they actually run.
+    spawner_factory: Any = DBOSSubagentSpawner
+    if config.agents.subagent_max_concurrent is not None:
+        spawner_factory = partial(
+            DBOSSubagentSpawner,
+            max_concurrent=config.agents.subagent_max_concurrent,
+        )
+
     subagent_mgr = SubagentManager(
         provider=provider,
         bus=bus,
@@ -288,7 +296,7 @@ async def create(
         # Route subagents through DBOS child workflows so concurrent spawns
         # can't race into the parent's step journal (see 2026-04-13 Feed
         # curator incident).
-        spawner_factory=DBOSSubagentSpawner,
+        spawner_factory=spawner_factory,
     )
     spawn_tool = SpawnTool(
         manager=subagent_mgr,

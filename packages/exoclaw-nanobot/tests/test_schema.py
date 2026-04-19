@@ -42,6 +42,18 @@ class TestConfigDefaults:
         cfg = Config.model_validate({"agents": {"models": {"gpt-4o": {"maxConcurrent": 2}}}})
         assert cfg.agents.models["gpt-4o"].max_concurrent == 2
 
+    def test_subagent_max_concurrent_unbounded_by_default(self) -> None:
+        cfg = Config()
+        assert cfg.agents.subagent_max_concurrent is None
+
+    def test_subagent_max_concurrent_accepts_int(self) -> None:
+        cfg = Config.model_validate({"agents": {"subagent_max_concurrent": 8}})
+        assert cfg.agents.subagent_max_concurrent == 8
+
+    def test_subagent_max_concurrent_accepts_camel_case(self) -> None:
+        cfg = Config.model_validate({"agents": {"subagentMaxConcurrent": 4}})
+        assert cfg.agents.subagent_max_concurrent == 4
+
     def test_workspace_path_expanded(self) -> None:
         cfg = Config()
         path = cfg.workspace_path
