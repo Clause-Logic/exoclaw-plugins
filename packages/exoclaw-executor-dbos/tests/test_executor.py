@@ -88,6 +88,57 @@ class TestDBOSExecutorProtocol:
         loaded.clear()
         assert len(executor.load_messages()) == 2
 
+    def test_two_instances_isolate_messages(self) -> None:
+        """Two DBOSExecutors in the same task must not share a buffer.
+
+        The ContextVar is keyed to ``id(self)`` exactly for this — a
+        module-level var would make a second executor reset the first
+        when tests (or any caller) happen to construct both in one task.
+        """
+        a = DBOSExecutor()
+        b = DBOSExecutor()
+        a.set_messages([{"role": "user", "content": "a"}])
+        b.set_messages([{"role": "user", "content": "b"}])
+        assert [m["content"] for m in a.load_messages()] == ["a"]
+        assert [m["content"] for m in b.load_messages()] == ["b"]
+
+    async def test_concurrent_turns_isolate_messages(self) -> None:
+        """Concurrent turns on the same executor must not leak messages.
+
+        Regression for the cross-session contamination where a periodic
+        background turn running concurrently with a user-initiated turn
+        trampled the shared ``_messages`` list, the peer's LLM inherited
+        the wrong context, and each turn's final ``record()`` wrote the
+        merged transcript into the wrong session JSONL.
+
+        Each ``asyncio.Task`` inherits a snapshot of the current context
+        at creation, so per-task ContextVar bindings stay isolated.
+        """
+        import asyncio
+
+        executor = DBOSExecutor()
+        entered = asyncio.Event()
+        proceed = asyncio.Event()
+
+        async def turn(label: str, out: dict[str, list[dict[str, object]]]) -> None:
+            executor.set_messages([{"role": "user", "content": f"{label}:user"}])
+            entered.set()
+            await proceed.wait()
+            executor.append_messages([{"role": "assistant", "content": f"{label}:asst"}])
+            out[label] = executor.load_messages()
+
+        results: dict[str, list[dict[str, object]]] = {}
+        t1 = asyncio.create_task(turn("a", results))
+        await entered.wait()
+        entered.clear()
+        t2 = asyncio.create_task(turn("b", results))
+        await entered.wait()
+        proceed.set()
+        await asyncio.gather(t1, t2)
+
+        assert [m["content"] for m in results["a"]] == ["a:user", "a:asst"]
+        assert [m["content"] for m in results["b"]] == ["b:user", "b:asst"]
+
 
 class TestWorkflowIDUniqueness:
     def test_workflow_id_format(self) -> None:
