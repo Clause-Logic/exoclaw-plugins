@@ -165,6 +165,13 @@ class LiteLLMProvider:
 
     Supports OpenRouter, Anthropic, OpenAI, Gemini, and many other providers
     through a unified interface.
+
+    When a ``router`` is supplied, chat requests are dispatched through
+    ``litellm.Router`` — model names are resolved against the router's
+    ``model_list`` as group aliases and the router handles provider
+    selection, fallbacks, retries, and cooldowns. Without a router the
+    provider falls back to calling ``litellm.acompletion`` directly, which
+    is the single-deployment path.
     """
 
     def __init__(
@@ -176,6 +183,7 @@ class LiteLLMProvider:
         stream: bool = False,
         stream_ttft_timeout: float = 15.0,
         model_max_concurrent: dict[str, int] | None = None,
+        router: "litellm.Router | None" = None,
     ):
         self.api_key = api_key
         self.api_base = api_base
@@ -183,6 +191,7 @@ class LiteLLMProvider:
         self.extra_headers = extra_headers or {}
         self._stream = stream
         self._stream_ttft_timeout = stream_ttft_timeout
+        self._router = router
         self._model_semaphores: dict[str, asyncio.Semaphore] = {
             model: asyncio.Semaphore(n)
             for model, n in (model_max_concurrent or {}).items()
@@ -315,6 +324,17 @@ class LiteLLMProvider:
             async with sem if sem else contextlib.nullcontext():
                 if self._stream:
                     response = await self._stream_to_completion(kwargs)
+                elif self._router is not None:
+                    # Router owns api_key / api_base / extra_headers per
+                    # deployment in ``model_list`` — stripping them here
+                    # prevents our single-provider defaults from overriding
+                    # the deployment's own params.
+                    router_kwargs = {
+                        k: v
+                        for k, v in kwargs.items()
+                        if k not in ("api_key", "api_base", "extra_headers")
+                    }
+                    response = await self._router.acompletion(**router_kwargs)
                 else:
                     response = await acompletion(**kwargs)
 
@@ -358,12 +378,21 @@ class LiteLLMProvider:
         Applies a TTFT (time-to-first-token) timeout: if the streaming connection
         isn't established within ``stream_ttft_timeout`` seconds, raises
         ``TimeoutError`` so Temporal can retry on a fresh connection.
+
+        Routes through ``self._router.acompletion`` when a router is configured
+        so streaming inherits the same fallback / cooldown behavior as the
+        non-streaming path.
         """
         kwargs["stream"] = True
+        if self._router is not None:
+            router_kwargs = {
+                k: v for k, v in kwargs.items() if k not in ("api_key", "api_base", "extra_headers")
+            }
+            _call = self._router.acompletion(**router_kwargs)
+        else:
+            _call = acompletion(**kwargs)
         try:
-            stream = await asyncio.wait_for(
-                acompletion(**kwargs), timeout=self._stream_ttft_timeout
-            )
+            stream = await asyncio.wait_for(_call, timeout=self._stream_ttft_timeout)
         except asyncio.TimeoutError:
             raise TimeoutError(
                 f"LLM stream: connection not established within {self._stream_ttft_timeout}s (TTFT timeout)"

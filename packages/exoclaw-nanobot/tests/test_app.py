@@ -7,8 +7,8 @@ from contextlib import AsyncExitStack
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from exoclaw_nanobot.app import ExoclawNanobot, create
-from exoclaw_nanobot.config.schema import Config
+from exoclaw_nanobot.app import ExoclawNanobot, _build_router, create
+from exoclaw_nanobot.config.schema import Config, RouterConfig, RouterDeployment
 from exoclaw_tools_cron.types import CronJob, CronJobState, CronPayload, CronSchedule
 
 
@@ -37,6 +37,60 @@ def _make_app(
         heartbeat=heartbeat,
         mcp_stack=mcp_stack,
     )
+
+
+class TestBuildRouter:
+    def test_returns_none_when_empty(self) -> None:
+        """Empty model_list keeps the router off so provider falls back to
+        the single-deployment ``litellm.acompletion`` path."""
+        config = Config()
+        assert config.providers.router.model_list == []
+        assert _build_router(config) is None
+
+    def test_builds_router_from_model_list(self) -> None:
+        config = Config()
+        config.providers.router = RouterConfig(
+            model_list=[
+                RouterDeployment(
+                    model_name="group-a",
+                    litellm_params={"model": "openai/gpt-5", "api_key": "k1"},
+                ),
+                RouterDeployment(
+                    model_name="group-a",
+                    litellm_params={"model": "groq/gpt-5", "api_key": "k2"},
+                ),
+            ],
+            routing_strategy="simple-shuffle",
+            num_retries=3,
+            fallbacks=[{"group-a": ["group-b"]}],
+        )
+        fake_router_cls = MagicMock()
+        with patch.dict("sys.modules", {"litellm": MagicMock(Router=fake_router_cls)}):
+            result = _build_router(config)
+        assert result is fake_router_cls.return_value
+        kwargs = fake_router_cls.call_args.kwargs
+        assert len(kwargs["model_list"]) == 2
+        assert kwargs["model_list"][0]["model_name"] == "group-a"
+        assert kwargs["model_list"][0]["litellm_params"]["model"] == "openai/gpt-5"
+        assert kwargs["routing_strategy"] == "simple-shuffle"
+        assert kwargs["num_retries"] == 3
+        assert kwargs["fallbacks"] == [{"group-a": ["group-b"]}]
+
+    def test_optional_fields_omitted_when_unset(self) -> None:
+        """Leave ``num_retries`` / ``timeout`` / etc. to litellm defaults
+        when the config doesn't override them — don't pass ``None``."""
+        config = Config()
+        config.providers.router = RouterConfig(
+            model_list=[RouterDeployment(model_name="g", litellm_params={"model": "openai/gpt-5"})],
+        )
+        fake_router_cls = MagicMock()
+        with patch.dict("sys.modules", {"litellm": MagicMock(Router=fake_router_cls)}):
+            _build_router(config)
+        kwargs = fake_router_cls.call_args.kwargs
+        assert "num_retries" not in kwargs
+        assert "timeout" not in kwargs
+        assert "cooldown_time" not in kwargs
+        assert "allowed_fails" not in kwargs
 
 
 class TestDispatchOutbound:
