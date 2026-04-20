@@ -185,9 +185,13 @@ class DBOSExecutor:
         # the current context, so each turn's call chain gets an
         # independent binding.
         #
-        # The ContextVar is per-instance (keyed by id(self)) so two
-        # executors constructed in the same task don't share state —
-        # unusual in production but common in tests. The buffer does
+        # This ContextVar is also per-instance because each executor
+        # stores its own ContextVar object on self, so two executors
+        # constructed in the same task do not share state — unusual in
+        # production but common in tests. The ``id(self)`` in the name
+        # only makes the variable more distinctive in debugging /
+        # tracebacks; ContextVars are keyed by object identity, not
+        # name, so the name has no effect on isolation. The buffer does
         # not need to be durable across DBOS recovery because
         # run_durable_turn encapsulates the whole turn.
         self._messages_var: contextvars.ContextVar[list[dict[str, object]]] = (

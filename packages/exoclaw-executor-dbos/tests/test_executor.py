@@ -91,9 +91,10 @@ class TestDBOSExecutorProtocol:
     def test_two_instances_isolate_messages(self) -> None:
         """Two DBOSExecutors in the same task must not share a buffer.
 
-        The ContextVar is keyed to ``id(self)`` exactly for this — a
-        module-level var would make a second executor reset the first
-        when tests (or any caller) happen to construct both in one task.
+        Isolation comes from each executor instance owning its own
+        ContextVar object. A module-level ContextVar would make a
+        second executor reset the first when tests (or any caller)
+        construct both in one task.
         """
         a = DBOSExecutor()
         b = DBOSExecutor()
