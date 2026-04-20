@@ -244,6 +244,12 @@ class AgentDefaults(Base):
 class ModelConfig(Base):
     # 0 (the default) means unlimited concurrency for this model.
     max_concurrent: int = 0
+    # Per-model ``extra_body`` merged into every litellm.acompletion call
+    # for this model. Intended primarily for OpenRouter provider routing
+    # (``{"provider": {"order": [...], "allow_fallbacks": true}}``), but
+    # works with any extra body a provider accepts. Unset (``None``) means
+    # no extra body — the default provider routing applies.
+    extra_body: dict[str, Any] | None = None
 
 
 class AgentsConfig(Base):

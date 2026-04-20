@@ -260,6 +260,9 @@ async def create(
         model_max_concurrent={
             name: cfg.max_concurrent for name, cfg in config.agents.models.items()
         },
+        model_extra_body={
+            name: cfg.extra_body for name, cfg in config.agents.models.items() if cfg.extra_body
+        },
         router=router,
     )
 

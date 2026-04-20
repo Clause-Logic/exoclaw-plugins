@@ -480,6 +480,56 @@ class TestLiteLLMProviderRouter:
         assert "extra_headers" not in kwargs
 
 
+class TestLiteLLMProviderModelExtraBody:
+    """Per-model ``extra_body`` merges the configured dict into every
+    ``litellm.acompletion`` call for that model. Primary use case is
+    OpenRouter provider routing via
+    ``{"provider": {"order": [...], "allow_fallbacks": True}}``."""
+
+    async def test_extra_body_forwarded_when_model_matches(self) -> None:
+        p = LiteLLMProvider(
+            model_extra_body={
+                "openrouter/openai/gpt-oss-120b": {
+                    "provider": {"order": ["Groq", "Cerebras"], "allow_fallbacks": True}
+                }
+            }
+        )
+        with patch("exoclaw_provider_litellm.provider.acompletion", new_callable=AsyncMock) as mock:
+            mock.return_value = _make_litellm_response("ok")
+            await p.chat(
+                [{"role": "user", "content": "hi"}],
+                model="openrouter/openai/gpt-oss-120b",
+            )
+        assert mock.await_args is not None
+        kwargs = mock.await_args.kwargs
+        assert kwargs["extra_body"] == {
+            "provider": {"order": ["Groq", "Cerebras"], "allow_fallbacks": True}
+        }
+
+    async def test_extra_body_omitted_when_model_has_no_entry(self) -> None:
+        p = LiteLLMProvider(
+            model_extra_body={"openrouter/openai/gpt-oss-120b": {"provider": {"order": ["Groq"]}}}
+        )
+        with patch("exoclaw_provider_litellm.provider.acompletion", new_callable=AsyncMock) as mock:
+            mock.return_value = _make_litellm_response("ok")
+            await p.chat(
+                [{"role": "user", "content": "hi"}],
+                model="anthropic/claude-opus-4-5",
+            )
+        assert mock.await_args is not None
+        kwargs = mock.await_args.kwargs
+        assert "extra_body" not in kwargs
+
+    async def test_extra_body_omitted_when_config_is_empty(self) -> None:
+        p = LiteLLMProvider()
+        with patch("exoclaw_provider_litellm.provider.acompletion", new_callable=AsyncMock) as mock:
+            mock.return_value = _make_litellm_response("ok")
+            await p.chat([{"role": "user", "content": "hi"}], model="any-model")
+        assert mock.await_args is not None
+        kwargs = mock.await_args.kwargs
+        assert "extra_body" not in kwargs
+
+
 class TestLiteLLMProviderExtra:
     async def test_chat_no_choices(self) -> None:
         p = LiteLLMProvider()

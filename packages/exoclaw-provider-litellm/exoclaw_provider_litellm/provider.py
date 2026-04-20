@@ -183,6 +183,7 @@ class LiteLLMProvider:
         stream: bool = False,
         stream_ttft_timeout: float = 15.0,
         model_max_concurrent: dict[str, int] | None = None,
+        model_extra_body: dict[str, dict[str, Any]] | None = None,
         router: "litellm.Router | None" = None,
     ):
         self.api_key = api_key
@@ -197,6 +198,12 @@ class LiteLLMProvider:
             for model, n in (model_max_concurrent or {}).items()
             if n > 0
         }
+        # Per-model extra_body merged into each request. The typical use
+        # case is OpenRouter provider routing
+        # (``{"provider": {"order": [...], "allow_fallbacks": True}}``),
+        # but litellm passes the whole dict through so any provider-
+        # specific extension fits here.
+        self._model_extra_body: dict[str, dict[str, Any]] = dict(model_extra_body or {})
 
         if api_key and api_base:
             # Custom / gateway endpoint — set as OpenAI-compatible
@@ -292,6 +299,15 @@ class LiteLLMProvider:
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
+
+        if model_eb := self._model_extra_body.get(resolved_model):
+            # Deep-merge NOT implemented on purpose: the config owns the
+            # whole ``extra_body`` for a given model, so taking the dict
+            # verbatim keeps behavior predictable. If a caller has passed
+            # ``extra_body`` in kwargs (not currently a chat() param but
+            # a future option), we let the caller's dict win per
+            # least-surprise.
+            kwargs.setdefault("extra_body", model_eb)
 
         if is_anthropic:
             kwargs["messages"] = _apply_anthropic_cache_control_to_system(kwargs["messages"])
