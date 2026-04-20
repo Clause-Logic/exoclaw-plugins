@@ -198,6 +198,17 @@ class DBOSExecutor:
             contextvars.ContextVar(f"dbos_executor_messages_{id(self)}")
         )
 
+    def __deepcopy__(self, memo: dict) -> DBOSExecutor:
+        # ContextVar objects are not deep-copyable (TypeError: cannot
+        # pickle '_contextvars.ContextVar'). ``ToolContext.executor``
+        # is a reference to this singleton, and ``execute_tool`` calls
+        # ``dataclasses.asdict(ctx)`` which deep-copies every field as
+        # part of step-argument serialization. Returning self preserves
+        # identity — callers comparing executor references still see
+        # the same object, and no tool result is ever mutated through
+        # the copy.
+        return self
+
     def _get_buffer(self) -> list[dict[str, object]]:
         try:
             return self._messages_var.get()
