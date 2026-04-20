@@ -396,6 +396,7 @@ class TestLiteLLMProviderRouter:
         assert result.content == "via-router"
         mock_acompletion.assert_not_called()
         router.acompletion.assert_awaited_once()
+        assert router.acompletion.await_args is not None
         kwargs = router.acompletion.await_args.kwargs
         assert kwargs["model"] == "some-group"
         assert kwargs["messages"] == [{"role": "user", "content": "hi"}]
@@ -413,6 +414,7 @@ class TestLiteLLMProviderRouter:
             router=router,
         )
         await p.chat([{"role": "user", "content": "hi"}], model="g")
+        assert router.acompletion.await_args is not None
         kwargs = router.acompletion.await_args.kwargs
         assert "api_key" not in kwargs
         assert "api_base" not in kwargs
@@ -425,6 +427,57 @@ class TestLiteLLMProviderRouter:
             result = await p.chat([{"role": "user", "content": "hi"}])
         assert result.content == "direct"
         mock.assert_awaited_once()
+
+    async def test_streaming_uses_router_and_strips_auth(self) -> None:
+        """The streaming path (``_stream_to_completion``) must route through
+        the router when one is configured and must not leak provider-level
+        ``api_key`` / ``api_base`` / ``extra_headers`` into the router call.
+        """
+
+        # ``litellm.stream_chunk_builder`` normally reassembles a chunked
+        # stream into a non-streaming response. Patch it to return a canned
+        # completion so the test doesn't depend on streaming internals.
+        sentinel_chunk = MagicMock()
+
+        async def _fake_stream() -> Any:
+            yield sentinel_chunk
+
+        router = MagicMock()
+        router.acompletion = AsyncMock(return_value=_fake_stream())
+
+        p = LiteLLMProvider(
+            api_key="fallback-key",
+            api_base="https://fallback.example",
+            extra_headers={"X-Fallback": "1"},
+            stream=True,
+            router=router,
+        )
+
+        with (
+            patch(
+                "exoclaw_provider_litellm.provider.acompletion",
+                new_callable=AsyncMock,
+            ) as mock_acompletion,
+            patch(
+                "exoclaw_provider_litellm.provider.litellm.stream_chunk_builder",
+                return_value=_make_litellm_response("streamed"),
+            ),
+        ):
+            result = await p.chat(
+                [{"role": "user", "content": "hi"}],
+                model="some-group",
+            )
+
+        assert result.content == "streamed"
+        mock_acompletion.assert_not_called()
+        router.acompletion.assert_awaited_once()
+        assert router.acompletion.await_args is not None
+        kwargs = router.acompletion.await_args.kwargs
+        assert kwargs["model"] == "some-group"
+        assert kwargs["stream"] is True
+        assert "api_key" not in kwargs
+        assert "api_base" not in kwargs
+        assert "extra_headers" not in kwargs
 
 
 class TestLiteLLMProviderExtra:

@@ -51,10 +51,14 @@ def _build_router(config: Config) -> Any | None:
     ``create()`` stays a one-liner and so the router construction is
     independently testable without spinning up the whole bot.
 
-    Imports litellm lazily — the router is an optional feature and the
-    import has measurable startup cost; don't pay it when it's not used.
+    ``litellm`` itself is already loaded at import time via
+    ``LiteLLMProvider``; we import it inline here only to keep the symbol
+    local to this helper so tests can patch ``sys.modules['litellm']`` in
+    isolation. The real skip-when-unconfigured win is that we don't build
+    a ``Router`` instance (which instantiates per-deployment clients,
+    cooldown trackers, etc.) on bots that don't use one.
     """
-    rc = config.providers.router
+    rc = config.router
     if not rc.model_list:
         return None
     import litellm

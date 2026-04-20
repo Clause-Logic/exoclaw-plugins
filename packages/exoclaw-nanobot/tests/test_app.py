@@ -44,12 +44,12 @@ class TestBuildRouter:
         """Empty model_list keeps the router off so provider falls back to
         the single-deployment ``litellm.acompletion`` path."""
         config = Config()
-        assert config.providers.router.model_list == []
+        assert config.router.model_list == []
         assert _build_router(config) is None
 
     def test_builds_router_from_model_list(self) -> None:
         config = Config()
-        config.providers.router = RouterConfig(
+        config.router = RouterConfig(
             model_list=[
                 RouterDeployment(
                     model_name="group-a",
@@ -68,6 +68,7 @@ class TestBuildRouter:
         with patch.dict("sys.modules", {"litellm": MagicMock(Router=fake_router_cls)}):
             result = _build_router(config)
         assert result is fake_router_cls.return_value
+        assert fake_router_cls.call_args is not None
         kwargs = fake_router_cls.call_args.kwargs
         assert len(kwargs["model_list"]) == 2
         assert kwargs["model_list"][0]["model_name"] == "group-a"
@@ -80,12 +81,13 @@ class TestBuildRouter:
         """Leave ``num_retries`` / ``timeout`` / etc. to litellm defaults
         when the config doesn't override them — don't pass ``None``."""
         config = Config()
-        config.providers.router = RouterConfig(
+        config.router = RouterConfig(
             model_list=[RouterDeployment(model_name="g", litellm_params={"model": "openai/gpt-5"})],
         )
         fake_router_cls = MagicMock()
         with patch.dict("sys.modules", {"litellm": MagicMock(Router=fake_router_cls)}):
             _build_router(config)
+        assert fake_router_cls.call_args is not None
         kwargs = fake_router_cls.call_args.kwargs
         assert "num_retries" not in kwargs
         assert "timeout" not in kwargs

@@ -332,7 +332,6 @@ class ProvidersConfig(Base):
     volcengine: ProviderConfig = Field(default_factory=ProviderConfig)
     openai_codex: ProviderConfig = Field(default_factory=ProviderConfig)
     github_copilot: ProviderConfig = Field(default_factory=ProviderConfig)
-    router: RouterConfig = Field(default_factory=RouterConfig)
 
 
 class HeartbeatConfig(Base):
@@ -391,6 +390,10 @@ class Config(BaseSettings):
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
+    # Top-level — not nested under ``providers`` — so ``_match_provider()``'s
+    # forced-provider path (``getattr(self.providers, forced, None)``) can't
+    # accidentally resolve ``provider=router`` to this config block.
+    router: RouterConfig = Field(default_factory=RouterConfig)
 
     model_config = SettingsConfigDict(env_prefix="NANOBOT_", env_nested_delimiter="__")
 
