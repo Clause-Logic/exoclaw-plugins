@@ -104,7 +104,7 @@ class DefaultConversation:
         media: list[str] | None = None,
         plugin_context: list[str] | None = None,
         turn_context: list[str] | None = None,
-        **kwargs: list[str] | None,
+        **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """Return the full messages list to send to the LLM."""
         # Track turn context for hook firing in record().
@@ -113,6 +113,20 @@ class DefaultConversation:
         self._turn_session_id = session_id
 
         skills: list[str] | None = kwargs.get("skills")
+        # ``isolated`` is an optional bool. Accept only actual booleans so
+        # stringy values (e.g. the literal "false" from a misconfigured
+        # upstream) can't silently enable isolation via Python truthiness —
+        # ``bool("false")`` is True. Anything else is a caller bug; raise
+        # rather than guess.
+        if "isolated" not in kwargs:
+            isolated: bool = False
+        else:
+            isolated_value = kwargs.get("isolated")
+            if isinstance(isolated_value, bool):
+                isolated = isolated_value
+            else:
+                raise TypeError(f"'isolated' must be a bool, got {type(isolated_value).__name__}")
+
         session = self.history.get_or_create(session_id)
 
         unconsolidated = session.total_messages - session.last_consolidated
@@ -126,41 +140,56 @@ class DefaultConversation:
                 "consolidation.active": session_id in self._consolidating,
                 "skill.requested": ",".join(skills) if skills else "",
                 "hook.active": channel == "hook",
+                "isolated": isolated,
             }
         )
 
-        # Trigger background consolidation when policy says so (or default: history is long)
-        should = await self._should_consolidate(session)
-        if should and session_id not in self._consolidating:
-            self._consolidating.add(session_id)
-            lock = self._consolidation_locks.setdefault(session_id, asyncio.Lock())
+        # Skip consolidation entirely in isolated mode — the whole point is
+        # that the caller treats this invocation as a stateless function,
+        # so there's no history worth summarizing.
+        if not isolated:
+            # Trigger background consolidation when policy says so (or default: history is long)
+            should = await self._should_consolidate(session)
+            if should and session_id not in self._consolidating:
+                self._consolidating.add(session_id)
+                lock = self._consolidation_locks.setdefault(session_id, asyncio.Lock())
 
-            async def _consolidate_and_unlock() -> None:
-                try:
-                    async with lock:
-                        success = await self._consolidate_memory(session)
-                        if success:
-                            self.history.save_metadata(session)
-                finally:
-                    self._consolidating.discard(session_id)
-                    _task = asyncio.current_task()
-                    if _task is not None:
-                        self._consolidation_tasks.discard(_task)
+                async def _consolidate_and_unlock() -> None:
+                    try:
+                        async with lock:
+                            success = await self._consolidate_memory(session)
+                            if success:
+                                self.history.save_metadata(session)
+                    finally:
+                        self._consolidating.discard(session_id)
+                        _task = asyncio.current_task()
+                        if _task is not None:
+                            self._consolidation_tasks.discard(_task)
 
-            _task = asyncio.create_task(_consolidate_and_unlock())
-            self._consolidation_tasks.add(_task)
+                _task = asyncio.create_task(_consolidate_and_unlock())
+                self._consolidation_tasks.add(_task)
 
-        history = session.get_history(max_messages=self.memory_window)
+        # Isolated mode skips session history entirely — the LLM sees only
+        # [system(minimal), user(current_message)]. Keeping history would
+        # reintroduce contamination from earlier turns on the same
+        # session_key (e.g. many cron-fired enrichments sharing a key).
+        history: list[dict[str, Any]]
+        if isolated:
+            history = []
+        else:
+            history = session.get_history(max_messages=self.memory_window)
 
         extra_context: str | None = None
         if plugin_context:
             extra_context = "\n\n".join(plugin_context)
 
-        # Inject per-session summary from consolidation policy (if present)
+        # Inject per-session summary from consolidation policy (if present).
+        # Isolated mode skips this too for the same reason — no carryover.
         effective_turn_context = list(turn_context or [])
-        summary = session.metadata.get("summary")
-        if summary:
-            effective_turn_context.insert(0, f"## Previous Session Summary\n{summary}")
+        if not isolated:
+            summary = session.metadata.get("summary")
+            if summary:
+                effective_turn_context.insert(0, f"## Previous Session Summary\n{summary}")
 
         messages = self.prompt.build_messages(
             history=history,
@@ -171,6 +200,7 @@ class DefaultConversation:
             chat_id=chat_id,
             extra_context=extra_context,
             turn_context=effective_turn_context or None,
+            isolated=isolated,
         )
 
         # Bind skill/tool context after build_messages (which resolves active skills/tools)
