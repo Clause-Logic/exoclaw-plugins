@@ -309,6 +309,24 @@ class LiteLLMProvider:
             # least-surprise.
             kwargs.setdefault("extra_body", model_eb)
 
+        # OpenRouter treats the ``user`` field as a conversation-affinity
+        # hint for sticky provider routing — requests with the same user
+        # preferentially route to the provider that served prior calls
+        # so prompt caches stay warm. ``session.key`` is already bound
+        # on structlog contextvars by ``AgentLoop._process_message``
+        # for every turn, and contextvars propagate through asyncio
+        # tasks, so grabbing it here avoids threading a dedicated
+        # parameter down through chat/process_turn/_run_agent_loop.
+        #
+        # Explicit caller override always wins: if chat() gets a future
+        # ``user`` kwarg we would defer to that. For now there is no
+        # such kwarg and we read solely from contextvars.
+        if "user" not in kwargs:
+            ctx = structlog.contextvars.get_contextvars()
+            session_key = ctx.get("session.key")
+            if session_key:
+                kwargs["user"] = str(session_key)
+
         if is_anthropic:
             kwargs["messages"] = _apply_anthropic_cache_control_to_system(kwargs["messages"])
             if "tools" in kwargs:

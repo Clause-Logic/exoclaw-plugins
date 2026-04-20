@@ -530,6 +530,40 @@ class TestLiteLLMProviderModelExtraBody:
         assert "extra_body" not in kwargs
 
 
+class TestLiteLLMProviderSessionUser:
+    """``session.key`` from structlog contextvars is forwarded as OpenRouter's
+    ``user`` field so sticky provider routing can pin conversations to a
+    single provider and keep prompt caches warm."""
+
+    async def test_session_key_forwarded_as_user(self) -> None:
+        import structlog
+
+        p = LiteLLMProvider()
+        structlog.contextvars.bind_contextvars(**{"session.key": "enrich:xyz:1"})
+        try:
+            with patch(
+                "exoclaw_provider_litellm.provider.acompletion", new_callable=AsyncMock
+            ) as mock:
+                mock.return_value = _make_litellm_response("ok")
+                await p.chat([{"role": "user", "content": "hi"}])
+        finally:
+            structlog.contextvars.unbind_contextvars("session.key")
+        assert mock.await_args is not None
+        assert mock.await_args.kwargs["user"] == "enrich:xyz:1"
+
+    async def test_user_omitted_when_no_session_key(self) -> None:
+        import structlog
+
+        p = LiteLLMProvider()
+        # Make sure no stale binding leaks from other tests.
+        structlog.contextvars.unbind_contextvars("session.key")
+        with patch("exoclaw_provider_litellm.provider.acompletion", new_callable=AsyncMock) as mock:
+            mock.return_value = _make_litellm_response("ok")
+            await p.chat([{"role": "user", "content": "hi"}])
+        assert mock.await_args is not None
+        assert "user" not in mock.await_args.kwargs
+
+
 class TestLiteLLMProviderExtra:
     async def test_chat_no_choices(self) -> None:
         p = LiteLLMProvider()
