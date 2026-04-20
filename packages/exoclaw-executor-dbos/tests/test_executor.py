@@ -1,7 +1,9 @@
 """Basic tests for exoclaw-executor-dbos."""
 
+import dataclasses
 import re
 
+from exoclaw.agent.tools.protocol import ToolContext
 from exoclaw.providers.types import LLMResponse, ToolCallRequest
 from exoclaw_executor_dbos.executor import (
     DBOSExecutor,
@@ -102,6 +104,27 @@ class TestDBOSExecutorProtocol:
         b.set_messages([{"role": "user", "content": "b"}])
         assert [m["content"] for m in a.load_messages()] == ["a"]
         assert [m["content"] for m in b.load_messages()] == ["b"]
+
+    def test_deepcopy_through_toolcontext_asdict(self) -> None:
+        """``execute_tool`` calls ``dataclasses.asdict(ctx)`` to serialize
+        step arguments. ``ToolContext.executor`` references the executor
+        singleton, and asdict's internal deep-copy chokes on the
+        ``ContextVar`` instance attribute unless ``__deepcopy__`` is
+        overridden.
+
+        Regression for: every tool call from an ``/agent/call``-initiated
+        turn raised ``TypeError: cannot pickle '_contextvars.ContextVar'``
+        after the per-instance-ContextVar refactor landed.
+        """
+        executor = DBOSExecutor()
+        ctx = ToolContext(
+            session_key="test:deepcopy",
+            channel="ipc",
+            chat_id="x",
+            executor=executor,
+        )
+        data = dataclasses.asdict(ctx)  # must not raise
+        assert data["session_key"] == "test:deepcopy"
 
     async def test_concurrent_turns_isolate_messages(self) -> None:
         """Concurrent turns on the same executor must not leak messages.
