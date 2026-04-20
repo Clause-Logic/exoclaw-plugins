@@ -177,19 +177,45 @@ class DBOSExecutor:
     handles_response_send: bool = True
 
     def __init__(self) -> None:
-        # Per-turn message buffer. Mirrors DirectExecutor — the buffer
-        # lives for one turn and does not need to be durable across DBOS
-        # recovery because run_durable_turn encapsulates the whole turn.
-        self._messages: list[dict[str, object]] = []
+        # Per-turn message buffer, backed by a ContextVar. The executor
+        # itself is a process-wide singleton wired at app startup; the
+        # ContextVar keeps concurrent turns (e.g. a periodic background
+        # task firing while a user-initiated turn is still running)
+        # from trampling each other's list. asyncio.create_task() snapshots
+        # the current context, so each turn's call chain gets an
+        # independent binding.
+        #
+        # This ContextVar is also per-instance because each executor
+        # stores its own ContextVar object on self, so two executors
+        # constructed in the same task do not share state — unusual in
+        # production but common in tests. The ``id(self)`` in the name
+        # only makes the variable more distinctive in debugging /
+        # tracebacks; ContextVars are keyed by object identity, not
+        # name, so the name has no effect on isolation. The buffer does
+        # not need to be durable across DBOS recovery because
+        # run_durable_turn encapsulates the whole turn.
+        self._messages_var: contextvars.ContextVar[list[dict[str, object]]] = (
+            contextvars.ContextVar(f"dbos_executor_messages_{id(self)}")
+        )
+
+    def _get_buffer(self) -> list[dict[str, object]]:
+        try:
+            return self._messages_var.get()
+        except LookupError:
+            buf: list[dict[str, object]] = []
+            self._messages_var.set(buf)
+            return buf
 
     def append_messages(self, messages: list[dict[str, object]]) -> None:
-        self._messages.extend(messages)
+        self._get_buffer().extend(messages)
 
     def load_messages(self) -> list[dict[str, object]]:
-        return list(self._messages)
+        return list(self._get_buffer())
 
     def set_messages(self, messages: list[dict[str, object]]) -> None:
-        self._messages = list(messages)
+        # Fresh list per call — peer tasks that already captured a
+        # reference via load_messages() must not observe later mutations.
+        self._messages_var.set(list(messages))
 
     async def chat(
         self,
