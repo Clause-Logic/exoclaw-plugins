@@ -129,8 +129,39 @@ class ContextBuilder:
         self,
         skill_names: list[str] | None = None,
         extra_context: str | None = None,
+        isolated: bool = False,
     ) -> str:
-        """Build the system prompt from identity, bootstrap files, memory, and skills."""
+        """Build the system prompt from identity, bootstrap files, memory, and skills.
+
+        ``isolated=True`` returns a minimal prompt containing only the
+        active skills' content (with a short functional preamble). It
+        skips identity, bootstrap files (AGENTS.md / SOUL.md / USER.md /
+        TOOLS.md / IDENTITY.md), long-term memory, bootstrap hooks, and
+        the skills summary. The goal is "one call, one job" — use this
+        when the caller is a deterministic script invoking the agent as
+        a pure function (e.g. per-item feed enrichment). With the
+        persona / memory / skill-menu removed, small open-weight models
+        like gpt-oss stop contradicting the skill's directives under the
+        weight of the broader bot context.
+        """
+        always_skills = self.skills.get_always_skills()
+        extra_skills = [s for s in (skill_names or []) if s not in always_skills]
+        active_skills = always_skills + extra_skills
+        self._active_optional_tools = self.skills.get_tools_for_skills(active_skills)
+
+        if isolated:
+            parts: list[str] = [
+                "You are a worker. Follow the instructions below exactly. "
+                "Do not invoke capabilities not explicitly requested."
+            ]
+            if active_skills:
+                active_content = self.skills.load_skills_for_context(active_skills)
+                if active_content:
+                    parts.append(active_content)
+            if extra_context:
+                parts.append(f"# Retrieved Context\n\n{extra_context}")
+            return "\n\n---\n\n".join(parts)
+
         parts = [self._get_identity()]
 
         bootstrap = self._load_bootstrap_files()
@@ -144,10 +175,6 @@ class ContextBuilder:
         if extra_context:
             parts.append(f"# Retrieved Context\n\n{extra_context}")
 
-        always_skills = self.skills.get_always_skills()
-        extra_skills = [s for s in (skill_names or []) if s not in always_skills]
-        active_skills = always_skills + extra_skills
-        self._active_optional_tools = self.skills.get_tools_for_skills(active_skills)
         if active_skills:
             active_content = self.skills.load_skills_for_context(active_skills)
             if active_content:
@@ -240,10 +267,17 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         chat_id: str | None = None,
         extra_context: str | None = None,
         turn_context: list[str] | None = None,
+        isolated: bool = False,
     ) -> list[dict[str, Any]]:
-        """Build the complete message list for an LLM call."""
-        runtime_ctx = self._build_runtime_context(channel, chat_id)
+        """Build the complete message list for an LLM call.
 
+        ``isolated=True`` strips session history and the runtime-context
+        prefix so the LLM sees only ``[system, user]`` — a pure-function
+        invocation without persona/memory/history carryover. The caller
+        (typically a deterministic orchestrator hitting ``/agent/call``)
+        is responsible for putting everything the model needs into
+        ``current_message``.
+        """
         # Prepend turn_context to the user message so the system prompt stays
         # stable across turns and benefits from prompt caching. Unlike
         # plugin_context (which goes into the system prompt via extra_context),
@@ -256,19 +290,29 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
 
         user_content = self._build_user_content(effective_message, media)
 
-        # Merge runtime context and user content into a single user message
-        # to avoid consecutive same-role messages that some providers reject.
-        if isinstance(user_content, str):
-            merged: str | list[dict[str, Any]] = f"{runtime_ctx}\n\n{user_content}"
+        if isolated:
+            merged: str | list[dict[str, Any]] = user_content
+            effective_history: list[dict[str, Any]] = []
         else:
-            merged = [{"type": "text", "text": runtime_ctx}] + user_content
+            runtime_ctx = self._build_runtime_context(channel, chat_id)
+            # Merge runtime context and user content into a single user message
+            # to avoid consecutive same-role messages that some providers reject.
+            if isinstance(user_content, str):
+                merged = f"{runtime_ctx}\n\n{user_content}"
+            else:
+                merged = [{"type": "text", "text": runtime_ctx}] + user_content
+            effective_history = history
 
         messages = [
             {
                 "role": "system",
-                "content": self.build_system_prompt(skill_names, extra_context=extra_context),
+                "content": self.build_system_prompt(
+                    skill_names,
+                    extra_context=extra_context,
+                    isolated=isolated,
+                ),
             },
-            *history,
+            *effective_history,
             {"role": "user", "content": merged},
         ]
 

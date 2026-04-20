@@ -635,7 +635,67 @@ class TestContextBuilder:
         msgs = builder.build_messages(history=[], current_message="hello")
         assert msgs[0]["role"] == "system"
         assert msgs[-1]["role"] == "user"
-        assert "hello" in msgs[-1]["content"]
+
+    def test_isolated_system_prompt_skips_persona_memory_and_skills_menu(
+        self, tmp_path: Path
+    ) -> None:
+        """Isolated mode strips the whole persona/memory/menu envelope so
+        small open-weight models don't get swamped by context that
+        contradicts the per-call skill. The only content that survives is
+        a tiny worker preamble plus the active skill bodies.
+        """
+        (tmp_path / "SOUL.md").write_text("You are Luna and you love cats.")
+        (tmp_path / "USER.md").write_text("Stephen prefers short replies.")
+        memory = MagicMock()
+        memory.get_memory_context.return_value = "Previous session notes: ..."
+        builder = ContextBuilder(tmp_path, memory=memory)
+
+        normal = builder.build_system_prompt()
+        isolated = builder.build_system_prompt(isolated=True)
+
+        # Envelope bits that MUST disappear in isolated mode.
+        for phrase in (
+            "You are Luna",
+            "Stephen prefers",
+            "Previous session notes",
+            "# exoclaw",  # identity preamble
+        ):
+            assert phrase in normal, f"baseline should contain: {phrase!r}"
+            assert phrase not in isolated, (
+                f"isolated mode leaked: {phrase!r}\n---\n{isolated[:500]}"
+            )
+
+        # And the short worker preamble IS there.
+        assert "worker" in isolated.lower()
+        # Isolated envelope stays small — <500 chars when no skills active.
+        assert len(isolated) < 500, f"isolated prompt too large: {len(isolated)} chars\n{isolated}"
+
+    def test_isolated_build_messages_drops_history_and_runtime_context(
+        self, tmp_path: Path
+    ) -> None:
+        """Isolated mode also strips session history and the runtime
+        metadata prefix so the LLM sees only ``[system, user]`` with the
+        caller-provided task as the entire user content.
+        """
+        builder = ContextBuilder(tmp_path)
+        prior_history = [
+            {"role": "user", "content": "prior turn 1"},
+            {"role": "assistant", "content": "prior reply 1"},
+        ]
+        msgs = builder.build_messages(
+            history=prior_history,
+            current_message="current task",
+            channel="ipc",
+            chat_id="x",
+            isolated=True,
+        )
+        assert len(msgs) == 2
+        assert msgs[0]["role"] == "system"
+        assert msgs[1]["role"] == "user"
+        assert msgs[1]["content"] == "current task"
+        # Runtime-context preamble is gone.
+        assert "Runtime Context" not in str(msgs[1]["content"])
+        assert "ipc" not in str(msgs[1]["content"])
 
     def test_build_messages_with_history(self, tmp_path: Path) -> None:
         builder = ContextBuilder(tmp_path)

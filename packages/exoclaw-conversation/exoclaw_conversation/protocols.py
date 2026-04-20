@@ -103,6 +103,7 @@ class PromptBuilder(Protocol):
         chat_id: str | None = None,
         extra_context: str | None = None,
         turn_context: list[str] | None = None,
+        isolated: bool = False,
     ) -> list[dict[str, Any]]: ...
 
     def get_active_optional_tools(self) -> set[str]:
