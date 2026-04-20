@@ -594,14 +594,14 @@ wheels = [
 
 [[package]]
 name = "exoclaw"
-version = "0.17.0"
+version = "0.18.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "structlog" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/66/6c/0795d6b45a287c751c32ace13d927b9d5214ef61236519b70196419d9c63/exoclaw-0.17.0.tar.gz", hash = "sha256:2edc8dd36a4cf09d999ef788f0aae8e5db17d27969580bb86f0ff81f8e26d708", size = 28275, upload-time = "2026-04-19T20:02:15.467Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/76/86/a32f5571ec89a92ab60bc9789f5798fd8fc9b4b1130403b8b34e1dbb6db8/exoclaw-0.18.0.tar.gz", hash = "sha256:d2ee9fdb3b529a0109b7324a60f1093b0d72a843a767a18edb8e51a6f2b95e99", size = 28909, upload-time = "2026-04-20T16:20:14.521Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d1/3e/e5062fca1e5ff20b56b32faba39e81c6afe8f27da4c0f2d5cdd2d2bf67e3/exoclaw-0.17.0-py3-none-any.whl", hash = "sha256:4957308ba30583b28c91045dc3d7655523180ab59411b033de77d305bcac14df", size = 28943, upload-time = "2026-04-19T20:02:14.296Z" },
+    { url = "https://files.pythonhosted.org/packages/17/84/ca43e5ceac7f4996a1d334390897cb9ce48238473defd1ddfb7412aca593/exoclaw-0.18.0-py3-none-any.whl", hash = "sha256:feffa14e8b85b52f5460ddcfa0b1e8c3c172fe7bab53bdb7645ccc0733436983", size = 29652, upload-time = "2026-04-20T16:20:15.259Z" },
 ]
 
 [[package]]
@@ -672,7 +672,7 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-executor-dbos"
-version = "0.10.0"
+version = "0.10.1"
 source = { editable = "packages/exoclaw-executor-dbos" }
 dependencies = [
     { name = "dbos" },
@@ -685,7 +685,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "dbos", specifier = ">=1.0.0" },
-    { name = "exoclaw", specifier = ">=0.17.0" },
+    { name = "exoclaw", specifier = ">=0.18.0" },
     { name = "exoclaw-subagent", editable = "packages/exoclaw-subagent" },
     { name = "structlog", specifier = ">=24.0.0" },
     { name = "uuid-utils", specifier = ">=0.9.0" },
