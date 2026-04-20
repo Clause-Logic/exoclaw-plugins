@@ -133,16 +133,19 @@ class ContextBuilder:
     ) -> str:
         """Build the system prompt from identity, bootstrap files, memory, and skills.
 
-        ``isolated=True`` returns a minimal prompt containing only the
-        active skills' content (with a short functional preamble). It
-        skips identity, bootstrap files (AGENTS.md / SOUL.md / USER.md /
-        TOOLS.md / IDENTITY.md), long-term memory, bootstrap hooks, and
-        the skills summary. The goal is "one call, one job" — use this
-        when the caller is a deterministic script invoking the agent as
-        a pure function (e.g. per-item feed enrichment). With the
-        persona / memory / skill-menu removed, small open-weight models
-        like gpt-oss stop contradicting the skill's directives under the
-        weight of the broader bot context.
+        ``isolated=True`` returns a minimal prompt containing a short
+        functional preamble, the active skills' content, and any
+        caller-provided ``extra_context``. It skips identity, bootstrap
+        files (AGENTS.md / SOUL.md / USER.md / TOOLS.md / IDENTITY.md),
+        long-term memory, bootstrap hooks, and the skills summary. The
+        goal is "one call, one job" — use this when the caller is a
+        deterministic script invoking the agent as a pure function
+        (e.g. per-item feed enrichment). With the persona / memory /
+        skill-menu removed, small open-weight models like gpt-oss stop
+        contradicting the skill's directives under the weight of the
+        broader bot context. ``extra_context`` is preserved because the
+        caller explicitly asked for it — it's turn-volatile data they
+        need the model to see.
         """
         always_skills = self.skills.get_always_skills()
         extra_skills = [s for s in (skill_names or []) if s not in always_skills]
@@ -272,11 +275,14 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         """Build the complete message list for an LLM call.
 
         ``isolated=True`` strips session history and the runtime-context
-        prefix so the LLM sees only ``[system, user]`` — a pure-function
-        invocation without persona/memory/history carryover. The caller
-        (typically a deterministic orchestrator hitting ``/agent/call``)
-        is responsible for putting everything the model needs into
-        ``current_message``.
+        metadata prefix so the LLM sees ``[system, user]`` — a
+        pure-function invocation without persona/memory/history
+        carryover. Any provided ``turn_context`` is still prepended to
+        ``current_message`` inside that user message (it's caller-
+        supplied turn-volatile data, not implicit history), so the
+        caller — typically a deterministic orchestrator hitting
+        ``/agent/call`` — is responsible for putting everything the
+        model needs into ``current_message`` and/or ``turn_context``.
         """
         # Prepend turn_context to the user message so the system prompt stays
         # stable across turns and benefits from prompt caching. Unlike

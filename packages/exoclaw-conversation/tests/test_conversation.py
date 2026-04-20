@@ -635,6 +635,7 @@ class TestContextBuilder:
         msgs = builder.build_messages(history=[], current_message="hello")
         assert msgs[0]["role"] == "system"
         assert msgs[-1]["role"] == "user"
+        assert "hello" in str(msgs[-1]["content"])
 
     def test_isolated_system_prompt_skips_persona_memory_and_skills_menu(
         self, tmp_path: Path
@@ -669,6 +670,30 @@ class TestContextBuilder:
         assert "worker" in isolated.lower()
         # Isolated envelope stays small — <500 chars when no skills active.
         assert len(isolated) < 500, f"isolated prompt too large: {len(isolated)} chars\n{isolated}"
+
+    def test_isolated_preserves_caller_supplied_extra_and_turn_context(
+        self, tmp_path: Path
+    ) -> None:
+        """Isolated mode only strips *implicit* envelope (persona, memory,
+        history). Caller-supplied ``extra_context`` and ``turn_context``
+        are explicit inputs the caller wants the model to see — they
+        must flow through."""
+        builder = ContextBuilder(tmp_path)
+        msgs = builder.build_messages(
+            history=[],
+            current_message="task body",
+            extra_context="retrieved doc X",
+            turn_context=["note A", "note B"],
+            isolated=True,
+        )
+        system = str(msgs[0]["content"])
+        user = str(msgs[-1]["content"])
+        # extra_context ends up in the system prompt.
+        assert "retrieved doc X" in system
+        # turn_context is prepended to the user message (docstring contract).
+        assert "note A" in user
+        assert "note B" in user
+        assert "task body" in user
 
     def test_isolated_build_messages_drops_history_and_runtime_context(
         self, tmp_path: Path
@@ -813,6 +838,30 @@ class TestDefaultConversation:
         await conv.build_prompt("test:1", "hello", plugin_context=["extra"])
         call_kwargs = conv.prompt.build_messages.call_args[1]  # type: ignore[union-attr]
         assert "extra" in call_kwargs["extra_context"]
+
+    async def test_build_prompt_isolated_rejects_non_bool(self) -> None:
+        """``isolated`` must be a real bool — ``bool("false")`` is True, so
+        accepting strings would silently enable isolation on typos. Raise
+        instead so the caller fixes the bug."""
+        import pytest as _pytest
+
+        conv = DefaultConversation(
+            history=_make_mock_history(),
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+        )
+        with _pytest.raises(TypeError, match="'isolated' must be a bool"):
+            await conv.build_prompt("test:1", "hello", isolated="false")
+
+    async def test_build_prompt_isolated_forwarded_to_prompt_builder(self) -> None:
+        conv = DefaultConversation(
+            history=_make_mock_history(),
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+        )
+        await conv.build_prompt("test:1", "hello", isolated=True)
+        call_kwargs = conv.prompt.build_messages.call_args[1]  # type: ignore[union-attr]
+        assert call_kwargs["isolated"] is True
 
     async def test_build_prompt_triggers_consolidation(self) -> None:
         session = Session(key="test:1")

@@ -104,7 +104,7 @@ class DefaultConversation:
         media: list[str] | None = None,
         plugin_context: list[str] | None = None,
         turn_context: list[str] | None = None,
-        **kwargs: list[str] | None,
+        **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """Return the full messages list to send to the LLM."""
         # Track turn context for hook firing in record().
@@ -113,11 +113,19 @@ class DefaultConversation:
         self._turn_session_id = session_id
 
         skills: list[str] | None = kwargs.get("skills")
-        # ``isolated`` is an optional bool — pydantic-style kwargs above are
-        # typed as ``list[str] | None`` but kwargs.get returns whatever the
-        # caller passed. Coerce explicitly so a stray string/None doesn't
-        # silently enable isolation.
-        isolated: bool = bool(kwargs.get("isolated")) if "isolated" in kwargs else False
+        # ``isolated`` is an optional bool. Accept only actual booleans so
+        # stringy values (e.g. the literal "false" from a misconfigured
+        # upstream) can't silently enable isolation via Python truthiness —
+        # ``bool("false")`` is True. Anything else is a caller bug; raise
+        # rather than guess.
+        if "isolated" not in kwargs:
+            isolated: bool = False
+        else:
+            isolated_value = kwargs.get("isolated")
+            if isinstance(isolated_value, bool):
+                isolated = isolated_value
+            else:
+                raise TypeError(f"'isolated' must be a bool, got {type(isolated_value).__name__}")
 
         session = self.history.get_or_create(session_id)
 
