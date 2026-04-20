@@ -376,6 +376,110 @@ class TestLiteLLMProvider:
 # ---------------------------------------------------------------------------
 
 
+class TestLiteLLMProviderRouter:
+    """Router path: when a ``litellm.Router`` is supplied, chat dispatches
+    through ``router.acompletion`` instead of module-level ``acompletion``,
+    and per-provider auth fields are stripped so the router's own
+    deployment params win."""
+
+    async def test_chat_routes_through_router(self) -> None:
+        router = MagicMock()
+        router.acompletion = AsyncMock(return_value=_make_litellm_response("via-router"))
+        p = LiteLLMProvider(router=router)
+        with patch(
+            "exoclaw_provider_litellm.provider.acompletion", new_callable=AsyncMock
+        ) as mock_acompletion:
+            result = await p.chat(
+                [{"role": "user", "content": "hi"}],
+                model="some-group",
+            )
+        assert result.content == "via-router"
+        mock_acompletion.assert_not_called()
+        router.acompletion.assert_awaited_once()
+        assert router.acompletion.await_args is not None
+        kwargs = router.acompletion.await_args.kwargs
+        assert kwargs["model"] == "some-group"
+        assert kwargs["messages"] == [{"role": "user", "content": "hi"}]
+
+    async def test_router_call_strips_provider_defaults(self) -> None:
+        """Router deployments carry their own api_key/api_base. When the
+        provider was constructed with fallback values, they must NOT shadow
+        what the router's ``model_list`` says for a given deployment."""
+        router = MagicMock()
+        router.acompletion = AsyncMock(return_value=_make_litellm_response("ok"))
+        p = LiteLLMProvider(
+            api_key="fallback-key",
+            api_base="https://fallback.example",
+            extra_headers={"X-Fallback": "1"},
+            router=router,
+        )
+        await p.chat([{"role": "user", "content": "hi"}], model="g")
+        assert router.acompletion.await_args is not None
+        kwargs = router.acompletion.await_args.kwargs
+        assert "api_key" not in kwargs
+        assert "api_base" not in kwargs
+        assert "extra_headers" not in kwargs
+
+    async def test_router_absent_falls_back_to_acompletion(self) -> None:
+        p = LiteLLMProvider()
+        with patch("exoclaw_provider_litellm.provider.acompletion", new_callable=AsyncMock) as mock:
+            mock.return_value = _make_litellm_response("direct")
+            result = await p.chat([{"role": "user", "content": "hi"}])
+        assert result.content == "direct"
+        mock.assert_awaited_once()
+
+    async def test_streaming_uses_router_and_strips_auth(self) -> None:
+        """The streaming path (``_stream_to_completion``) must route through
+        the router when one is configured and must not leak provider-level
+        ``api_key`` / ``api_base`` / ``extra_headers`` into the router call.
+        """
+
+        # ``litellm.stream_chunk_builder`` normally reassembles a chunked
+        # stream into a non-streaming response. Patch it to return a canned
+        # completion so the test doesn't depend on streaming internals.
+        sentinel_chunk = MagicMock()
+
+        async def _fake_stream() -> Any:
+            yield sentinel_chunk
+
+        router = MagicMock()
+        router.acompletion = AsyncMock(return_value=_fake_stream())
+
+        p = LiteLLMProvider(
+            api_key="fallback-key",
+            api_base="https://fallback.example",
+            extra_headers={"X-Fallback": "1"},
+            stream=True,
+            router=router,
+        )
+
+        with (
+            patch(
+                "exoclaw_provider_litellm.provider.acompletion",
+                new_callable=AsyncMock,
+            ) as mock_acompletion,
+            patch(
+                "exoclaw_provider_litellm.provider.litellm.stream_chunk_builder",
+                return_value=_make_litellm_response("streamed"),
+            ),
+        ):
+            result = await p.chat(
+                [{"role": "user", "content": "hi"}],
+                model="some-group",
+            )
+
+        assert result.content == "streamed"
+        mock_acompletion.assert_not_called()
+        router.acompletion.assert_awaited_once()
+        assert router.acompletion.await_args is not None
+        kwargs = router.acompletion.await_args.kwargs
+        assert kwargs["model"] == "some-group"
+        assert kwargs["stream"] is True
+        assert "api_key" not in kwargs
+        assert "api_base" not in kwargs
+        assert "extra_headers" not in kwargs
+
+
 class TestLiteLLMProviderExtra:
     async def test_chat_no_choices(self) -> None:
         p = LiteLLMProvider()

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -271,6 +271,48 @@ class ProviderConfig(Base):
     extra_headers: dict[str, str] | None = None
 
 
+class RouterDeployment(Base):
+    """One backing deployment behind a model-group alias.
+
+    ``model_name`` is the group alias that callers reference (e.g. the
+    model string an agent uses — ``openrouter/openai/gpt-oss-120b``).
+    ``litellm_params`` is the dict passed to ``litellm.acompletion`` for
+    this specific deployment — must at minimum contain ``model`` (the
+    actual provider/model identifier, like ``groq/openai/gpt-oss-120b``)
+    and typically ``api_key`` and optionally ``api_base``.
+
+    Multiple deployments can share a ``model_name`` — that's how
+    provider fallback is expressed: the router shuffles across them
+    using the configured ``routing_strategy`` and, on failure, moves on
+    to the next.
+    """
+
+    model_name: str
+    litellm_params: dict[str, Any] = Field(default_factory=dict)
+
+
+class RouterConfig(Base):
+    """Config for ``litellm.Router``.
+
+    Empty ``model_list`` means the router is disabled and the provider
+    falls back to the single-deployment ``litellm.acompletion`` path
+    (using the ``providers`` config for api_key/api_base).
+
+    Field names and semantics match ``litellm.Router`` 1:1 so users can
+    reason about behavior by reading the litellm docs directly.
+    """
+
+    model_list: list[RouterDeployment] = Field(default_factory=list)
+    routing_strategy: str = "simple-shuffle"
+    # Each entry is ``{"group-A": ["group-B", "group-C"]}`` — when a call
+    # to group-A fails, router retries against group-B then group-C.
+    fallbacks: list[dict[str, list[str]]] = Field(default_factory=list)
+    num_retries: int | None = None
+    timeout: float | None = None
+    cooldown_time: float | None = None
+    allowed_fails: int | None = None
+
+
 class ProvidersConfig(Base):
     custom: ProviderConfig = Field(default_factory=ProviderConfig)
     azure_openai: ProviderConfig = Field(default_factory=ProviderConfig)
@@ -348,6 +390,10 @@ class Config(BaseSettings):
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
+    # Top-level — not nested under ``providers`` — so ``_match_provider()``'s
+    # forced-provider path (``getattr(self.providers, forced, None)``) can't
+    # accidentally resolve ``provider=router`` to this config block.
+    router: RouterConfig = Field(default_factory=RouterConfig)
 
     model_config = SettingsConfigDict(env_prefix="NANOBOT_", env_nested_delimiter="__")
 

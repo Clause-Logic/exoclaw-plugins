@@ -44,6 +44,53 @@ from exoclaw_nanobot.config.loader import load_config
 from exoclaw_nanobot.config.schema import Config
 from exoclaw_nanobot.load_skill_tool import LoadSkillTool
 
+
+def _build_router(config: Config) -> Any | None:
+    """Construct a ``litellm.Router`` from config, or return ``None`` when
+    unconfigured. Kept as a module-level helper so the provider wiring in
+    ``create()`` stays a one-liner and so the router construction is
+    independently testable without spinning up the whole bot.
+
+    ``litellm`` itself is already loaded at import time via
+    ``LiteLLMProvider``; we import it inline here only to keep the symbol
+    local to this helper so tests can patch ``sys.modules['litellm']`` in
+    isolation. The real skip-when-unconfigured win is that we don't build
+    a ``Router`` instance (which instantiates per-deployment clients,
+    cooldown trackers, etc.) on bots that don't use one.
+    """
+    rc = config.router
+    if not rc.model_list:
+        return None
+    import litellm
+
+    kwargs: dict[str, Any] = {
+        "model_list": [d.model_dump() for d in rc.model_list],
+        "routing_strategy": rc.routing_strategy,
+    }
+    if rc.fallbacks:
+        kwargs["fallbacks"] = rc.fallbacks
+    if rc.num_retries is not None:
+        kwargs["num_retries"] = rc.num_retries
+    if rc.timeout is not None:
+        kwargs["timeout"] = rc.timeout
+    if rc.cooldown_time is not None:
+        kwargs["cooldown_time"] = rc.cooldown_time
+    if rc.allowed_fails is not None:
+        kwargs["allowed_fails"] = rc.allowed_fails
+    router = litellm.Router(**kwargs)
+    groups = sorted({d.model_name for d in rc.model_list})
+    logger.info(
+        "litellm_router_built",
+        **{
+            "router.deployment.count": len(rc.model_list),
+            "router.group.count": len(groups),
+            "router.groups": ",".join(groups),
+            "router.strategy": rc.routing_strategy,
+        },
+    )
+    return router
+
+
 logger = structlog.get_logger()
 
 
@@ -204,6 +251,7 @@ async def create(
 
     model = config.agents.defaults.model
     prov = config.get_provider(model)
+    router = _build_router(config)
     provider = LiteLLMProvider(
         api_key=prov.api_key or None if prov else None,
         api_base=config.get_api_base(model),
@@ -212,6 +260,7 @@ async def create(
         model_max_concurrent={
             name: cfg.max_concurrent for name, cfg in config.agents.models.items()
         },
+        router=router,
     )
 
     bus = MessageBus()
