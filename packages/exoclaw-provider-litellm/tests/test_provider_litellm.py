@@ -531,11 +531,14 @@ class TestLiteLLMProviderModelExtraBody:
 
 
 class TestLiteLLMProviderSessionUser:
-    """``session.key`` from structlog contextvars is forwarded as OpenRouter's
-    ``user`` field so sticky provider routing can pin conversations to a
-    single provider and keep prompt caches warm."""
+    """``session.key`` from structlog contextvars is forwarded as the ``user``
+    field inside ``extra_body``. OpenRouter reads it as a sticky-routing
+    affinity hint. We use ``extra_body`` because ``litellm.acompletion``
+    strips top-level ``user=`` for OpenRouter (verified empirically:
+    top-level → ``external_user: null`` in OpenRouter logs;
+    ``extra_body.user`` → field populated)."""
 
-    async def test_session_key_forwarded_as_user(self) -> None:
+    async def test_session_key_forwarded_as_extra_body_user(self) -> None:
         import structlog
 
         p = LiteLLMProvider()
@@ -549,7 +552,8 @@ class TestLiteLLMProviderSessionUser:
         finally:
             structlog.contextvars.unbind_contextvars("session.key")
         assert mock.await_args is not None
-        assert mock.await_args.kwargs["user"] == "enrich:xyz:1"
+        kwargs = mock.await_args.kwargs
+        assert kwargs.get("extra_body", {}).get("user") == "enrich:xyz:1"
 
     async def test_user_omitted_when_no_session_key(self) -> None:
         import structlog
@@ -561,7 +565,36 @@ class TestLiteLLMProviderSessionUser:
             mock.return_value = _make_litellm_response("ok")
             await p.chat([{"role": "user", "content": "hi"}])
         assert mock.await_args is not None
-        assert "user" not in mock.await_args.kwargs
+        kwargs = mock.await_args.kwargs
+        # Either no extra_body at all, or extra_body without a user key.
+        assert "user" not in (kwargs.get("extra_body") or {})
+
+    async def test_user_does_not_mutate_per_model_config(self) -> None:
+        """Adding the per-call ``user`` hint must not leak into the per-model
+        extra_body dict the provider holds — that dict is shared across all
+        calls for the same model and would accumulate stale session keys."""
+        import structlog
+
+        per_model = {"provider": {"order": ["DeepInfra"]}}
+        p = LiteLLMProvider(model_extra_body={"openrouter/google/gemma-4-26b-a4b-it": per_model})
+        structlog.contextvars.bind_contextvars(**{"session.key": "enrich:abc"})
+        try:
+            with patch(
+                "exoclaw_provider_litellm.provider.acompletion", new_callable=AsyncMock
+            ) as mock:
+                mock.return_value = _make_litellm_response("ok")
+                await p.chat(
+                    [{"role": "user", "content": "hi"}],
+                    model="openrouter/google/gemma-4-26b-a4b-it",
+                )
+        finally:
+            structlog.contextvars.unbind_contextvars("session.key")
+        assert mock.await_args is not None
+        sent = mock.await_args.kwargs["extra_body"]
+        assert sent["user"] == "enrich:abc"
+        assert sent["provider"] == {"order": ["DeepInfra"]}
+        # The per-model config dict must NOT have been polluted.
+        assert "user" not in per_model
 
 
 class TestLiteLLMProviderExtra:

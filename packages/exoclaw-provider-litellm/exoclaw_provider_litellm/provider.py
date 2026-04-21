@@ -300,32 +300,36 @@ class LiteLLMProvider:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
 
+        # Compose extra_body from the per-model config plus dynamic
+        # additions (currently: the OpenRouter ``user`` hint). Copy the
+        # per-model dict because we're about to mutate — the config map
+        # is shared across calls and must not pick up per-request keys.
+        extra_body: dict[str, Any] = dict(kwargs.get("extra_body") or {})
         if model_eb := self._model_extra_body.get(resolved_model):
-            # Deep-merge NOT implemented on purpose: the config owns the
-            # whole ``extra_body`` for a given model, so taking the dict
-            # verbatim keeps behavior predictable. If a caller has passed
-            # ``extra_body`` in kwargs (not currently a chat() param but
-            # a future option), we let the caller's dict win per
-            # least-surprise.
-            kwargs.setdefault("extra_body", model_eb)
+            for k, v in model_eb.items():
+                extra_body.setdefault(k, v)
 
-        # OpenRouter treats the ``user`` field as a conversation-affinity
-        # hint for sticky provider routing — requests with the same user
-        # preferentially route to the provider that served prior calls
-        # so prompt caches stay warm. ``session.key`` is already bound
-        # on structlog contextvars by ``AgentLoop._process_message``
-        # for every turn, and contextvars propagate through asyncio
-        # tasks, so grabbing it here avoids threading a dedicated
-        # parameter down through chat/process_turn/_run_agent_loop.
+        # OpenRouter uses ``user`` as a conversation-affinity hint for
+        # sticky provider routing — same user preferentially routes to
+        # the provider that served prior calls so prompt caches stay
+        # warm. ``session.key`` is bound on structlog contextvars by
+        # ``AgentLoop._process_message`` and propagates through asyncio
+        # tasks, so we grab it here without plumbing through every
+        # chat/process_turn/_run_agent_loop signature.
         #
-        # Explicit caller override always wins: if chat() gets a future
-        # ``user`` kwarg we would defer to that. For now there is no
-        # such kwarg and we read solely from contextvars.
-        if "user" not in kwargs:
+        # Top-level ``user=`` doesn't reach OpenRouter through litellm —
+        # ``litellm.acompletion`` strips it (verified: top-level user
+        # → ``external_user: null`` in OpenRouter logs; ``extra_body.user``
+        # → ``external_user: <value>``). So set it via extra_body to
+        # actually land on the wire.
+        if "user" not in extra_body:
             ctx = structlog.contextvars.get_contextvars()
             session_key = ctx.get("session.key")
             if session_key:
-                kwargs["user"] = str(session_key)
+                extra_body["user"] = str(session_key)
+
+        if extra_body:
+            kwargs["extra_body"] = extra_body
 
         if is_anthropic:
             kwargs["messages"] = _apply_anthropic_cache_control_to_system(kwargs["messages"])
