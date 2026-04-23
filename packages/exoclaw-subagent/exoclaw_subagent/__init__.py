@@ -8,6 +8,12 @@ Both now live here. ``exoclaw-tools-spawn`` is kept as a deprecated
 re-export shim for one release cycle so existing imports keep working.
 """
 
+from exoclaw_subagent.batch_store import (
+    AnnounceCallback,
+    BatchSnapshot,
+    BatchStore,
+    InMemoryBatchStore,
+)
 from exoclaw_subagent.manager import SubagentManager
 from exoclaw_subagent.spawn_tool import SpawnManager, SpawnTool
 from exoclaw_subagent.spawner import (
@@ -19,7 +25,11 @@ from exoclaw_subagent.spawner import (
 )
 
 __all__ = [
+    "AnnounceCallback",
     "AsyncioSpawner",
+    "BatchSnapshot",
+    "BatchStore",
+    "InMemoryBatchStore",
     "Runner",
     "SpawnerFactory",
     "SpawnManager",

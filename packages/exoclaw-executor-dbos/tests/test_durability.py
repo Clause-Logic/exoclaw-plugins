@@ -276,3 +276,98 @@ class TestDurability:
 
         parsed = UUID(value)
         assert parsed.version == 7, f"expected uuidv7, got version {parsed.version}"
+
+    async def test_dbos_batch_store_survives_simulated_restart(
+        self, dbos_instance: Any, tmp_path: Any
+    ) -> None:
+        """Reproduces the production failure fixed by moving batch state
+        onto disk.
+
+        Setup mirrors the incident from 2026-04-23: 6 subagents registered
+        into one batch, 3 complete on the original process, the process
+        is restarted (in the real incident DBOS replayed the remaining 3
+        subagent workflows on a fresh ``SubagentManager`` whose in-memory
+        ``_batches`` dict was empty), the last 3 complete. With the old
+        ``InMemoryBatchStore`` no announcement fires — the test would
+        catch that as an assertion on ``announce_calls``. With
+        ``DBOSBatchStore`` the state lives in ``tmp_path`` and survives.
+        """
+        from exoclaw_executor_dbos.batch_store import DBOSBatchStore
+        from exoclaw_subagent import BatchSnapshot
+
+        store = DBOSBatchStore(workspace=tmp_path)
+        batch_id = "feed-digest-retry"
+        task_ids = [f"t{i}" for i in range(6)]
+        announce_calls: list[BatchSnapshot] = []
+
+        async def _announce(snap: BatchSnapshot) -> None:
+            announce_calls.append(snap)
+
+        # Register all 6 — wrapped in one workflow so the register steps
+        # journal against the same wfid.
+        @DBOS.workflow()
+        async def register_all() -> None:
+            for tid in task_ids:
+                await store.register(
+                    batch_id,
+                    tid,
+                    session_key="zulip:test",
+                    origin_channel="zulip",
+                    origin_chat_id="test",
+                )
+
+        with SetWorkflowID(str(uuid.uuid4())):
+            await register_all()
+
+        # Complete the first 3 subagents — each as its own workflow (that's
+        # how real subagents run under DBOSSubagentSpawner).
+        async def _complete_one(task_id: str) -> None:
+            @DBOS.workflow()
+            async def wf() -> None:
+                await store.record_completion_and_maybe_announce(
+                    batch_id,
+                    task_id,
+                    status="completed",
+                    label=f"enrich-{task_id}",
+                    result_path=f"/tmp/{task_id}.md",
+                    announce=_announce,
+                )
+
+            with SetWorkflowID(str(uuid.uuid4())):
+                await wf()
+
+        for tid in task_ids[:3]:
+            await _complete_one(tid)
+
+        assert announce_calls == [], (
+            "batch announced before all 6 members finished — should_announce "
+            "decision is wrong"
+        )
+
+        # "Restart": destroy DBOS, relaunch. Batch state lives on disk in
+        # tmp_path, so the rebuilt store sees all 6 members still present.
+        DBOS.destroy()
+        import exoclaw_executor_dbos.executor  # noqa: F401
+        import exoclaw_executor_dbos.turn  # noqa: F401
+
+        config: DBOSConfig = {
+            "name": "durability-test",
+            "system_database_url": f"sqlite:///{_DB_PATH}",
+            "enable_otlp": False,
+        }
+        DBOS(config=config)
+        DBOS.launch()
+
+        # Complete the remaining 3.
+        for tid in task_ids[3:]:
+            await _complete_one(tid)
+
+        assert len(announce_calls) == 1, (
+            f"expected exactly one batch announcement post-restart, got "
+            f"{len(announce_calls)} — the in-memory-state bug would have "
+            f"produced zero announcements here"
+        )
+        announced = announce_calls[0]
+        assert announced.batch_id == batch_id
+        assert announced.total == 6
+        assert announced.completed == 6

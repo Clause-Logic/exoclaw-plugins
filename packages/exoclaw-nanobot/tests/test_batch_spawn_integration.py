@@ -19,12 +19,15 @@ should both surface here instead of on a 172-item production run.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from exoclaw.agent.tools.registry import ToolRegistry
 from exoclaw_subagent import SpawnTool
+from exoclaw_subagent.manager import SubagentManager
 from exoclaw_tools_batch import BatchTool
 
 
@@ -223,3 +226,117 @@ async def test_batch_surfaces_spawn_failure_without_aborting(
         f"expected exactly one failed spawn surfaced as an error entry, got payload={payload}"
     )
     assert len(success_lines) == 4, f"remaining items must still dispatch — got {success_lines}"
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: batch(tool="spawn", batch="same-id", items=[6])
+# ---------------------------------------------------------------------------
+#
+# Production incident (2026-04-23): Luna fanned out 6 feed-digest clusters via
+# ``batch(tool="spawn", items=[6 items, all with batch="feed-digest-retry"])``.
+# VictoriaLogs showed 6× ``subagent_spawned`` → 6× ``subagent_done`` → but only
+# 3× ``batch_progress`` and 0× ``batch_announced``. The parent (Luna) never
+# received the batch announcement, so her session had no wake-up signal and
+# the user had to manually ask "how's it going?" to surface the results.
+#
+# The hypothesis this test is designed to verify or falsify: when the batch
+# lifecycle (``state.total``, ``state.completed``, ``_announce_batch``) runs
+# against the real ``SubagentManager`` + ``AsyncioSpawner`` driven via the
+# ``BatchTool`` fan-out (not direct ``manager.spawn`` calls), the batch is
+# announced exactly once after all N items complete — regardless of whether
+# subagents complete fast/slow or in/out of spawn order.
+
+
+class _FlakyLoop:
+    """Fake AgentLoop whose process_direct returns after a per-task delay.
+
+    Mirrors the production shape where enrichment subagents complete over a
+    multi-minute window (web fetches + LLM calls) rather than instantly. Order
+    of completion is intentionally jittered so we catch races between the
+    spawn-time ``state.total += 1`` and the completion-time
+    ``state.completed += 1``.
+    """
+
+    def __init__(self, delays: list[float]) -> None:
+        self._delays = list(delays)
+        self._call_index = 0
+
+    async def process_direct(self, task: str, **_kwargs: object) -> str:
+        idx = self._call_index
+        self._call_index += 1
+        delay = self._delays[idx % len(self._delays)]
+        await asyncio.sleep(delay)
+        return f"result for {task}"
+
+
+@pytest.mark.asyncio
+async def test_batch_via_batchtool_announces_once_for_all_items(tmp_path: Any) -> None:
+    """batch(tool="spawn", items=[N]) with shared batch id must announce once.
+
+    Production failure mode to reproduce: 6 spawns went out, all subagents
+    completed, but the batch announcement never fired — the parent session
+    saw nothing on the bus.
+
+    This test uses the real ``SubagentManager`` (not a recording fake) wired
+    through the real ``BatchTool → SpawnTool`` path, so the batch lifecycle
+    has to survive the full fan-out.
+    """
+    bus = MagicMock()
+    bus.publish_inbound = AsyncMock()
+
+    provider = MagicMock()
+    provider.get_default_model.return_value = "test-model"
+
+    def _conversation_factory() -> MagicMock:
+        return MagicMock()
+
+    manager = SubagentManager(
+        provider=provider,
+        bus=bus,
+        conversation_factory=_conversation_factory,
+        max_iterations=3,
+    )
+
+    # Stagger completion times so they finish out of spawn order — stresses the
+    # order-of-events between state.total increments (at spawn time) and
+    # state.completed increments (at completion time). Production run showed
+    # this ~13-minute window; we compress to ~50ms total.
+    fake_loop = _FlakyLoop(delays=[0.01, 0.03, 0.005, 0.02, 0.04, 0.015])
+
+    registry = ToolRegistry()
+    spawn_tool = SpawnTool(manager=manager)
+    registry.register(spawn_tool)
+    batch_tool = BatchTool(output_dir=str(tmp_path))
+    registry.register(batch_tool)  # type: ignore[arg-type]
+    batch_tool.set_registry(registry)
+
+    items = [
+        {"task": f"enrich cluster {i}", "label": f"enrich-{i}", "batch": "feed-digest-retry"}
+        for i in range(6)
+    ]
+
+    with patch("exoclaw_subagent.manager.AgentLoop", return_value=fake_loop):
+        result = await batch_tool.execute(tool="spawn", items=items)
+        # Give all background subagent tasks time to finish and announce.
+        for _ in range(20):
+            await asyncio.sleep(0.05)
+            if manager.get_running_count() == 0:
+                break
+
+    assert manager.get_running_count() == 0, (
+        "some subagent tasks are still running — the test needs a longer wait"
+    )
+
+    # The smoking-gun assertion: the batch announcement must have been
+    # published exactly once, and must cover all 6 items.
+    assert bus.publish_inbound.call_count == 1, (
+        f"expected 1 batch announcement, got {bus.publish_inbound.call_count} "
+        f"publish_inbound calls — reproduces prod: announce never fired "
+        f"(call_count=0) or fired per-subagent (call_count=6)"
+    )
+    msg = bus.publish_inbound.call_args[0][0]
+    assert "feed-digest-retry" in msg.content
+    assert "6 succeeded" in msg.content, f"msg.content={msg.content!r}"
+
+    meta = json.loads(result)
+    assert meta["count"] == 6
