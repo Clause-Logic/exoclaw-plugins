@@ -340,8 +340,7 @@ class TestDurability:
             await _complete_one(tid)
 
         assert announce_calls == [], (
-            "batch announced before all 6 members finished — should_announce "
-            "decision is wrong"
+            "batch announced before all 6 members finished — should_announce decision is wrong"
         )
 
         # "Restart": destroy DBOS, relaunch. Batch state lives on disk in

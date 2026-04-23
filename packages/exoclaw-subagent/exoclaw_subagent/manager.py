@@ -33,8 +33,7 @@ def _build_batch_message(snap: BatchSnapshot) -> InboundMessage:
     failed = [r for r in snap.results if r["status"] != "completed"]
 
     lines = [
-        f"[Batch '{snap.batch_id}' complete — "
-        f"{len(completed)} succeeded, {len(failed)} failed]\n"
+        f"[Batch '{snap.batch_id}' complete — {len(completed)} succeeded, {len(failed)} failed]\n"
     ]
     if completed:
         lines.append("Results:")
@@ -282,9 +281,7 @@ class SubagentManager:
             result_path = self._write_result(task_id, label, task, result, status)
 
             if batch is not None:
-                await self._record_batch_completion(
-                    batch, task_id, label, status, result_path
-                )
+                await self._record_batch_completion(batch, task_id, label, status, result_path)
             else:
                 await self._announce_single(
                     label,
@@ -340,6 +337,7 @@ class SubagentManager:
         ``announce`` is invoked by the store when the last member lands
         and is responsible for publishing the batch message on the bus.
         """
+
         async def _announce(snap: BatchSnapshot) -> None:
             logger.info(
                 "batch_announced",

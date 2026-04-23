@@ -204,9 +204,7 @@ class InMemoryBatchStore:
             # Copy under the lock so concurrent completions see coherent
             # snapshots.
             post_snapshot = _copy_snapshot(snap)
-            should_announce = (
-                snap.completed >= snap.total and batch_id not in self._announced
-            )
+            should_announce = snap.completed >= snap.total and batch_id not in self._announced
 
         if not should_announce:
             return post_snapshot
