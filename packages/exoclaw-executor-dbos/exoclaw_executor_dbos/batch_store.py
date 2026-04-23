@@ -18,17 +18,26 @@ boundary means:
   this is the at-least-once posture chosen in PR #44 for the final
   reply: prefer one duplicate message over a silent drop.
 
-Disk layout under ``<workspace>/batches/<batch_id>/``:
+Disk layout under ``<workspace>/batches/<_safe_name(batch_id)>/``:
 
-* ``meta.json`` — ``{origin_channel, origin_chat_id, session_key}``.
-  Written on ``register`` (last-write-wins — routing fields are stable
-  within a batch by construction).
-* ``<task_id>.json`` — ``{status, label, result_path}``. Written on
-  ``register`` (status ``"registered"``) and overwritten on
+* ``meta.json`` — ``{batch_id, origin_channel, origin_chat_id, session_key}``.
+  Written on ``register`` (first-write-wins — routing fields are stable
+  within a batch by construction). ``batch_id`` is the original caller-
+  supplied string so ``list_active`` can report the unsanitised value.
+* ``<_safe_name(task_id)>.json`` — ``{status, label, result_path}``.
+  Written on ``register`` (status ``"registered"``) and overwritten on
   ``record_completion_and_maybe_announce`` (status ``"completed"`` or
   ``"failed"``).
 * ``.announced`` — sentinel file written after the announce callback
   completes. Subsequent completions that see it skip the announce.
+  When the same ``batch_id`` is reused in a later run, ``register``
+  deletes the whole directory first so the stale sentinel can't
+  suppress the new run's announce.
+
+Complexity: each completion reads every member file to compute totals
+(O(n) per completion → O(n²) over the batch's lifetime). Fine for
+openclaw's current batch sizes (≤ ~20). If batches grow, move counters
+into ``meta.json`` and update them under the existing lock.
 
 Filesystem as durable store works for single-container openclaw (the
 workspace volume is persistent). The flagship Temporal port will ship
@@ -38,8 +47,10 @@ its own ``BatchStore`` against a proper DB; the generic protocol in
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import shutil
 from pathlib import Path
 
 from dbos import DBOS
@@ -51,7 +62,15 @@ def _batch_dir(workspace: Path, batch_id: str) -> Path:
 
 
 def _safe_name(value: str) -> str:
-    return "".join(c if c.isalnum() or c in "-_" else "-" for c in value)
+    """Convert an arbitrary id to something usable as a single path
+    segment. Falls back to a hex digest if the input strips empty —
+    otherwise all-punctuation ids would collapse to ``""`` and all such
+    batches would collide on ``<workspace>/batches/``.
+    """
+    cleaned = "".join(c if c.isalnum() or c in "-_" else "-" for c in value).strip("-")
+    if not cleaned:
+        cleaned = hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+    return cleaned
 
 
 @DBOS.step()
@@ -68,13 +87,24 @@ async def _register_step(
     Wrapped as a DBOS step so the workspace write is journaled — replay
     within the spawning workflow returns immediately without re-touching
     the filesystem. Idempotent at the FS level too (writes overwrite).
+
+    ``batch_id`` reuse: if a prior run under the same id is already
+    announced (``.announced`` sentinel present), the whole batch dir is
+    blown away before we re-register. Without this, the stale sentinel
+    would suppress the next run's announce forever.
     """
     bdir = _batch_dir(Path(workspace_str), _safe_name(batch_id))
+    if (bdir / ".announced").exists():
+        shutil.rmtree(bdir, ignore_errors=True)
     bdir.mkdir(parents=True, exist_ok=True)
 
+    # First-write-wins for meta — routing fields are stable within a
+    # batch by construction, and rewriting per task serialises every
+    # register call for no benefit.
     meta_path = bdir / "meta.json"
     if not meta_path.exists():
         meta = {
+            "batch_id": batch_id,
             "origin_channel": origin_channel,
             "origin_chat_id": origin_chat_id,
             "session_key": session_key,
@@ -275,9 +305,16 @@ class DBOSBatchStore:
                     continue
             total = len(members)
             completed = sum(1 for m in members if m.get("status") not in (None, "registered"))
+            # Prefer the original batch_id stored in meta so log/chat
+            # lines stay consistent with what callers see; fall back to
+            # the on-disk (sanitised) dir name for pre-upgrade batches
+            # that were written before meta carried ``batch_id``.
+            snapshot_batch_id = meta.get("batch_id")
+            if not isinstance(snapshot_batch_id, str) or not snapshot_batch_id:
+                snapshot_batch_id = bdir.name
             out.append(
                 BatchSnapshot(
-                    batch_id=bdir.name,
+                    batch_id=snapshot_batch_id,
                     total=total,
                     completed=completed,
                     results=[

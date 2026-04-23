@@ -158,6 +158,15 @@ class InMemoryBatchStore:
         origin_chat_id: str,
     ) -> None:
         async with self._lock:
+            if batch_id in self._announced:
+                # batch_id reuse across runs: drop stale state so this
+                # fresh registration doesn't inherit the previous run's
+                # ``announced`` bit (which would permanently suppress
+                # the next announce) or accumulate forever.
+                self._announced.discard(batch_id)
+                self._batches.pop(batch_id, None)
+                self._registered.pop(batch_id, None)
+                self._completed.pop(batch_id, None)
             registered = self._registered.setdefault(batch_id, set())
             if task_id in registered:
                 return

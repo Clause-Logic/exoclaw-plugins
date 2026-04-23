@@ -683,6 +683,40 @@ class TestBatch:
         assert "2 succeeded" in msg.content
         assert "1 failed" in msg.content
 
+    async def test_batch_id_reuse_announces_again(self) -> None:
+        """Reusing a batch id across runs must still announce.
+
+        Regression: if ``InMemoryBatchStore`` kept the ``announced`` bit
+        (and accumulated batch state) across runs, a recurring batch
+        name like ``feed-digest-retry`` would announce once and then
+        stay silent forever. Luna's daily feed curator reuses the same
+        batch id every day — this has to work.
+        """
+        bus = _make_bus()
+        mgr = _make_manager(bus=bus)
+
+        mock_loop = MagicMock()
+        mock_loop.process_direct = AsyncMock(return_value="result")
+
+        with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop):
+            # Run 1
+            await mgr.spawn(task="t1", label="a", batch="daily")
+            await mgr.spawn(task="t2", label="b", batch="daily")
+            await asyncio.sleep(0.1)
+            # Run 2 — same batch id
+            await mgr.spawn(task="t3", label="c", batch="daily")
+            await mgr.spawn(task="t4", label="d", batch="daily")
+            await asyncio.sleep(0.1)
+
+        assert bus.publish_inbound.call_count == 2, (
+            "second run of the same batch id didn't announce — "
+            "InMemoryBatchStore leaked announced state across runs"
+        )
+        # Sanity: the second announcement only references the second run's
+        # members, not accumulated state from both runs.
+        second_msg: InboundMessage = bus.publish_inbound.call_args_list[1][0][0]
+        assert "2 succeeded" in second_msg.content
+
 
 # ---------------------------------------------------------------------------
 # get_running_count
