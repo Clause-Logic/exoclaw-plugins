@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
@@ -16,6 +15,7 @@ from exoclaw.bus.events import InboundMessage
 from exoclaw.bus.protocol import Bus
 from exoclaw.providers.protocol import LLMProvider
 
+from .batch_store import BatchSnapshot, BatchStore, InMemoryBatchStore
 from .spawner import AsyncioSpawner, SpawnerFactory, SubagentHandle
 
 logger = structlog.get_logger()
@@ -26,16 +26,35 @@ def _safe_filename(label: str) -> str:
     return "".join(c if c.isalnum() or c in "-_" else "-" for c in label).strip("-")
 
 
-@dataclass
-class _BatchState:
-    """Tracks completion of a batch of subagents."""
+def _build_batch_message(snap: BatchSnapshot) -> InboundMessage:
+    """Shape the ``BatchSnapshot`` into the system InboundMessage that
+    lands in the parent session's inbox when a batch completes."""
+    completed = [r for r in snap.results if r["status"] == "completed"]
+    failed = [r for r in snap.results if r["status"] != "completed"]
 
-    total: int = 0
-    completed: int = 0
-    results: list[dict[str, str]] = field(default_factory=list)
-    origin_channel: str = "cli"
-    origin_chat_id: str = "direct"
-    session_key: str | None = None
+    lines = [
+        f"[Batch '{snap.batch_id}' complete — {len(completed)} succeeded, {len(failed)} failed]\n"
+    ]
+    if completed:
+        lines.append("Results:")
+        for r in completed:
+            lines.append(f"- **{r['label']}**: {r['path']}")
+    if failed:
+        lines.append("\nFailed:")
+        for r in failed:
+            lines.append(f"- **{r['label']}**: {r['status']}")
+    lines.append(
+        "\nRead each result file with read_file, then synthesize "
+        "the findings and respond to the user."
+    )
+    return InboundMessage(
+        channel="system",
+        sender_id="subagent",
+        chat_id=f"{snap.origin_channel}:{snap.origin_chat_id}",
+        content="\n".join(lines),
+        session_key_override=snap.session_key,
+        metadata={"session_key": snap.session_key} if snap.session_key else {},
+    )
 
 
 class SubagentManager:
@@ -63,6 +82,7 @@ class SubagentManager:
         max_iterations: int = 15,
         workspace: Path | None = None,
         spawner_factory: SpawnerFactory | None = None,
+        batch_store: BatchStore | None = None,
     ):
         self._provider = provider
         self._bus = bus
@@ -73,7 +93,11 @@ class SubagentManager:
         self._handles: dict[str, SubagentHandle] = {}
         self._sessions: dict[str, str | None] = {}
         self._results_dir: Path | None = None
-        self._batches: dict[str, _BatchState] = {}
+        # Batch lifecycle (total, completed, announce) lives in a
+        # pluggable store so durable backends (DBOS, Temporal) can back
+        # it with their own durability primitives. Default is in-memory,
+        # which preserves pre-refactor semantics for CLI/test use.
+        self._batch_store: BatchStore = batch_store or InMemoryBatchStore()
         if workspace is not None:
             self._results_dir = workspace / "subagents"
             self._results_dir.mkdir(parents=True, exist_ok=True)
@@ -121,11 +145,13 @@ class SubagentManager:
         display_label = label or (task[:30] + ("..." if len(task) > 30 else ""))
 
         if batch is not None:
-            state = self._batches.setdefault(batch, _BatchState())
-            state.total += 1
-            state.origin_channel = origin_channel
-            state.origin_chat_id = origin_chat_id
-            state.session_key = session_key
+            await self._batch_store.register(
+                batch,
+                task_id,
+                session_key=session_key,
+                origin_channel=origin_channel,
+                origin_chat_id=origin_chat_id,
+            )
 
         handle = await self._spawner.start(
             task_id=task_id,
@@ -255,7 +281,7 @@ class SubagentManager:
             result_path = self._write_result(task_id, label, task, result, status)
 
             if batch is not None:
-                await self._record_batch_completion(batch, label, status, result_path, result)
+                await self._record_batch_completion(batch, task_id, label, status, result_path)
             else:
                 await self._announce_single(
                     label,
@@ -299,66 +325,50 @@ class SubagentManager:
     async def _record_batch_completion(
         self,
         batch: str,
+        task_id: str,
         label: str,
         status: str,
         result_path: str | None,
-        result: str,
     ) -> None:
-        """Record a batch member's completion. Announce when all are done."""
-        state = self._batches.get(batch)
-        if state is None:
+        """Record a batch member's completion via the ``BatchStore``.
+
+        The store owns total/completed tracking and the "all done?"
+        decision — this method just drives it and handles observability.
+        ``announce`` is invoked by the store when the last member lands
+        and is responsible for publishing the batch message on the bus.
+        """
+
+        async def _announce(snap: BatchSnapshot) -> None:
+            logger.info(
+                "batch_announced",
+                **{"batch.id": snap.batch_id, "batch.results": len(snap.results)},
+            )
+            await self._bus.publish_inbound(_build_batch_message(snap))
+
+        try:
+            snap = await self._batch_store.record_completion_and_maybe_announce(
+                batch,
+                task_id,
+                status=status,
+                label=label,
+                result_path=result_path,
+                announce=_announce,
+            )
+        except KeyError:
+            # Store has no memory of this batch. In-memory stores lose
+            # state across restarts; durable backends raise this when a
+            # workflow recovers but the batch row was never persisted.
+            # Always a bug — never silently drop.
+            logger.warning(
+                "subagent_done_orphaned",
+                **{"batch.id": batch, "subagent.label": label, "subagent.status": status},
+            )
             return
 
-        state.completed += 1
-        state.results.append(
-            {
-                "label": label,
-                "status": status,
-                "path": result_path or "(no file)",
-            }
-        )
         logger.info(
             "batch_progress",
-            **{"batch.id": batch, "batch.completed": state.completed, "batch.total": state.total},
+            **{"batch.id": batch, "batch.completed": snap.completed, "batch.total": snap.total},
         )
-
-        if state.completed >= state.total:
-            await self._announce_batch(batch, state)
-            del self._batches[batch]
-
-    async def _announce_batch(self, batch: str, state: _BatchState) -> None:
-        """Announce that all subagents in a batch have completed."""
-        completed = [r for r in state.results if r["status"] == "completed"]
-        failed = [r for r in state.results if r["status"] != "completed"]
-
-        lines = [f"[Batch '{batch}' complete — {len(completed)} succeeded, {len(failed)} failed]\n"]
-
-        if completed:
-            lines.append("Results:")
-            for r in completed:
-                lines.append(f"- **{r['label']}**: {r['path']}")
-
-        if failed:
-            lines.append("\nFailed:")
-            for r in failed:
-                lines.append(f"- **{r['label']}**: {r['status']}")
-
-        lines.append(
-            "\nRead each result file with read_file, then synthesize "
-            "the findings and respond to the user."
-        )
-
-        content = "\n".join(lines)
-        msg = InboundMessage(
-            channel="system",
-            sender_id="subagent",
-            chat_id=f"{state.origin_channel}:{state.origin_chat_id}",
-            content=content,
-            session_key_override=state.session_key,
-            metadata={"session_key": state.session_key} if state.session_key else {},
-        )
-        logger.info("batch_announced", **{"batch.id": batch, "batch.results": len(state.results)})
-        await self._bus.publish_inbound(msg)
 
     async def _announce_single(
         self,
@@ -406,11 +416,11 @@ class SubagentManager:
         running = [{"id": h.id, "done": h.done()} for h in self._handles.values()]
 
         batches = {}
-        for batch_id, state in self._batches.items():
-            batches[batch_id] = {
-                "total": state.total,
-                "completed": state.completed,
-                "results": state.results,
+        for snap in self._batch_store.list_active():
+            batches[snap.batch_id] = {
+                "total": snap.total,
+                "completed": snap.completed,
+                "results": snap.results,
             }
 
         completed = []

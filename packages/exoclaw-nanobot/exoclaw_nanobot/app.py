@@ -21,7 +21,12 @@ from exoclaw_conversation.conversation import DefaultConversation
 from exoclaw_conversation.memory import MemoryStore
 from exoclaw_conversation.session.manager import SessionManager
 from exoclaw_conversation.summarizing_policy import SummarizingConsolidationPolicy
-from exoclaw_executor_dbos import DBOSExecutor, DBOSSubagentSpawner, set_loop_context
+from exoclaw_executor_dbos import (
+    DBOSBatchStore,
+    DBOSExecutor,
+    DBOSSubagentSpawner,
+    set_loop_context,
+)
 from exoclaw_loop_detection import LoopDetectionConfig, LoopDetectionPolicy
 from exoclaw_provider_litellm.provider import LiteLLMProvider
 from exoclaw_subagent import SpawnTool, SubagentManager
@@ -349,6 +354,12 @@ async def create(
         # can't race into the parent's step journal (see 2026-04-13 Feed
         # curator incident).
         spawner_factory=spawner_factory,
+        # Persist batch lifecycle to disk via DBOS steps so a restart
+        # during a multi-subagent batch doesn't orphan completions (see
+        # 2026-04-23 feed-digest-retry incident — three recovered
+        # subagents completed into an empty in-memory ``_batches`` dict
+        # and the batch announcement never fired).
+        batch_store=DBOSBatchStore(workspace=workspace),
     )
     spawn_tool = SpawnTool(
         manager=subagent_mgr,
