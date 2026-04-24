@@ -63,12 +63,21 @@ def _build_lazy_prior_source(
 ) -> _PriorSource | None:
     """Construct a disk-backed ``PriorSource`` for a turn's prior.
 
-    Locates ``history_snapshot`` inside ``full`` by dict ``id()``
-    matching — ``session.get_history`` and ``Conversation.build_prompt``
-    share dict refs into ``session.messages``, so id matching is
-    reliable when it works. When it doesn't (empty history, isolated
-    mode, a PromptBuilder that deep-copies), returns ``None`` so the
-    caller falls back to the closure-over-list path.
+    Locates ``history_snapshot`` inside ``full`` as a contiguous
+    sublist by DICT-EQUALITY match (not ``id()``). This is the
+    critical detail for working against real Conversation impls:
+    ``DefaultConversation.session.get_history`` strips timestamps /
+    consolidation fields and returns FRESH dict objects per call,
+    so call-#1 (from ``build_prompt``) and call-#2 (from
+    ``load_persisted_history``) return dicts with the same content
+    but different ``id()``. Earlier versions of this function
+    id-matched and thus always fell back to the snapshot path
+    against ``DefaultConversation`` — defeating phase 2b's RAM win.
+
+    Returns ``None`` when no contiguous match is found (empty
+    history, a PromptBuilder that transforms messages, isolated
+    mode). The caller then falls back to the closure-over-list
+    snapshot path.
 
     The returned source closes over ``prefix`` and ``suffix`` (small,
     stable for the turn) and invokes ``reload_history`` on each
@@ -77,30 +86,17 @@ def _build_lazy_prior_source(
     """
     if not history_snapshot:
         return None
-    history_ids = {id(m) for m in history_snapshot}
+    n = len(history_snapshot)
+    if n > len(full):
+        return None
     first_idx: int | None = None
-    for i, m in enumerate(full):
-        if id(m) in history_ids:
+    for i in range(len(full) - n + 1):
+        if full[i : i + n] == history_snapshot:
             first_idx = i
             break
     if first_idx is None:
         return None
-    last_idx = first_idx + len(history_snapshot) - 1
-    if last_idx >= len(full):
-        return None
-    # Verify the whole slice matches history by identity, not just
-    # the first hit. A ``PromptBuilder`` that replaces some history
-    # dicts while leaving others shared (e.g. tool-result compaction)
-    # would partially overlap the id set at the right starting index
-    # but the slice itself mixes original + transformed dicts. Using
-    # this source would then re-inject the untransformed history on
-    # later iterations and diverge from what the initial LLM call saw.
-    # Bail to the snapshot path if any dict in the slice isn't one of
-    # the history refs.
-    slice_ids = [id(m) for m in full[first_idx : last_idx + 1]]
-    expected_ids = [id(m) for m in history_snapshot]
-    if slice_ids != expected_ids:
-        return None
+    last_idx = first_idx + n - 1
     prefix = list(full[:first_idx])
     suffix = list(full[last_idx + 1 :])
 
