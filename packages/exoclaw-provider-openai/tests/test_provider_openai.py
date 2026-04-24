@@ -19,6 +19,8 @@ compose into valid JSON" bugs the quickest.
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
@@ -140,23 +142,29 @@ def _sse_completion(
 # Provider routing ----------------------------------------------------------
 
 
-def _provider(
+@asynccontextmanager
+async def _provider(
     transport: httpx.MockTransport,
     deployments: dict[str, Deployment] | None = None,
     fallbacks: dict[str, list[str]] | None = None,
     default: str = "primary",
-) -> OpenAIStreamingProvider:
+) -> AsyncIterator[OpenAIStreamingProvider]:
+    """Async context manager so the injected ``httpx.AsyncClient`` is
+    always closed on test exit — otherwise pytest surfaces a
+    ``ResourceWarning`` per test. ``OpenAIStreamingProvider.close()``
+    only closes clients it owns, so we close here by entering the
+    client's own context."""
     deployments = deployments or {
         "primary": Deployment(base_url="https://a.example/v1", api_key="k-a"),
         "backup": Deployment(base_url="https://b.example/v1", api_key="k-b"),
     }
-    client = httpx.AsyncClient(transport=transport, timeout=5.0)
-    return OpenAIStreamingProvider(
-        default_model=default,
-        deployments=deployments,
-        fallbacks=fallbacks,
-        client=client,
-    )
+    async with httpx.AsyncClient(transport=transport, timeout=5.0) as client:
+        yield OpenAIStreamingProvider(
+            default_model=default,
+            deployments=deployments,
+            fallbacks=fallbacks,
+            client=client,
+        )
 
 
 class TestProviderRouting:
@@ -174,9 +182,8 @@ class TestProviderRouting:
                 headers={"content-type": "text/event-stream"},
             )
 
-        provider = _provider(httpx.MockTransport(handler))
-
-        resp = await provider.chat(messages=[{"role": "user", "content": "hi"}])
+        async with _provider(httpx.MockTransport(handler)) as provider:
+            resp = await provider.chat(messages=[{"role": "user", "content": "hi"}])
 
         assert resp.content == "hello"
         assert len(seen) == 1
@@ -198,9 +205,9 @@ class TestProviderRouting:
                 headers={"content-type": "text/event-stream"},
             )
 
-        provider = _provider(httpx.MockTransport(handler))
         messages = [{"role": "user", "content": "hello"}]
-        await provider.chat(messages=messages)
+        async with _provider(httpx.MockTransport(handler)) as provider:
+            await provider.chat(messages=messages)
 
         assert captured["content_type"] == "application/json"
         parsed = json.loads(captured["body"])
@@ -224,12 +231,11 @@ class TestProviderRouting:
                 headers={"content-type": "text/event-stream"},
             )
 
-        provider = _provider(
+        async with _provider(
             httpx.MockTransport(handler),
             fallbacks={"primary": ["backup"]},
-        )
-
-        resp = await provider.chat(messages=[{"role": "user", "content": "x"}])
+        ) as provider:
+            resp = await provider.chat(messages=[{"role": "user", "content": "x"}])
 
         assert resp.content == "from-backup"
         assert len(calls) == 2
@@ -244,13 +250,12 @@ class TestProviderRouting:
         def handler(req: httpx.Request) -> httpx.Response:
             return httpx.Response(401, content=b'{"error":"bad key"}')
 
-        provider = _provider(
+        async with _provider(
             httpx.MockTransport(handler),
             fallbacks={"primary": ["backup"]},
-        )
-
-        with pytest.raises(httpx.HTTPStatusError):
-            await provider.chat(messages=[{"role": "user", "content": "x"}])
+        ) as provider:
+            with pytest.raises(httpx.HTTPStatusError):
+                await provider.chat(messages=[{"role": "user", "content": "x"}])
 
     async def test_context_window_error_does_not_fallback(self) -> None:
         """A context-window-exceeded on the primary won't succeed on
@@ -265,13 +270,12 @@ class TestProviderRouting:
                 content=b'{"error":{"code":"context_length_exceeded"}}',
             )
 
-        provider = _provider(
+        async with _provider(
             httpx.MockTransport(handler),
             fallbacks={"primary": ["backup"]},
-        )
-
-        with pytest.raises(ContextWindowExceededError):
-            await provider.chat(messages=[{"role": "user", "content": "x"}])
+        ) as provider:
+            with pytest.raises(ContextWindowExceededError):
+                await provider.chat(messages=[{"role": "user", "content": "x"}])
 
         assert len(calls) == 1  # fallback NOT attempted
 
@@ -282,13 +286,12 @@ class TestProviderRouting:
         def handler(req: httpx.Request) -> httpx.Response:
             return httpx.Response(503, content=b'{"error":"busy"}')
 
-        provider = _provider(
+        async with _provider(
             httpx.MockTransport(handler),
             fallbacks={"primary": ["backup"]},
-        )
-
-        with pytest.raises(Exception, match="503"):
-            await provider.chat(messages=[{"role": "user", "content": "x"}])
+        ) as provider:
+            with pytest.raises(Exception, match="503"):
+                await provider.chat(messages=[{"role": "user", "content": "x"}])
 
     async def test_response_parses_tool_calls(self) -> None:
         """Streamed tool-call chunks must reassemble into a
@@ -315,8 +318,8 @@ class TestProviderRouting:
                 headers={"content-type": "text/event-stream"},
             )
 
-        provider = _provider(httpx.MockTransport(handler))
-        resp = await provider.chat(messages=[{"role": "user", "content": "x"}])
+        async with _provider(httpx.MockTransport(handler)) as provider:
+            resp = await provider.chat(messages=[{"role": "user", "content": "x"}])
 
         assert resp.finish_reason == "tool_calls"
         assert len(resp.tool_calls) == 1
@@ -347,9 +350,8 @@ class TestProviderRouting:
                 extra_body={"provider": {"order": ["deepinfra"]}},
             ),
         }
-        provider = _provider(httpx.MockTransport(handler), deployments=deployments)
-
-        await provider.chat(messages=[{"role": "user", "content": "x"}])
+        async with _provider(httpx.MockTransport(handler), deployments=deployments) as provider:
+            await provider.chat(messages=[{"role": "user", "content": "x"}])
 
         assert captured["headers"].get("http-referer") == "https://openclaw"
         assert captured["body"]["provider"] == {"order": ["deepinfra"]}
@@ -376,3 +378,33 @@ class TestProviderRouting:
                     "primary": Deployment(base_url="https://a.example/v1", api_key="k"),
                 },
             )
+
+    async def test_non_sse_200_response_fails_over(self) -> None:
+        """A 200 with ``application/json`` is a misconfigured upstream —
+        the parser would silently return an empty ``LLMResponse``
+        otherwise. Surface a retryable error so the fallback chain
+        engages (Copilot review #60)."""
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            url = str(req.url)
+            if url.startswith("https://a.example"):
+                # Primary returns 200 with wrong content-type.
+                return httpx.Response(
+                    200,
+                    content=b'{"error":"wrong endpoint"}',
+                    headers={"content-type": "application/json"},
+                )
+            # Backup returns a proper SSE stream.
+            return httpx.Response(
+                200,
+                content=_sse_completion("ok"),
+                headers={"content-type": "text/event-stream"},
+            )
+
+        async with _provider(
+            httpx.MockTransport(handler),
+            fallbacks={"primary": ["backup"]},
+        ) as provider:
+            resp = await provider.chat(messages=[{"role": "user", "content": "x"}])
+
+        assert resp.content == "ok"

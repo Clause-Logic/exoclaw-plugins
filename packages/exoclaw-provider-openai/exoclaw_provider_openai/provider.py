@@ -233,7 +233,7 @@ class OpenAIStreamingProvider:
                     # specifically, so the fallback loop engages.
                     text = await resp.aread()
                     raise _RetryableError(f"status {resp.status_code}: {text[:500]!r}")
-                if resp.status_code == 400 and _is_context_window_error(resp):
+                if resp.status_code == 400 and await _is_context_window_error(resp):
                     raise ContextWindowExceededError("Prompt exceeds model context window")
                 resp.raise_for_status()
 
@@ -287,6 +287,19 @@ class OpenAIStreamingProvider:
         ``stream_ttft_timeout`` seconds, after which the fallback chain
         engages.
         """
+        # A real SSE response has ``content-type: text/event-stream``.
+        # If an upstream misbehaves and returns JSON with status 200 (e.g.
+        # an error body they forgot to set a 4xx for), the ``data:`` line
+        # filter below would swallow every line and we'd silently return
+        # an empty ``LLMResponse``. Surface a retryable error instead so
+        # the fallback chain engages and the caller sees the failure.
+        ct = (resp.headers.get("content-type") or "").lower()
+        if "text/event-stream" not in ct:
+            body = await resp.aread()
+            raise _RetryableError(
+                f"expected SSE, got content-type {ct!r}; body preview: {body[:500]!r}"
+            )
+
         content_parts: list[str] = []
         reasoning_parts: list[str] = []
         # Tool calls arrive streamed: first chunk carries ``index`` + name,
@@ -295,17 +308,29 @@ class OpenAIStreamingProvider:
         finish_reason = "stop"
         usage: dict[str, int] = {}
 
-        ttft_deadline = time.monotonic() + self._stream_ttft_timeout
-        saw_first = False
+        # Demand the first line inside the TTFT budget. Without this the
+        # much larger ``request_timeout`` wins when a server accepts the
+        # connection then never sends a byte, so fallback takes minutes
+        # instead of seconds. The Copilot review on PR #60 flagged this.
+        line_iter = resp.aiter_lines().__aiter__()
+        try:
+            first_line = await asyncio.wait_for(
+                line_iter.__anext__(), timeout=self._stream_ttft_timeout
+            )
+        except asyncio.TimeoutError:
+            raise _RetryableError(f"TTFT exceeded {self._stream_ttft_timeout}s") from None
+        except StopAsyncIteration:
+            raise _RetryableError("stream closed before any data") from None
 
-        async for line in resp.aiter_lines():
+        # Re-enter the normal loop with the first line pre-fetched.
+        async def _lines_with_first() -> AsyncIterator[str]:
+            yield first_line
+            async for rest in line_iter:
+                yield rest
+
+        async for line in _lines_with_first():
             if not line:
                 continue
-            if not saw_first:
-                if time.monotonic() > ttft_deadline:
-                    raise _RetryableError(f"TTFT exceeded {self._stream_ttft_timeout}s")
-                saw_first = True
-
             # SSE lines are "data: <json>" (plus occasional "event:" / comments).
             if not line.startswith("data:"):
                 continue
@@ -419,17 +444,30 @@ class OpenAIStreamingProvider:
 
 
 class _RetryableError(Exception):
-    """Marker for errors that should trigger fallback. Swallowed inside
-    ``chat`` — callers never see this type."""
+    """Marker for errors that should trigger the fallback chain.
+
+    ``chat`` catches this and walks to the next model in the chain. If
+    the whole chain exhausts and the cause chain doesn't surface a
+    non-internal exception (e.g. a pure HTTP-status path with no
+    chained httpx error), callers can see this type on the exhaustion
+    path. Treat it as a generic "all fallbacks failed" signal.
+    """
 
 
-def _is_context_window_error(resp: httpx.Response) -> bool:
+async def _is_context_window_error(resp: httpx.Response) -> bool:
     """Heuristic: OpenAI returns 400 with ``code: "context_length_exceeded"``;
     OpenRouter proxies that code. Treat the response body as authoritative.
     Only called on 400 responses so the cost of reading the body is paid
-    exactly once and only in the error path."""
+    exactly once and only in the error path.
+
+    Async-read on the streaming response — ``resp.read()`` would be
+    synchronous and fails against a real async httpx stream (only works
+    against MockTransport because mocks buffer eagerly). See Copilot
+    review on PR #60.
+    """
     try:
-        body = resp.read().decode("utf-8", errors="replace")
+        await resp.aread()
+        body = resp.text
     except Exception:
         return False
     if not body:
