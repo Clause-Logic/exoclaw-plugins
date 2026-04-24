@@ -30,7 +30,7 @@ from exoclaw.agent.tools.protocol import ToolContext
 from exoclaw.agent.tools.registry import ToolRegistry
 from exoclaw.bus.events import InboundMessage
 from exoclaw.providers.protocol import LLMProvider
-from exoclaw.providers.types import LLMResponse, ToolCallRequest
+from exoclaw.providers.types import ContextWindowExceededError, LLMResponse, ToolCallRequest
 from uuid_utils import uuid7
 
 from .intents import (
@@ -149,6 +149,26 @@ _registry_var: contextvars.ContextVar[ToolRegistry | None] = contextvars.Context
 # Module-level so DBOS can register and replay them.
 
 
+# Sentinel key for the ``_chat_step`` → ``DBOSExecutor.chat`` handshake
+# that short-circuits DBOS retries on context-window-exceeded errors.
+# ``ContextWindowExceededError`` is deterministic: retrying the same
+# oversized prompt produces the exact same failure, burning the step's
+# 3-attempt retry budget with nothing to gain and — worse — raising
+# ``DBOSMaxStepRetriesExceeded`` at the end, which doesn't match the
+# ``except ContextWindowExceededError`` guard in
+# ``AgentLoop._run_agent_loop``. That guard is where
+# ``on_context_overflow`` compaction lives, so swallowing the specific
+# type silently disables compaction.
+#
+# Fix: catch inside the step, return a sentinel dict, and have
+# ``chat()`` re-raise the original exception. DBOS records this as a
+# normal step completion (no retry, no journal of the exception), and
+# the loop gets the right exception class back. On replay DBOS returns
+# the sentinel from the journal and the same re-raise path fires
+# identically.
+_CHAT_STEP_CONTEXT_EXCEEDED_SENTINEL = "__exoclaw_context_window_exceeded__"
+
+
 @DBOS.step(retries_allowed=True, max_attempts=3, interval_seconds=2)
 async def _chat_step(
     messages: list[dict[str, Any]],
@@ -158,19 +178,31 @@ async def _chat_step(
     max_tokens: int,
     reasoning_effort: str | None,
 ) -> dict[str, Any]:
-    """Durable LLM call. Result is cached by DBOS on completion."""
+    """Durable LLM call. Result is cached by DBOS on completion.
+
+    ``ContextWindowExceededError`` is returned as a sentinel result
+    instead of raised — retries can't fix a deterministic overflow and
+    the exception must reach ``AgentLoop._run_agent_loop`` *as itself*
+    so the overflow handler fires. See sentinel comment above.
+    """
     provider = _provider_var.get()
     if provider is None:
         raise RuntimeError("provider not set — call set_turn_context() before running turns")
     tools = json.loads(tools_json) if tools_json else None
-    resp = await provider.chat(
-        messages=messages,
-        tools=tools,
-        model=model,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        reasoning_effort=reasoning_effort,
-    )
+    try:
+        resp = await provider.chat(
+            messages=messages,
+            tools=tools,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
+        )
+    except ContextWindowExceededError as e:
+        return {
+            "__exoclaw_error__": _CHAT_STEP_CONTEXT_EXCEEDED_SENTINEL,
+            "message": str(e) or "Prompt exceeds model context window",
+        }
     return _response_to_dict(resp)
 
 
@@ -434,6 +466,11 @@ class DBOSExecutor:
             max_tokens=max_tokens,
             reasoning_effort=reasoning_effort,
         )
+        if result.get("__exoclaw_error__") == _CHAT_STEP_CONTEXT_EXCEEDED_SENTINEL:
+            # Step handed the exception back as data; re-raise so
+            # ``AgentLoop._run_agent_loop``'s overflow handler can
+            # compact messages and retry the turn.
+            raise ContextWindowExceededError(result.get("message", ""))
         return _dict_to_response(result)
 
     async def execute_tool(

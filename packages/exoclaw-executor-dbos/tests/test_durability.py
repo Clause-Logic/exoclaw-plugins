@@ -244,6 +244,51 @@ class TestDurability:
         finally:
             turn_mod._loop = prior_loop
 
+    async def test_chat_context_exceeded_not_retried(self, dbos_instance: Any) -> None:
+        """``ContextWindowExceededError`` from the provider must surface
+        to the caller *immediately* and *as itself* — not retried three
+        times by DBOS and then re-raised as
+        ``DBOSMaxStepRetriesExceeded``.
+
+        Retries on this class burn 4+ seconds and the provider's quota
+        for a deterministic failure, and the wrapper exception class
+        doesn't match ``AgentLoop._run_agent_loop``'s
+        ``except ContextWindowExceededError`` guard — which is where
+        ``on_context_overflow`` compaction lives. Silently breaking
+        compaction this way is exactly how openclaw's 2026-04-24
+        feed-digest turn landed on ``Sorry, I encountered an error``
+        instead of compacting and retrying.
+        """
+        from exoclaw.providers.types import ContextWindowExceededError
+        from exoclaw_executor_dbos.executor import DBOSExecutor
+
+        provider = MagicMock()
+        provider.chat = AsyncMock(side_effect=ContextWindowExceededError("prompt too long"))
+
+        executor = DBOSExecutor()
+
+        @DBOS.workflow()
+        async def run_once() -> str:
+            try:
+                await executor.chat(
+                    provider,
+                    messages=[{"role": "user", "content": "hi"}],
+                )
+            except ContextWindowExceededError as e:
+                return f"ok: {e}"
+            return "no exception"
+
+        with SetWorkflowID(str(uuid.uuid4())):
+            result = await run_once()
+
+        assert result.startswith("ok:"), (
+            f"expected ContextWindowExceededError to surface, got {result!r}"
+        )
+        assert provider.chat.await_count == 1, (
+            f"provider.chat should be invoked exactly once (no retries on "
+            f"deterministic failure), got {provider.chat.await_count}"
+        )
+
     async def test_executor_advertises_handles_response_send(self) -> None:
         """``DBOSExecutor`` tells the core it will own the publish so
         ``_process_message`` returns None and the outer agent loop skips
