@@ -17,6 +17,7 @@ Usage in nanobot wiring:
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import dataclasses
 import json
@@ -36,6 +37,65 @@ from .intents import (
     _bind_intent_buffer,
     _release_intent_buffer,
 )
+
+# Source for per-turn prior-history messages — phase 2b of
+# exoclaw/docs/memory-model.md. ``DBOSExecutor.load_messages``
+# invokes the source on every LLM iteration; installing a
+# disk-backed closure (via ``set_prior_source``) lets prior not be
+# heap-resident between iterations. The back-compat
+# ``set_messages`` path snapshots the list in a closure, matching
+# pre-phase-2b RAM behaviour.
+_PriorSource = Callable[[], list[dict[str, object]]]
+
+
+def _empty_prior_source() -> list[dict[str, object]]:
+    """Default prior source before any seed call. Returns an empty
+    list so a premature ``load_messages`` doesn't raise
+    ``LookupError``."""
+    return []
+
+
+def _build_lazy_prior_source(
+    *,
+    full: list[dict[str, object]],
+    history_snapshot: list[dict[str, object]],
+    reload_history: Callable[[], list[dict[str, object]]],
+) -> _PriorSource | None:
+    """Construct a disk-backed ``PriorSource`` for a turn's prior.
+
+    Locates ``history_snapshot`` inside ``full`` by dict ``id()``
+    matching — ``session.get_history`` and ``Conversation.build_prompt``
+    share dict refs into ``session.messages``, so id matching is
+    reliable when it works. When it doesn't (empty history, isolated
+    mode, a PromptBuilder that deep-copies), returns ``None`` so the
+    caller falls back to the closure-over-list path.
+
+    The returned source closes over ``prefix`` and ``suffix`` (small,
+    stable for the turn) and invokes ``reload_history`` on each
+    call. RAM savings come from the history slice — usually the bulk
+    of prompt size — not being heap-resident between LLM iterations.
+    """
+    if not history_snapshot:
+        return None
+    history_ids = {id(m) for m in history_snapshot}
+    first_idx: int | None = None
+    for i, m in enumerate(full):
+        if id(m) in history_ids:
+            first_idx = i
+            break
+    if first_idx is None:
+        return None
+    last_idx = first_idx + len(history_snapshot) - 1
+    if last_idx >= len(full):
+        return None
+    prefix = list(full[:first_idx])
+    suffix = list(full[last_idx + 1 :])
+
+    def _source() -> list[dict[str, object]]:
+        return [*prefix, *reload_history(), *suffix]
+
+    return _source
+
 
 # ── Serialization helpers ────────────────────────────────────────────────────
 
@@ -240,25 +300,26 @@ class DBOSExecutor:
     handles_response_send: bool = True
 
     def __init__(self) -> None:
-        # Per-turn message buffer, backed by a ContextVar. The executor
-        # itself is a process-wide singleton wired at app startup; the
-        # ContextVar keeps concurrent turns (e.g. a periodic background
-        # task firing while a user-initiated turn is still running)
-        # from trampling each other's list. asyncio.create_task() snapshots
-        # the current context, so each turn's call chain gets an
-        # independent binding.
+        # Per-turn buffer split into prior (read-only, seeded by
+        # build_prompt or compaction) and delta (appended to mid-turn).
+        # Mirrors ``DirectExecutor``'s phase 2a shape — keeps prior
+        # replaceable by a lazy ``PriorSource`` (phase 2b: see
+        # ``set_prior_source`` below) so the history slice can be
+        # re-read on each LLM iteration rather than heap-resident.
         #
-        # This ContextVar is also per-instance because each executor
-        # stores its own ContextVar object on self, so two executors
-        # constructed in the same task do not share state — unusual in
-        # production but common in tests. The ``id(self)`` in the name
-        # only makes the variable more distinctive in debugging /
-        # tracebacks; ContextVars are keyed by object identity, not
-        # name, so the name has no effect on isolation. The buffer does
-        # not need to be durable across DBOS recovery because
-        # run_durable_turn encapsulates the whole turn.
-        self._messages_var: contextvars.ContextVar[list[dict[str, object]]] = (
-            contextvars.ContextVar(f"dbos_executor_messages_{id(self)}")
+        # Both vars are per-instance ContextVars: per-instance so two
+        # executors in the same task don't share state (unusual in
+        # production, common in tests); per-task via the ContextVar
+        # machinery so concurrent turns on the same executor don't
+        # trample each other's buffer (e.g. a periodic background
+        # task firing while a user-initiated turn is still running).
+        # The buffer does not need to be durable across DBOS recovery
+        # because ``run_durable_turn`` encapsulates the whole turn.
+        self._prior_var: contextvars.ContextVar[_PriorSource] = contextvars.ContextVar(
+            f"dbos_executor_prior_{id(self)}"
+        )
+        self._delta_var: contextvars.ContextVar[list[dict[str, object]]] = contextvars.ContextVar(
+            f"dbos_executor_delta_{id(self)}"
         )
 
     def __deepcopy__(self, memo: dict) -> DBOSExecutor:
@@ -272,24 +333,56 @@ class DBOSExecutor:
         # the copy.
         return self
 
-    def _get_buffer(self) -> list[dict[str, object]]:
+    def _get_prior_source(self) -> _PriorSource:
         try:
-            return self._messages_var.get()
+            return self._prior_var.get()
+        except LookupError:
+            self._prior_var.set(_empty_prior_source)
+            return _empty_prior_source
+
+    def _get_prior(self) -> list[dict[str, object]]:
+        return self._get_prior_source()()
+
+    def _get_delta(self) -> list[dict[str, object]]:
+        try:
+            return self._delta_var.get()
         except LookupError:
             buf: list[dict[str, object]] = []
-            self._messages_var.set(buf)
+            self._delta_var.set(buf)
             return buf
 
     def append_messages(self, messages: list[dict[str, object]]) -> None:
-        self._get_buffer().extend(messages)
+        self._get_delta().extend(messages)
 
     def load_messages(self) -> list[dict[str, object]]:
-        return list(self._get_buffer())
+        # Concat into a new list — callers treat the return as owned.
+        # Same ownership contract as DirectExecutor.load_messages.
+        return [*self._get_prior(), *self._get_delta()]
 
     def set_messages(self, messages: list[dict[str, object]]) -> None:
-        # Fresh list per call — peer tasks that already captured a
-        # reference via load_messages() must not observe later mutations.
-        self._messages_var.set(list(messages))
+        # Back-compat: capture the list in a snapshotting closure and
+        # install it as the prior source. Matches the pre-phase-2b
+        # behaviour — the list stays heap-resident for the turn. Use
+        # ``set_prior_source`` directly when a cheaper re-read is
+        # available.
+        snapshot = list(messages)
+        self.set_prior_source(lambda: snapshot)
+
+    def set_prior_source(self, source: _PriorSource) -> None:
+        """Install a lazy source for prior-history messages.
+
+        Each ``load_messages`` invokes ``source()`` to materialise
+        prior fresh, so the history slice need not stay heap-resident
+        between LLM iterations. Phase 2b of
+        exoclaw/docs/memory-model.md.
+
+        Also clears delta — sequential turns on the same task share
+        the ContextVar binding; without the clear the next turn would
+        see the prior turn's delta leaked into its ``load_messages``
+        return.
+        """
+        self._prior_var.set(source)
+        self._delta_var.set([])
 
     async def chat(
         self,
@@ -392,6 +485,25 @@ class DBOSExecutor:
             plugin_context=plugin_context,
             **kwargs,
         )
+        # Phase 2b auto-wire: when the Conversation exposes a sync
+        # ``load_persisted_history(session_id)``, install a disk-backed
+        # prior source so the history slice is re-read per LLM
+        # iteration instead of being heap-resident for the whole turn.
+        # Falls back to the snapshot path (``set_messages``) if the
+        # conversation doesn't expose the method or if the slice
+        # detection fails (deep-copying PromptBuilder, isolated mode,
+        # etc.). See exoclaw/docs/memory-model.md phase 2b.
+        loader = getattr(conversation, "load_persisted_history", None)
+        if callable(loader) and not asyncio.iscoroutinefunction(loader):
+            history_snapshot = loader(session_id)
+            source = _build_lazy_prior_source(
+                full=messages,
+                history_snapshot=history_snapshot,
+                reload_history=lambda: loader(session_id),
+            )
+            if source is not None:
+                self.set_prior_source(source)
+                return messages
         self.set_messages(messages)
         return messages
 
