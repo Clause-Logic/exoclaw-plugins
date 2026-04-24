@@ -321,17 +321,30 @@ class TestDBOSExecutorBuildPromptAutoWire:
         # Snapshot fallback — full list captured in a closure.
         assert executor.load_messages() == [*prefix, *suffix]
 
-    async def test_falls_back_when_history_refs_dont_match(self) -> None:
-        """If a PromptBuilder deep-copies history (breaks shared
-        refs), id() matching fails. Snapshot fallback keeps
-        behaviour correct."""
+    async def test_content_equality_match_handles_fresh_dicts(self) -> None:
+        """The slice match is by dict EQUALITY, not ``id()``. A
+        PromptBuilder that deep-copies history (same content, fresh
+        dict instances) still gets the lazy source installed.
+
+        Critical for the production path: DefaultConversation's
+        ``session.get_history`` strips timestamps and returns fresh
+        dicts per call, so call-#1 (from ``build_prompt``) and
+        call-#2 (from ``load_persisted_history``) return dicts with
+        the same content but different ``id()``. An id-only match
+        would ALWAYS fall back to the snapshot path here — defeating
+        phase 2b's RAM win. Content equality makes the auto-wire
+        actually fire against real Conversation implementations.
+        """
         history = [{"role": "user", "content": "h1"}]
         prefix = [{"role": "system", "content": "sys"}]
         suffix = [{"role": "user", "content": "new"}]
 
         conv = MagicMock()
+        # build_prompt returns fresh dicts; load_persisted_history
+        # returns a DIFFERENT set of fresh dicts with identical
+        # content. Matches how DefaultConversation behaves.
         conv.build_prompt = AsyncMock(return_value=[*prefix, *[dict(m) for m in history], *suffix])
-        conv.load_persisted_history = lambda _sid: list(history)
+        conv.load_persisted_history = lambda _sid: [dict(m) for m in history]
         conv.record = AsyncMock()
         conv.clear = AsyncMock(return_value=True)
 
@@ -339,35 +352,41 @@ class TestDBOSExecutorBuildPromptAutoWire:
         await executor.build_prompt(conv, "s:1", "new")
 
         first = executor.load_messages()
-        history.append({"role": "assistant", "content": "injected"})
+        assert [m["content"] for m in first] == ["sys", "h1", "new"]
+
+        # Append to the source-of-truth list. The lazy source re-reads
+        # load_persisted_history on each call, so the next
+        # load_messages reflects the new message.
+        history.append({"role": "assistant", "content": "h2-appended"})
         second = executor.load_messages()
-        assert first == second  # snapshot doesn't see post-build mutations
+        assert [m["content"] for m in second] == ["sys", "h1", "h2-appended", "new"]
 
-    async def test_falls_back_when_history_refs_partially_overlap(self) -> None:
-        """If a PromptBuilder preserves SOME history dicts by ref but
-        replaces others (e.g. tool-result compaction rewrites a
-        subset), id matching would still hit on the preserved ones.
-        Using that match to build a lazy source would re-inject the
-        UN-transformed full history on later iterations, diverging
-        from what the initial LLM call actually saw. The slice-level
-        id check catches this and bails to the snapshot path.
+    async def test_falls_back_when_prompt_builder_transforms_history(
+        self,
+    ) -> None:
+        """If the PromptBuilder TRANSFORMS a history message (not
+        just copies — e.g. tool-result compaction rewriting the
+        content), the transformed dict won't equal the original in
+        the history_snapshot. Contiguous sublist match fails,
+        snapshot fallback takes over.
 
-        Regression for PR #57 review — without the full-slice id
-        verification, this test would install a broken lazy source
-        and the second ``load_messages`` would reflect mutations to
-        ``history`` (the un-transformed version).
+        This is the right behaviour: installing a lazy source that
+        re-reads untransformed history would diverge from what the
+        initial LLM call saw.
         """
         history = [
             {"role": "user", "content": "h1"},
-            {"role": "assistant", "content": "h2"},
+            {"role": "tool", "content": "massive-tool-output-42KB"},
         ]
         prefix = [{"role": "system", "content": "sys"}]
         suffix = [{"role": "user", "content": "new"}]
 
+        # build_prompt returns a COMPACTED version of the tool msg.
+        # Content differs — equality match should fail.
+        compacted = {"role": "tool", "content": "[tool output truncated]"}
         conv = MagicMock()
-        # Shared ref for h1, fresh dict for h2 — partial overlap.
-        conv.build_prompt = AsyncMock(return_value=[*prefix, history[0], dict(history[1]), *suffix])
-        conv.load_persisted_history = lambda _sid: list(history)
+        conv.build_prompt = AsyncMock(return_value=[*prefix, dict(history[0]), compacted, *suffix])
+        conv.load_persisted_history = lambda _sid: [dict(m) for m in history]
         conv.record = AsyncMock()
         conv.clear = AsyncMock(return_value=True)
 
@@ -375,11 +394,10 @@ class TestDBOSExecutorBuildPromptAutoWire:
         await executor.build_prompt(conv, "s:1", "new")
 
         first = executor.load_messages()
-        history.append({"role": "assistant", "content": "injected"})
+        # Mutating the untransformed history must NOT leak into
+        # subsequent load_messages — we're on the snapshot path.
+        history.append({"role": "assistant", "content": "h3-injected"})
         second = executor.load_messages()
-        # Snapshot path — mutations to ``history`` must NOT leak into
-        # the executor's prior view. A broken lazy source would let
-        # them through.
         assert first == second
 
     async def test_falls_back_when_no_load_persisted_history(self) -> None:
