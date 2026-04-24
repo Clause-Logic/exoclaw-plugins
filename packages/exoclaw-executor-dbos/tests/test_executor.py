@@ -366,9 +366,7 @@ class TestDBOSExecutorBuildPromptAutoWire:
 
         conv = MagicMock()
         # Shared ref for h1, fresh dict for h2 — partial overlap.
-        conv.build_prompt = AsyncMock(
-            return_value=[*prefix, history[0], dict(history[1]), *suffix]
-        )
+        conv.build_prompt = AsyncMock(return_value=[*prefix, history[0], dict(history[1]), *suffix])
         conv.load_persisted_history = lambda _sid: list(history)
         conv.record = AsyncMock()
         conv.clear = AsyncMock(return_value=True)
