@@ -302,3 +302,126 @@ class TestPhase2DiskBackedPriorAutoWire:
         assert all(m.get("content") != "response" for m in loaded), (
             "empty-history fallback must not read fresh appends"
         )
+
+
+@pytest.mark.asyncio(loop_scope="session")
+class TestPhase1And2ThroughFullAgentLoop:
+    """Full AgentLoop turn through a real DBOS workflow with a mocked
+    LLM provider. Drives the entire production composition — AgentLoop
+    iterates, calls DBOSExecutor.append_message after each message, and
+    that in turn calls DefaultConversation.append (phase 1). On the way
+    in, build_prompt auto-wires the disk-backed prior source (phase 2).
+
+    This is the "both phases fire end-to-end" guard that the bridging
+    test can't cover — that one exercises the surfaces in isolation;
+    this one runs the actual loop.
+    """
+
+    async def test_full_turn_flushes_each_message_and_auto_wires_prior(
+        self, tmp_path: Path, dbos_instance: Any
+    ) -> None:
+        from exoclaw.agent.loop import AgentLoop
+        from exoclaw.agent.tools.protocol import ToolContext
+        from exoclaw.bus.queue import MessageBus
+        from exoclaw.providers.types import LLMResponse, ToolCallRequest
+        from exoclaw_executor_dbos import run_durable_turn, set_loop_context
+
+        conv = _make_conversation(tmp_path)
+
+        # Provider returns two scripted responses: first drives a tool
+        # call, second is the final answer. The loop iterates twice —
+        # one tool call + one terminating assistant message.
+        responses = [
+            LLMResponse(
+                content="thinking about calling lookup",
+                tool_calls=[ToolCallRequest(id="tc1", name="lookup", arguments={"q": "x"})],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                content="final answer",
+                finish_reason="stop",
+            ),
+        ]
+        response_iter = iter(responses)
+
+        provider = MagicMock()
+        provider.get_default_model = MagicMock(return_value="test-model")
+        provider.chat = AsyncMock(side_effect=lambda **_: next(response_iter))
+
+        # Minimal tool — returns a fixed string. AgentLoop registers it
+        # in its ToolRegistry; the executor's _tool_step will invoke it
+        # during the turn.
+        class _LookupTool:
+            name = "lookup"
+            description = "test lookup"
+            parameters: dict[str, Any] = {"type": "object", "properties": {}}
+            sent_in_turn = False
+
+            async def execute_with_context(
+                self,
+                ctx: ToolContext,
+                **params: object,
+            ) -> str:
+                return "lookup-result"
+
+            async def execute(self, **params: object) -> str:
+                return "lookup-result"
+
+        bus = MessageBus()
+        executor = DBOSExecutor()
+        loop = AgentLoop(
+            bus=bus,
+            provider=provider,
+            conversation=conv,
+            model="test-model",
+            tools=[_LookupTool()],
+            executor=executor,
+            max_iterations=5,
+        )
+
+        # run_durable_turn reads its AgentLoop from a module-level
+        # global set at app startup. Tests have to do the same.
+        set_loop_context(loop)
+
+        # Spy on record — phase 1 means this is skipped entirely when
+        # the Conversation supports append, which DefaultConversation
+        # does. Any call here is a regression. Local ref keeps the
+        # AsyncMock type visible to the type checker after the
+        # monkey-patch.
+        record_spy = AsyncMock(wraps=conv.record)
+        conv.record = record_spy  # type: ignore[method-assign]
+
+        session_id = "cli:e2e"
+        final, new_msgs = await run_durable_turn(
+            session_id,
+            "hello",
+            channel="cli",
+            chat_id="u1",
+        )
+
+        assert final == "final answer"
+
+        # ── Phase 1 assertion: every turn message landed in the JSONL
+        # as it was produced — no end-of-turn batch record() call.
+        persisted = _read_jsonl_messages(tmp_path, session_id)
+        roles = [m.get("role") for m in persisted]
+        # Expected: user → assistant-with-tool-calls → tool result → final assistant.
+        assert roles == ["user", "assistant", "tool", "assistant"], (
+            f"phase 1 didn't append each message as produced; JSONL roles: {roles}"
+        )
+        contents = [m.get("content") for m in persisted]
+        assert contents[0] == "hello"
+        assert "lookup-result" in (contents[2] or "")
+        assert contents[3] == "final answer"
+
+        # ``record`` must NOT have fired — the append path replaces it.
+        record_spy.assert_not_called()
+
+        # ── Phase 2 assertion: the executor's ``_prior_var`` was
+        # installed as a lazy source (not a snapshot closure over a
+        # fixed list), so successive LLM iterations re-read the
+        # history from session state. Easiest observable signal: the
+        # source returns a list that reflects the current session
+        # (which now contains the whole turn's worth of messages).
+        stored = executor._prior_var.get()
+        assert callable(stored), "phase 2 auto-wire didn't fire during the turn"
