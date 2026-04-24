@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import AsyncExitStack
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -335,12 +336,17 @@ class TestCreate:
             for p in patches:
                 p.stop()
 
-    async def test_create_with_caller_supplied_provider(self) -> None:
+    async def test_create_with_caller_supplied_provider(self, tmp_path: Path) -> None:
         """When a host passes ``provider=``, nanobot must use it and
         skip building ``LiteLLMProvider`` entirely — otherwise the
         whole point of the seam (letting hosts swap the LLM client
-        without nanobot knowing about every provider) is lost."""
+        without nanobot knowing about every provider) is lost.
+
+        Sets ``workspace`` to ``tmp_path`` so ``create()`` doesn't
+        ``mkdir ~/.nanobot/workspace`` and touch the runner's home
+        directory (Copilot review on #61)."""
         config = Config()
+        config.agents.defaults.workspace = str(tmp_path)
 
         custom_provider = MagicMock()
         custom_provider.get_default_model = MagicMock(return_value="custom-model")
