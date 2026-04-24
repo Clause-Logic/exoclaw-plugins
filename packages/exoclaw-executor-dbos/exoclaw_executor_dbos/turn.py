@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from dbos import DBOS
-from exoclaw.bus.events import OutboundMessage
+from dbos import DBOS, Queue
+from exoclaw.bus.events import InboundMessage, OutboundMessage
 
 # ── Module-level globals (set once at startup, available during recovery) ────
 # These are plain globals, not ContextVars, because the loop reference is
@@ -152,3 +152,89 @@ async def run_durable_turn(
             )
 
     return final_content, new_msgs
+
+
+# ── Durable inbound enqueue ─────────────────────────────────────────────────
+#
+# Closes the crash window between "channel received the message" and
+# "agent started processing it". Before this, ``AgentLoop.run`` drained
+# an in-memory ``asyncio.Queue`` and a container OOM in that window
+# dropped the message — the channel's "eyes" ack had already been sent
+# but no DBOS workflow existed to replay. Now channels flow through
+# ``DBOSExecutor.enqueue_inbound`` (wired by AgentLoop when the executor
+# advertises ``handles_inbound_enqueue=True``), which puts the message
+# on the queue below. DBOS persists the enqueue record to SQLite
+# immediately, so the message survives any subsequent crash.
+#
+# ``concurrency=1`` replaces ``AgentLoop._processing_lock``: DBOS runs
+# at most one inbound turn at a time, matching the previous serial
+# behavior. If per-session parallelism is later wanted, revisit.
+
+INBOUND_QUEUE_NAME = "exoclaw-inbound"
+
+# Declared at module import so DBOS sees the queue before
+# ``DBOS.launch()`` starts its queue manager thread. A lazy
+# construction path (first ``enqueue_inbound`` call) ran into
+# ``Listening to 0 queues`` at launch and then failed submissions
+# against the queue manager's thread pool — the manager only
+# picks up queues that exist at launch time.
+#
+# The module is imported once per process, so this single
+# construction is safe. ``DBOS.destroy()`` + a new ``DBOS()`` in
+# the same process (test fixtures only; production constructs
+# DBOS once) keeps the same Queue instance, which continues to
+# work because the new ``DBOS.launch()`` discovers the existing
+# global queue registry.
+_INBOUND_QUEUE: Queue = Queue(INBOUND_QUEUE_NAME, concurrency=1)
+
+
+def _get_inbound_queue() -> Queue:
+    """Accessor kept as a function so tests can monkeypatch it if
+    they want a fake queue, and to localize the import site."""
+    return _INBOUND_QUEUE
+
+
+@DBOS.workflow()
+async def run_inbound_turn(
+    channel: str,
+    sender_id: str,
+    chat_id: str,
+    content: str,
+    media: list[str] | None = None,
+    metadata: dict[str, Any] | None = None,
+    session_key_override: str | None = None,
+    model_override: str | None = None,
+) -> None:
+    """Durable top-of-funnel for an inbound channel message.
+
+    Started via ``queue.enqueue_async`` from
+    ``DBOSExecutor.enqueue_inbound`` the moment a channel hands the
+    message over. The workflow args are persisted to the DBOS system
+    DB synchronously so a crash after enqueue and before the body
+    runs still replays with the full message.
+
+    Reconstructs the ``InboundMessage`` and drives it through
+    ``AgentLoop._dispatch``. ``_dispatch`` calls ``_process_message``
+    which in turn calls the executor's ``run_turn`` — which is
+    ``run_durable_turn`` — as a child workflow, so the LLM-loop side
+    of durability is unaffected.
+
+    Args are flat primitives (matching the subagent workflow shape)
+    rather than a packed dict so DBOS's argument codec sees only
+    types it serializes without surprises.
+    """
+    loop = _loop
+    if loop is None:
+        raise RuntimeError("AgentLoop not set — call set_loop_context() at startup")
+
+    msg = InboundMessage(
+        channel=channel,
+        sender_id=sender_id,
+        chat_id=chat_id,
+        content=content,
+        media=list(media or []),
+        metadata=dict(metadata or {}),
+        session_key_override=session_key_override,
+        model_override=model_override,
+    )
+    await loop._dispatch(msg)

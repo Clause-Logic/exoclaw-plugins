@@ -28,6 +28,7 @@ from dbos import DBOS, Queue, SetWorkflowID
 from exoclaw.agent.conversation import Conversation
 from exoclaw.agent.tools.protocol import ToolContext
 from exoclaw.agent.tools.registry import ToolRegistry
+from exoclaw.bus.events import InboundMessage
 from exoclaw.providers.protocol import LLMProvider
 from exoclaw.providers.types import LLMResponse, ToolCallRequest
 from uuid_utils import uuid7
@@ -317,6 +318,15 @@ class DBOSExecutor:
     # the caller opted in via ``publish_response=True``, _process_message
     # returns None so _dispatch doesn't double-publish.
     handles_response_send: bool = True
+
+    # Signals to AgentLoop that the executor durably persists inbound
+    # messages as they arrive from channels. AgentLoop wires the bus's
+    # ``publish_inbound`` to our ``enqueue_inbound`` so a message is
+    # in DBOS's journal before the channel's publish call returns —
+    # closing the crash window between "channel received" and "agent
+    # started processing" where the in-memory asyncio bus would
+    # otherwise drop the message on OOM.
+    handles_inbound_enqueue: bool = True
 
     def __init__(self) -> None:
         # Per-turn buffer split into prior (read-only, seeded by
@@ -620,6 +630,46 @@ class DBOSExecutor:
                 plugin_context=plugin_context,
                 model=model,
                 publish_response=publish_response,
+            )
+
+    async def enqueue_inbound(self, msg: InboundMessage) -> None:
+        """Durably persist a channel-received message and queue it for
+        processing.
+
+        Wired by ``AgentLoop.__init__`` onto the bus's inbound hook —
+        channels call ``bus.publish_inbound(msg)``, the bus forwards
+        to this method, and the DBOS Queue persists the workflow args
+        to SQLite before ``enqueue_async`` returns. A subsequent crash
+        replays the enqueued workflow once the process comes back,
+        instead of losing the message as the in-memory asyncio queue
+        used to.
+
+        Workflow id uses the channel-provided ``message_id`` from
+        ``metadata`` when present so the same Zulip/Slack/etc. event
+        replaying through the channel (e.g. after a ``BAD_EVENT_QUEUE_ID``
+        reconnect) dedupes on DBOS's side. Missing ``message_id`` falls
+        back to a uuid7 — still durable, just not dedup'd.
+        """
+        from .turn import _get_inbound_queue, run_inbound_turn
+
+        msg_id = msg.metadata.get("message_id") if msg.metadata else None
+        if msg_id is not None:
+            wfid = f"inbound:{msg.channel}:{msg.chat_id}:{msg_id}"
+        else:
+            wfid = f"inbound:{msg.channel}:{msg.chat_id}:{uuid7().hex}"
+
+        queue = _get_inbound_queue()
+        with SetWorkflowID(wfid):
+            await queue.enqueue_async(
+                run_inbound_turn,
+                channel=msg.channel,
+                sender_id=msg.sender_id,
+                chat_id=msg.chat_id,
+                content=msg.content,
+                media=list(msg.media),
+                metadata=dict(msg.metadata),
+                session_key_override=msg.session_key_override,
+                model_override=msg.model_override,
             )
 
     async def run_hook(
