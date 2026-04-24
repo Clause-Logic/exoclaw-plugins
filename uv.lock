@@ -14,6 +14,7 @@ members = [
     "exoclaw-nanobot",
     "exoclaw-openrouter-search",
     "exoclaw-provider-litellm",
+    "exoclaw-provider-openai",
     "exoclaw-subagent",
     "exoclaw-tools-batch",
     "exoclaw-tools-cron",
@@ -799,6 +800,25 @@ requires-dist = [
     { name = "exoclaw", specifier = ">=0.10.1" },
     { name = "json-repair", specifier = ">=0.1.0" },
     { name = "litellm", specifier = ">=1.0.0,<1.82.7" },
+    { name = "structlog", specifier = ">=25.0.0" },
+]
+
+[[package]]
+name = "exoclaw-provider-openai"
+version = "0.1.0"
+source = { editable = "packages/exoclaw-provider-openai" }
+dependencies = [
+    { name = "exoclaw" },
+    { name = "httpx" },
+    { name = "json-repair" },
+    { name = "structlog" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "exoclaw", specifier = ">=0.21.0" },
+    { name = "httpx", specifier = ">=0.27.0" },
+    { name = "json-repair", specifier = ">=0.1.0" },
     { name = "structlog", specifier = ">=25.0.0" },
 ]
 
