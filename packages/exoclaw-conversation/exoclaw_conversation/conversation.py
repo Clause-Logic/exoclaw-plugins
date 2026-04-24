@@ -223,6 +223,43 @@ class DefaultConversation:
 
         return messages
 
+    def load_persisted_history(self, session_id: str) -> list[dict[str, Any]]:
+        """Return the same history slice ``build_prompt`` uses for a session.
+
+        Synchronous, with no additional transformations beyond
+        ``session.get_history(...)`` — returns the unconsolidated tail
+        that ``build_prompt`` would read from history (trimmed to
+        ``memory_window``, with leading non-user messages dropped to
+        avoid orphan tool-result blocks). Unlike ``build_prompt``,
+        this method:
+
+        * does NOT build the system prompt, runtime context, or render
+          the new user message. Prefix/suffix assembly stays in
+          ``build_prompt`` where it belongs;
+        * does NOT trigger consolidation as a side effect;
+        * does NOT touch the async event loop — it's a synchronous
+          history lookup so an executor's ``PriorSource`` closure
+          (phase 2b of docs/memory-model.md) can call it from the
+          in-progress LLM iteration.
+
+        Intended caller: an executor that installs
+        ``set_prior_source(lambda: conv.load_persisted_history(session_id))``
+        as the lazy prior after the initial ``build_prompt`` runs.
+        Successive ``load_messages`` calls then re-read the session
+        state rather than holding a Python-heap list between LLM
+        iterations.
+
+        Structure-wise: because this method skips the system prompt /
+        runtime context / new-user-message assembly, callers that need
+        those still have to source them somewhere (typically by
+        caching the initial ``build_prompt`` return's prefix and
+        suffix). The split lives in the executor so it can compose
+        ``[*prefix, *load_persisted_history(session_id), *suffix]``
+        per iteration — prefix and suffix are small and cheap to hold.
+        """
+        session = self.history.get_or_create(session_id)
+        return session.get_history(max_messages=self.memory_window)
+
     async def append(
         self,
         session_id: str,
