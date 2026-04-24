@@ -88,6 +88,19 @@ def _build_lazy_prior_source(
     last_idx = first_idx + len(history_snapshot) - 1
     if last_idx >= len(full):
         return None
+    # Verify the whole slice matches history by identity, not just
+    # the first hit. A ``PromptBuilder`` that replaces some history
+    # dicts while leaving others shared (e.g. tool-result compaction)
+    # would partially overlap the id set at the right starting index
+    # but the slice itself mixes original + transformed dicts. Using
+    # this source would then re-inject the untransformed history on
+    # later iterations and diverge from what the initial LLM call saw.
+    # Bail to the snapshot path if any dict in the slice isn't one of
+    # the history refs.
+    slice_ids = [id(m) for m in full[first_idx : last_idx + 1]]
+    expected_ids = [id(m) for m in history_snapshot]
+    if slice_ids != expected_ids:
+        return None
     prefix = list(full[:first_idx])
     suffix = list(full[last_idx + 1 :])
 

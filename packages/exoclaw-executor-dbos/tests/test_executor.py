@@ -343,6 +343,47 @@ class TestDBOSExecutorBuildPromptAutoWire:
         second = executor.load_messages()
         assert first == second  # snapshot doesn't see post-build mutations
 
+    async def test_falls_back_when_history_refs_partially_overlap(self) -> None:
+        """If a PromptBuilder preserves SOME history dicts by ref but
+        replaces others (e.g. tool-result compaction rewrites a
+        subset), id matching would still hit on the preserved ones.
+        Using that match to build a lazy source would re-inject the
+        UN-transformed full history on later iterations, diverging
+        from what the initial LLM call actually saw. The slice-level
+        id check catches this and bails to the snapshot path.
+
+        Regression for PR #57 review — without the full-slice id
+        verification, this test would install a broken lazy source
+        and the second ``load_messages`` would reflect mutations to
+        ``history`` (the un-transformed version).
+        """
+        history = [
+            {"role": "user", "content": "h1"},
+            {"role": "assistant", "content": "h2"},
+        ]
+        prefix = [{"role": "system", "content": "sys"}]
+        suffix = [{"role": "user", "content": "new"}]
+
+        conv = MagicMock()
+        # Shared ref for h1, fresh dict for h2 — partial overlap.
+        conv.build_prompt = AsyncMock(
+            return_value=[*prefix, history[0], dict(history[1]), *suffix]
+        )
+        conv.load_persisted_history = lambda _sid: list(history)
+        conv.record = AsyncMock()
+        conv.clear = AsyncMock(return_value=True)
+
+        executor = DBOSExecutor()
+        await executor.build_prompt(conv, "s:1", "new")
+
+        first = executor.load_messages()
+        history.append({"role": "assistant", "content": "injected"})
+        second = executor.load_messages()
+        # Snapshot path — mutations to ``history`` must NOT leak into
+        # the executor's prior view. A broken lazy source would let
+        # them through.
+        assert first == second
+
     async def test_falls_back_when_no_load_persisted_history(self) -> None:
         prefix = [{"role": "system", "content": "sys"}]
         suffix = [{"role": "user", "content": "new"}]
