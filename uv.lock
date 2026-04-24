@@ -672,7 +672,7 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-executor-dbos"
-version = "0.13.0"
+version = "0.13.1"
 source = { editable = "packages/exoclaw-executor-dbos" }
 dependencies = [
     { name = "dbos" },
