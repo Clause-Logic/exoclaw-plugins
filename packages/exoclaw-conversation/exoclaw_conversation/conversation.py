@@ -223,6 +223,44 @@ class DefaultConversation:
 
         return messages
 
+    async def append(
+        self,
+        session_id: str,
+        message: dict[str, Any],
+    ) -> None:
+        """Persist a single message as it is produced during a turn.
+
+        Implements ``AppendableConversation`` from exoclaw>=0.19.0. The
+        agent loop calls this after each assistant response, tool
+        result, and the incoming user message. ``_prepare_turn`` runs
+        per-message (tool-result truncation, runtime-context tag
+        stripping, etc.) so calling it with a one-element list is the
+        same shape as the end-of-turn batch path.
+
+        No hooks fire here — ``post_turn`` owns the end-of-turn hook
+        trigger so consolidation / agent_end callbacks only run once
+        per turn, not per message.
+        """
+        session = self.history.get_or_create(session_id)
+        prepared = self._prepare_turn(session, [message])
+        # ``_prepare_turn`` may return an empty list (empty assistant,
+        # runtime-context-only user) — in which case there is nothing
+        # to flush and ``save_append`` would write a metadata-only
+        # file on first call for the session. Skip.
+        if prepared:
+            self.history.save_append(session, prepared)
+
+    async def post_turn(self, session_id: str) -> None:
+        """Fire end-of-turn hooks after all messages have been persisted.
+
+        Called once per turn by the agent loop when the append path is
+        active. Hook turns (``channel="hook"``) are skipped to prevent
+        recursion — an agent_end hook that calls back into the bot
+        would otherwise retrigger itself.
+        """
+        if self._bus and self._turn_channel != "hook":
+            await self._fire_agent_hooks(session_id)
+
     async def record(
         self,
         session_id: str,
@@ -230,8 +268,12 @@ class DefaultConversation:
     ) -> None:
         """Persist the messages produced during one turn.
 
-        After persisting, fires agent_end hooks if a bus is configured and the
-        turn is not itself a hook turn (channel != "hook").
+        Legacy end-of-turn batch path. The agent loop calls this only
+        when the Conversation doesn't satisfy ``AppendableConversation``
+        (i.e. doesn't implement ``append``). This implementation does
+        — see above — so under a current-version agent loop this
+        method isn't called during normal turns. Kept for external
+        callers that still drive persistence via ``record`` directly.
         """
         session = self.history.get_or_create(session_id)
         prepared = self._prepare_turn(session, new_messages)

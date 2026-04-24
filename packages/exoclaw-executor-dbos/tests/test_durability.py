@@ -277,6 +277,98 @@ class TestDurability:
         parsed = UUID(value)
         assert parsed.version == 7, f"expected uuidv7, got version {parsed.version}"
 
+    async def test_append_message_step_replayed_on_recovery(self, dbos_instance: Any) -> None:
+        """``_append_message_step`` journals its completion, so on
+        workflow recovery DBOS returns the recorded result without
+        re-invoking ``conversation.append``. Without the step
+        boundary, a crash between the append body finishing and the
+        workflow returning would re-append the same message to the
+        session JSONL on replay (DefaultConversation.append is not
+        idempotent at the filesystem level — two writes → two lines).
+        """
+        from dbos._schemas.system_database import SystemSchema
+        from exoclaw_executor_dbos.executor import (
+            _append_message_step,
+            _conversation_var,
+        )
+
+        conversation = MagicMock()
+        conversation.append = AsyncMock()
+        _conversation_var.set(conversation)
+
+        @DBOS.workflow()
+        async def single_append_workflow() -> None:
+            await _append_message_step(
+                "sess-append-1",
+                {"role": "assistant", "content": "hi"},
+            )
+
+        wfid = str(uuid.uuid4())
+        with SetWorkflowID(wfid):
+            await single_append_workflow()
+
+        assert conversation.append.await_count == 1
+
+        # Force the workflow back to PENDING to simulate a crash
+        # between step-body completion and workflow return.
+        with dbos_instance._sys_db.engine.begin() as conn:
+            conn.execute(
+                sa.update(SystemSchema.workflow_status)
+                .values({"status": "PENDING"})
+                .where(SystemSchema.workflow_status.c.workflow_uuid == wfid)
+            )
+
+        _conversation_var.set(conversation)
+        handles = DBOS._recover_pending_workflows()
+        assert len(handles) == 1
+        handles[0].get_result()
+
+        # Step was replayed from the journal — conversation.append
+        # must NOT have been called a second time.
+        assert conversation.append.await_count == 1, (
+            "append was called on replay — step journal not honored"
+        )
+
+    async def test_post_turn_step_replayed_on_recovery(self, dbos_instance: Any) -> None:
+        """``_post_turn_step`` must replay from the journal so the
+        end-of-turn hooks (agent_end, consolidation triggers) don't
+        fire twice across a crash boundary."""
+        from dbos._schemas.system_database import SystemSchema
+        from exoclaw_executor_dbos.executor import (
+            _conversation_var,
+            _post_turn_step,
+        )
+
+        conversation = MagicMock()
+        conversation.post_turn = AsyncMock()
+        _conversation_var.set(conversation)
+
+        @DBOS.workflow()
+        async def single_post_turn_workflow() -> None:
+            await _post_turn_step("sess-post-1")
+
+        wfid = str(uuid.uuid4())
+        with SetWorkflowID(wfid):
+            await single_post_turn_workflow()
+
+        assert conversation.post_turn.await_count == 1
+
+        with dbos_instance._sys_db.engine.begin() as conn:
+            conn.execute(
+                sa.update(SystemSchema.workflow_status)
+                .values({"status": "PENDING"})
+                .where(SystemSchema.workflow_status.c.workflow_uuid == wfid)
+            )
+
+        _conversation_var.set(conversation)
+        handles = DBOS._recover_pending_workflows()
+        assert len(handles) == 1
+        handles[0].get_result()
+
+        assert conversation.post_turn.await_count == 1, (
+            "post_turn hooks fired twice on replay — step journal not honored"
+        )
+
     async def test_dbos_batch_store_survives_simulated_restart(
         self, dbos_instance: Any, tmp_path: Any
     ) -> None:
@@ -343,19 +435,19 @@ class TestDurability:
             "batch announced before all 6 members finished — should_announce decision is wrong"
         )
 
-        # "Restart": destroy DBOS, relaunch. Batch state lives on disk in
-        # tmp_path, so the rebuilt store sees all 6 members still present.
-        DBOS.destroy()
-        import exoclaw_executor_dbos.executor  # noqa: F401
-        import exoclaw_executor_dbos.turn  # noqa: F401
-
-        config: DBOSConfig = {
-            "name": "durability-test",
-            "system_database_url": f"sqlite:///{_DB_PATH}",
-            "enable_otlp": False,
-        }
-        DBOS(config=config)
-        DBOS.launch()
+        # "Restart": instantiate a fresh DBOSBatchStore pointing at the
+        # same on-disk state. This simulates the production failure
+        # mode — a new SubagentManager on a recovered process gets a
+        # fresh in-memory ``_batches`` dict, and the fix (file-backed
+        # state) means this new store still sees the prior 6 members.
+        #
+        # Deliberately does NOT destroy+relaunch DBOS: the original
+        # test did, but that invalidated the session-scoped fixture
+        # for any tests that ran afterwards. The batch-state survival
+        # is a DBOSBatchStore invariant, not a DBOS-journal invariant,
+        # so the simpler simulation is the honest one.
+        restarted_store = DBOSBatchStore(workspace=tmp_path)
+        store = restarted_store  # pick up from the new store for the rest
 
         # Complete the remaining 3.
         for tid in task_ids[3:]:
