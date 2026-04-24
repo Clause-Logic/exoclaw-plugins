@@ -89,9 +89,19 @@ def _build_lazy_prior_source(
     n = len(history_snapshot)
     if n > len(full):
         return None
+    # Element-wise compare rather than ``full[i:i+n] == history_snapshot``
+    # — slicing allocates a fresh list on every iteration. For a large
+    # ``full`` with a large history window, that's a lot of short-lived
+    # lists on the hot ``build_prompt`` path.
+    first_item = history_snapshot[0]
     first_idx: int | None = None
     for i in range(len(full) - n + 1):
-        if full[i : i + n] == history_snapshot:
+        if full[i] != first_item:
+            continue
+        for j in range(1, n):
+            if full[i + j] != history_snapshot[j]:
+                break
+        else:
             first_idx = i
             break
     if first_idx is None:

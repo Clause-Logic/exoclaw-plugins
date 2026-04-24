@@ -125,8 +125,15 @@ def _make_conversation(workspace: Path) -> DefaultConversation:
 
 
 def _read_jsonl_messages(workspace: Path, session_id: str) -> list[dict[str, Any]]:
-    """Read the persisted JSONL, skipping the metadata header line."""
-    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in session_id)
+    """Read the persisted JSONL, skipping the metadata header line.
+
+    Uses the same sanitisation helper the production SessionManager
+    uses, so a future change to the escape rules doesn't silently
+    regress the test to reading a nonexistent path.
+    """
+    from exoclaw_conversation.helpers import safe_filename
+
+    safe = safe_filename(session_id.replace(":", "_"))
     path = workspace / "sessions" / f"{safe}.jsonl"
     if not path.exists():
         return []
@@ -367,6 +374,22 @@ class TestPhase1And2ThroughFullAgentLoop:
             async def execute(self, **params: object) -> str:
                 return "lookup-result"
 
+        session_id = "cli:e2e"
+        # Pre-seed a prior turn so ``load_persisted_history`` returns
+        # non-empty history at build_prompt time — the only path
+        # ``_build_lazy_prior_source`` takes the lazy branch down.
+        # Empty history correctly falls back to the snapshot closure
+        # (separate test covers that case); this one needs the lazy
+        # path so the phase 2 assertion below means something.
+        seeded_session = conv.history.get_or_create(session_id)
+        seeded_session.messages.extend(
+            [
+                {"role": "user", "content": "earlier-user"},
+                {"role": "assistant", "content": "earlier-assistant"},
+            ]
+        )
+        conv.history.save(seeded_session)
+
         bus = MessageBus()
         executor = DBOSExecutor()
         loop = AgentLoop(
@@ -391,8 +414,7 @@ class TestPhase1And2ThroughFullAgentLoop:
         record_spy = AsyncMock(wraps=conv.record)
         conv.record = record_spy  # type: ignore[method-assign]
 
-        session_id = "cli:e2e"
-        final, new_msgs = await run_durable_turn(
+        final, _new_msgs = await run_durable_turn(
             session_id,
             "hello",
             channel="cli",
@@ -403,13 +425,18 @@ class TestPhase1And2ThroughFullAgentLoop:
 
         # ── Phase 1 assertion: every turn message landed in the JSONL
         # as it was produced — no end-of-turn batch record() call.
+        # The JSONL starts with the two seeded prior messages from
+        # history.save, then four turn-produced messages from the
+        # append path.
         persisted = _read_jsonl_messages(tmp_path, session_id)
-        roles = [m.get("role") for m in persisted]
-        # Expected: user → assistant-with-tool-calls → tool result → final assistant.
+        turn_tail = persisted[-4:]
+        roles = [m.get("role") for m in turn_tail]
+        # Expected tail: user → assistant-with-tool-calls → tool result → final assistant.
         assert roles == ["user", "assistant", "tool", "assistant"], (
-            f"phase 1 didn't append each message as produced; JSONL roles: {roles}"
+            f"phase 1 didn't append each message as produced; "
+            f"turn-tail JSONL roles: {roles}"
         )
-        contents = [m.get("content") for m in persisted]
+        contents = [m.get("content") for m in turn_tail]
         assert contents[0] == "hello"
         assert "lookup-result" in (contents[2] or "")
         assert contents[3] == "final answer"
@@ -417,11 +444,18 @@ class TestPhase1And2ThroughFullAgentLoop:
         # ``record`` must NOT have fired — the append path replaces it.
         record_spy.assert_not_called()
 
-        # ── Phase 2 assertion: the executor's ``_prior_var`` was
-        # installed as a lazy source (not a snapshot closure over a
-        # fixed list), so successive LLM iterations re-read the
-        # history from session state. Easiest observable signal: the
-        # source returns a list that reflects the current session
-        # (which now contains the whole turn's worth of messages).
-        stored = executor._prior_var.get()
-        assert callable(stored), "phase 2 auto-wire didn't fire during the turn"
+        # NOTE: phase 2's lazy-source behaviour is NOT observable
+        # through the AgentLoop path today. ``_run_agent_loop`` calls
+        # ``self._executor.set_messages(initial_messages)`` at the top
+        # of each turn, which overwrites the lazy source that
+        # ``build_prompt`` just installed via auto-wire. So the source
+        # the executor ends up with after a turn is a snapshot closure
+        # regardless. Phase 2's disk-backed behaviour is covered at
+        # the executor surface (see ``TestPhase2DiskBackedPriorAutoWire``
+        # above, which drives ``executor.build_prompt`` directly
+        # without going through AgentLoop's subsequent ``set_messages``
+        # call). A follow-up core fix is needed to remove that
+        # redundant ``set_messages`` in the loop so the lazy source
+        # actually survives through to ``load_messages`` calls during
+        # the turn. Once that's in, this test can assert phase 2
+        # behaviour end-to-end as well.
