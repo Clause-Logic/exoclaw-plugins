@@ -1067,11 +1067,12 @@ class TestDefaultConversation:
             prompt=_make_mock_prompt(),
             bus=bus,
         )
-        conv._fire_agent_hooks = AsyncMock()  # type: ignore[method-assign]
+        hooks = AsyncMock()
+        conv._fire_agent_hooks = hooks  # type: ignore[method-assign]
 
         await conv.post_turn("test:1")
 
-        conv._fire_agent_hooks.assert_awaited_once_with("test:1")
+        hooks.assert_awaited_once_with("test:1")
 
     async def test_post_turn_skips_hook_turn(self) -> None:
         """Hook turns (``channel="hook"``) must not re-fire hooks —
@@ -1086,11 +1087,12 @@ class TestDefaultConversation:
             bus=bus,
         )
         conv._turn_channel = "hook"
-        conv._fire_agent_hooks = AsyncMock()  # type: ignore[method-assign]
+        hooks = AsyncMock()
+        conv._fire_agent_hooks = hooks  # type: ignore[method-assign]
 
         await conv.post_turn("test:1")
 
-        conv._fire_agent_hooks.assert_not_called()
+        hooks.assert_not_called()
 
     async def test_post_turn_skips_when_no_bus(self) -> None:
         """No bus means no hook dispatch — same guard shape as the
@@ -1101,11 +1103,12 @@ class TestDefaultConversation:
             memory=_make_mock_memory(),
             prompt=_make_mock_prompt(),
         )
-        conv._fire_agent_hooks = AsyncMock()  # type: ignore[method-assign]
+        hooks = AsyncMock()
+        conv._fire_agent_hooks = hooks  # type: ignore[method-assign]
 
         await conv.post_turn("test:1")
 
-        conv._fire_agent_hooks.assert_not_called()
+        hooks.assert_not_called()
 
     async def test_clear_success(self) -> None:
         session = Session(key="test:1")

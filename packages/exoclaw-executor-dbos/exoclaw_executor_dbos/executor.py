@@ -401,10 +401,7 @@ class DBOSExecutor:
         session loader while a silent drop would not be.
         """
         _conversation_var.set(conversation)
-        # Cast to Any for the step argument — ``message`` is typed as
-        # ``dict[str, object]`` at the executor surface but the step
-        # body treats values opaquely.
-        await _append_message_step(session_id, message)  # type: ignore[arg-type]
+        await _append_message_step(session_id, message)
 
     async def post_turn(
         self,
