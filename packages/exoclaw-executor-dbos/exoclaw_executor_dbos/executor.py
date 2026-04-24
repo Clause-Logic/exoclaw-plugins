@@ -121,17 +121,26 @@ async def _append_message_step(
     crash replay. Conversation is read from a ContextVar set by
     ``DBOSExecutor.append_message`` rather than passed in: Conversation
     isn't JSON-serializable so it can't go through step arguments.
+
+    Callers (``DBOSExecutor.append_message``) only invoke this step
+    when the agent loop has already confirmed the Conversation
+    implements ``AppendableConversation``. Reaching the step with a
+    non-appendable conversation or no conversation at all is a wiring
+    bug — fail loudly rather than silently drop the persistence and
+    lose the message.
     """
     conversation = _conversation_var.get()
     if conversation is None:
-        raise RuntimeError("conversation not set — call set_turn_context() before running turns")
-    # Only Conversations that implement ``AppendableConversation`` should
-    # reach this path; callers guard on ``_supports_append``. We re-check
-    # here because the ContextVar could in principle hold something else
-    # if the executor is wired unusually.
+        raise RuntimeError(
+            "conversation not set on _conversation_var — "
+            "DBOSExecutor.append_message should have set it before invoking this step"
+        )
     fn = getattr(conversation, "append", None)
-    if fn is None:
-        return
+    if not callable(fn):
+        raise TypeError(
+            f"conversation {type(conversation).__name__} has no callable ``append`` — "
+            "only implementations of AppendableConversation may reach this step"
+        )
     await fn(session_id, message)
 
 
@@ -141,14 +150,21 @@ async def _post_turn_step(session_id: str) -> None:
 
     Same ContextVar pattern as ``_append_message_step`` — the step
     carries ``session_id`` in its arguments and reads the conversation
-    from the process-local ContextVar.
+    from the process-local ContextVar. Missing ``post_turn`` is a
+    wiring bug: fail loudly rather than skip end-of-turn hooks.
     """
     conversation = _conversation_var.get()
     if conversation is None:
-        raise RuntimeError("conversation not set — call set_turn_context() before running turns")
+        raise RuntimeError(
+            "conversation not set on _conversation_var — "
+            "DBOSExecutor.post_turn should have set it before invoking this step"
+        )
     fn = getattr(conversation, "post_turn", None)
-    if fn is None:
-        return
+    if not callable(fn):
+        raise TypeError(
+            f"conversation {type(conversation).__name__} has no callable ``post_turn`` — "
+            "only implementations of AppendableConversation may reach this step"
+        )
     await fn(session_id)
 
 

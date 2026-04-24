@@ -277,12 +277,6 @@ class TestDurability:
         parsed = UUID(value)
         assert parsed.version == 7, f"expected uuidv7, got version {parsed.version}"
 
-    # NOTE: the append/post_turn replay tests run BEFORE
-    # ``test_dbos_batch_store_survives_simulated_restart`` because that
-    # test destroys + re-launches DBOS in-place, which invalidates the
-    # session-scoped ``dbos_instance`` fixture's engine for anything
-    # that runs after it. Keep this order.
-
     async def test_append_message_step_replayed_on_recovery(self, dbos_instance: Any) -> None:
         """``_append_message_step`` journals its completion, so on
         workflow recovery DBOS returns the recorded result without
@@ -441,19 +435,19 @@ class TestDurability:
             "batch announced before all 6 members finished — should_announce decision is wrong"
         )
 
-        # "Restart": destroy DBOS, relaunch. Batch state lives on disk in
-        # tmp_path, so the rebuilt store sees all 6 members still present.
-        DBOS.destroy()
-        import exoclaw_executor_dbos.executor  # noqa: F401
-        import exoclaw_executor_dbos.turn  # noqa: F401
-
-        config: DBOSConfig = {
-            "name": "durability-test",
-            "system_database_url": f"sqlite:///{_DB_PATH}",
-            "enable_otlp": False,
-        }
-        DBOS(config=config)
-        DBOS.launch()
+        # "Restart": instantiate a fresh DBOSBatchStore pointing at the
+        # same on-disk state. This simulates the production failure
+        # mode — a new SubagentManager on a recovered process gets a
+        # fresh in-memory ``_batches`` dict, and the fix (file-backed
+        # state) means this new store still sees the prior 6 members.
+        #
+        # Deliberately does NOT destroy+relaunch DBOS: the original
+        # test did, but that invalidated the session-scoped fixture
+        # for any tests that ran afterwards. The batch-state survival
+        # is a DBOSBatchStore invariant, not a DBOS-journal invariant,
+        # so the simpler simulation is the honest one.
+        restarted_store = DBOSBatchStore(workspace=tmp_path)
+        store = restarted_store  # pick up from the new store for the rest
 
         # Complete the remaining 3.
         for tid in task_ids[3:]:
