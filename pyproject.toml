@@ -4,6 +4,7 @@ members = ["packages/*"]
 [tool.uv.sources]
 exoclaw-conversation = { workspace = true }
 exoclaw-provider-litellm = { workspace = true }
+exoclaw-provider-openai = { workspace = true }
 exoclaw-channel-cli = { workspace = true }
 exoclaw-channel-heartbeat = { workspace = true }
 exoclaw-tools-workspace = { workspace = true }
