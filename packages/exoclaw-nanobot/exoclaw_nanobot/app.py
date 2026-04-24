@@ -14,6 +14,7 @@ from exoclaw.agent.loop import AgentLoop
 from exoclaw.agent.tools.registry import ToolRegistry
 from exoclaw.bus.events import OutboundMessage
 from exoclaw.bus.queue import MessageBus
+from exoclaw.providers.protocol import LLMProvider
 from exoclaw_channel_cli.channel import CLIChannel
 from exoclaw_channel_heartbeat.service import HeartbeatService
 from exoclaw_conversation.context import ContextBuilder
@@ -213,6 +214,7 @@ async def create(
     extra_tools: list[Any] | None = None,
     enable_cli: bool = True,
     cli_channel: Any | None = None,
+    provider: LLMProvider | None = None,
     on_pre_context: Callable[[str, str, str, str], Awaitable[str]] | None = None,
     on_pre_tool: Callable[[str, dict[str, Any], str], Awaitable[str | None]] | None = None,
     on_post_turn: Callable[[list[dict[str, Any]], str, str, str], Awaitable[None]] | None = None,
@@ -255,21 +257,28 @@ async def create(
     workspace.mkdir(parents=True, exist_ok=True)
 
     model = config.agents.defaults.model
-    prov = config.get_provider(model)
-    router = _build_router(config)
-    provider = LiteLLMProvider(
-        api_key=prov.api_key or None if prov else None,
-        api_base=config.get_api_base(model),
-        default_model=model,
-        extra_headers=prov.extra_headers if prov else None,
-        model_max_concurrent={
-            name: cfg.max_concurrent for name, cfg in config.agents.models.items()
-        },
-        model_extra_body={
-            name: cfg.extra_body for name, cfg in config.agents.models.items() if cfg.extra_body
-        },
-        router=router,
-    )
+    # Caller-provided provider wins — ``provider=`` was added so hosts
+    # that want a different LLM client (e.g. a direct-httpx streaming
+    # provider for memory reasons) can wire it themselves without
+    # nanobot needing to know about every provider implementation. When
+    # ``None``, fall back to the built-in LiteLLM path so existing
+    # callers aren't affected.
+    if provider is None:
+        prov = config.get_provider(model)
+        router = _build_router(config)
+        provider = LiteLLMProvider(
+            api_key=prov.api_key or None if prov else None,
+            api_base=config.get_api_base(model),
+            default_model=model,
+            extra_headers=prov.extra_headers if prov else None,
+            model_max_concurrent={
+                name: cfg.max_concurrent for name, cfg in config.agents.models.items()
+            },
+            model_extra_body={
+                name: cfg.extra_body for name, cfg in config.agents.models.items() if cfg.extra_body
+            },
+            router=router,
+        )
 
     bus = MessageBus()
 
