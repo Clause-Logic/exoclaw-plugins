@@ -335,6 +335,68 @@ class TestCreate:
             for p in patches:
                 p.stop()
 
+    async def test_create_with_caller_supplied_provider(self) -> None:
+        """When a host passes ``provider=``, nanobot must use it and
+        skip building ``LiteLLMProvider`` entirely — otherwise the
+        whole point of the seam (letting hosts swap the LLM client
+        without nanobot knowing about every provider) is lost."""
+        config = Config()
+
+        custom_provider = MagicMock()
+        custom_provider.get_default_model = MagicMock(return_value="custom-model")
+
+        litellm_ctor = MagicMock(
+            return_value=MagicMock(get_default_model=MagicMock(return_value="x"))
+        )
+
+        patches = [
+            patch("exoclaw_nanobot.app.LiteLLMProvider", litellm_ctor),
+            patch(
+                "exoclaw_nanobot.app.MessageBus",
+                MagicMock(return_value=MagicMock(publish_outbound=AsyncMock())),
+            ),
+            patch("exoclaw_nanobot.app.DefaultConversation"),
+            patch(
+                "exoclaw_nanobot.app.AgentLoop",
+                MagicMock(return_value=MagicMock(run=AsyncMock(), process_direct=AsyncMock())),
+            ),
+            patch(
+                "exoclaw_nanobot.app.CLIChannel",
+                MagicMock(return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())),
+            ),
+            patch(
+                "exoclaw_nanobot.app.CronService",
+                MagicMock(return_value=MagicMock(start=AsyncMock())),
+            ),
+            patch("exoclaw_nanobot.app.CronTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.MessageTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.SpawnTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.SubagentManager", MagicMock(return_value=MagicMock())),
+            patch(
+                "exoclaw_nanobot.app.HeartbeatService",
+                MagicMock(return_value=MagicMock(start=AsyncMock())),
+            ),
+            patch("exoclaw_nanobot.app.ReadFileTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.WriteFileTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.EditFileTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.ListDirTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.ExecTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.WebSearchTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.WebFetchTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.connect_mcp_servers", AsyncMock()),
+        ]
+
+        for p in patches:
+            p.start()
+
+        try:
+            app = await create(config, provider=custom_provider)
+            assert isinstance(app, ExoclawNanobot)
+            litellm_ctor.assert_not_called()
+        finally:
+            for p in patches:
+                p.stop()
+
     async def test_create_with_mcp_servers(self) -> None:
         config = Config()
         config.tools.mcp_servers = {  # type: ignore[assignment]
