@@ -974,6 +974,105 @@ class TestDefaultConversation:
         assert all(c["text"] != f"{CONV_TAG}\nmetadata" for c in saved)
 
     # ------------------------------------------------------------------
+    # load_persisted_history — sync reader used by phase 2b PriorSource
+    # (added for exoclaw>=0.20.0)
+    # ------------------------------------------------------------------
+
+    def test_load_persisted_history_returns_session_messages(self) -> None:
+        """Baseline: ``load_persisted_history`` returns whatever
+        ``session.get_history(max_messages=memory_window)`` returns —
+        the same path ``build_prompt`` uses to assemble its history
+        slice, minus the system prompt / runtime context / new user
+        message that wrap it.
+        """
+        session = Session(key="test:1")
+        session.messages = [
+            {"role": "user", "content": "msg-1"},
+            {"role": "assistant", "content": "reply-1"},
+        ]
+        conv = DefaultConversation(
+            history=_make_mock_history(session),
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+        )
+
+        result = conv.load_persisted_history("test:1")
+
+        assert result == [
+            {"role": "user", "content": "msg-1"},
+            {"role": "assistant", "content": "reply-1"},
+        ]
+
+    def test_load_persisted_history_is_sync(self) -> None:
+        """Phase 2b's executor ``PriorSource`` closure invokes this
+        method synchronously from inside an already-running event
+        loop (the agent loop's iteration). It must not be a
+        coroutine — a coroutine return would bypass the event loop
+        machinery and leak an un-awaited warning at best, or return
+        a coroutine object instead of a list at worst.
+        """
+        import asyncio
+
+        session = Session(key="test:1")
+        conv = DefaultConversation(
+            history=_make_mock_history(session),
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+        )
+
+        # Direct call returns a list, not a coroutine.
+        result = conv.load_persisted_history("test:1")
+        assert not asyncio.iscoroutine(result)
+        assert isinstance(result, list)
+
+    def test_load_persisted_history_does_not_trigger_consolidation(self) -> None:
+        """Unlike ``build_prompt``, this method is meant to be called
+        on every LLM iteration as part of the PriorSource closure.
+        Triggering consolidation per iteration would DoS the memory
+        backend and stall the loop — the contract is strictly read."""
+        session = Session(key="test:1")
+        memory = _make_mock_memory()
+        conv = DefaultConversation(
+            history=_make_mock_history(session),
+            memory=memory,
+            prompt=_make_mock_prompt(),
+        )
+
+        for _ in range(5):
+            conv.load_persisted_history("test:1")
+
+        # None of the consolidation entry points fired.
+        assert memory.consolidate.call_count == 0
+        assert memory.consolidate_messages.call_count == 0
+
+    def test_load_persisted_history_respects_memory_window(self) -> None:
+        """``session.get_history`` trims to ``memory_window`` (and
+        aligns the start to a user turn so tool-result messages don't
+        get orphaned at the prefix). ``load_persisted_history``
+        inherits that — otherwise callers would pass a different-size
+        list to the LLM than ``build_prompt`` did on the initial turn.
+        """
+        session = Session(key="test:1")
+        # 10 messages; memory_window will be set to 4. Tail-4 starts
+        # at msg-6 (user), which already satisfies the
+        # "first msg is user" alignment — so get_history returns all 4.
+        session.messages = [
+            {"role": "user" if i % 2 == 0 else "assistant", "content": f"msg-{i}"}
+            for i in range(10)
+        ]
+        conv = DefaultConversation(
+            history=_make_mock_history(session),
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+            memory_window=4,
+        )
+
+        result = conv.load_persisted_history("test:1")
+        assert len(result) == 4
+        assert result[0]["content"] == "msg-6"  # user
+        assert result[-1]["content"] == "msg-9"  # assistant — most recent
+
+    # ------------------------------------------------------------------
     # AppendableConversation surface (added for exoclaw>=0.19.0)
     # ------------------------------------------------------------------
 

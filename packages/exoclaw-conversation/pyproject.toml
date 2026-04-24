@@ -5,7 +5,7 @@ description = "File-backed conversation implementation for exoclaw"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "exoclaw>=0.19.0",
+    "exoclaw>=0.20.0",
     "structlog>=25.0.0",
     "rich>=14.0.0,<15.0.0",
 ]
