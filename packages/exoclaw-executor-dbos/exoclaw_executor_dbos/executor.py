@@ -149,24 +149,26 @@ _registry_var: contextvars.ContextVar[ToolRegistry | None] = contextvars.Context
 # Module-level so DBOS can register and replay them.
 
 
-# Sentinel key for the ``_chat_step`` → ``DBOSExecutor.chat`` handshake
-# that short-circuits DBOS retries on context-window-exceeded errors.
-# ``ContextWindowExceededError`` is deterministic: retrying the same
-# oversized prompt produces the exact same failure, burning the step's
-# 3-attempt retry budget with nothing to gain and — worse — raising
-# ``DBOSMaxStepRetriesExceeded`` at the end, which doesn't match the
-# ``except ContextWindowExceededError`` guard in
+# Handshake between ``_chat_step`` and ``DBOSExecutor.chat`` that
+# short-circuits DBOS retries on context-window-exceeded errors. The
+# step returns a dict whose ``_CHAT_STEP_ERROR_KEY`` field carries the
+# ``_CHAT_STEP_CONTEXT_EXCEEDED_VALUE`` marker; ``chat()`` reads the
+# field and re-raises ``ContextWindowExceededError``.
+#
+# Why this shape: ``ContextWindowExceededError`` is deterministic —
+# retrying the same oversized prompt produces the exact same failure,
+# burning the step's 3-attempt retry budget with nothing to gain and —
+# worse — raising ``DBOSMaxStepRetriesExceeded`` at the end, which
+# doesn't match the ``except ContextWindowExceededError`` guard in
 # ``AgentLoop._run_agent_loop``. That guard is where
 # ``on_context_overflow`` compaction lives, so swallowing the specific
-# type silently disables compaction.
-#
-# Fix: catch inside the step, return a sentinel dict, and have
-# ``chat()`` re-raise the original exception. DBOS records this as a
-# normal step completion (no retry, no journal of the exception), and
-# the loop gets the right exception class back. On replay DBOS returns
-# the sentinel from the journal and the same re-raise path fires
-# identically.
-_CHAT_STEP_CONTEXT_EXCEEDED_SENTINEL = "__exoclaw_context_window_exceeded__"
+# type silently disables compaction. Catching inside the step and
+# returning a sentinel lets DBOS record a normal completion (no retry,
+# no error journal) while still getting the right exception class to
+# the loop. On replay DBOS returns the sentinel from the journal and
+# the re-raise path fires identically.
+_CHAT_STEP_ERROR_KEY = "__exoclaw_error__"
+_CHAT_STEP_CONTEXT_EXCEEDED_VALUE = "__exoclaw_context_window_exceeded__"
 
 
 @DBOS.step(retries_allowed=True, max_attempts=3, interval_seconds=2)
@@ -200,7 +202,7 @@ async def _chat_step(
         )
     except ContextWindowExceededError as e:
         return {
-            "__exoclaw_error__": _CHAT_STEP_CONTEXT_EXCEEDED_SENTINEL,
+            _CHAT_STEP_ERROR_KEY: _CHAT_STEP_CONTEXT_EXCEEDED_VALUE,
             "message": str(e) or "Prompt exceeds model context window",
         }
     return _response_to_dict(resp)
@@ -466,7 +468,7 @@ class DBOSExecutor:
             max_tokens=max_tokens,
             reasoning_effort=reasoning_effort,
         )
-        if result.get("__exoclaw_error__") == _CHAT_STEP_CONTEXT_EXCEEDED_SENTINEL:
+        if result.get(_CHAT_STEP_ERROR_KEY) == _CHAT_STEP_CONTEXT_EXCEEDED_VALUE:
             # Step handed the exception back as data; re-raise so
             # ``AgentLoop._run_agent_loop``'s overflow handler can
             # compact messages and retry the turn.
