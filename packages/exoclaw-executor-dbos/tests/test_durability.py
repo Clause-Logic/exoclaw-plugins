@@ -277,6 +277,104 @@ class TestDurability:
         parsed = UUID(value)
         assert parsed.version == 7, f"expected uuidv7, got version {parsed.version}"
 
+    # NOTE: the append/post_turn replay tests run BEFORE
+    # ``test_dbos_batch_store_survives_simulated_restart`` because that
+    # test destroys + re-launches DBOS in-place, which invalidates the
+    # session-scoped ``dbos_instance`` fixture's engine for anything
+    # that runs after it. Keep this order.
+
+    async def test_append_message_step_replayed_on_recovery(self, dbos_instance: Any) -> None:
+        """``_append_message_step`` journals its completion, so on
+        workflow recovery DBOS returns the recorded result without
+        re-invoking ``conversation.append``. Without the step
+        boundary, a crash between the append body finishing and the
+        workflow returning would re-append the same message to the
+        session JSONL on replay (DefaultConversation.append is not
+        idempotent at the filesystem level — two writes → two lines).
+        """
+        from dbos._schemas.system_database import SystemSchema
+        from exoclaw_executor_dbos.executor import (
+            _append_message_step,
+            _conversation_var,
+        )
+
+        conversation = MagicMock()
+        conversation.append = AsyncMock()
+        _conversation_var.set(conversation)
+
+        @DBOS.workflow()
+        async def single_append_workflow() -> None:
+            await _append_message_step(
+                "sess-append-1",
+                {"role": "assistant", "content": "hi"},
+            )
+
+        wfid = str(uuid.uuid4())
+        with SetWorkflowID(wfid):
+            await single_append_workflow()
+
+        assert conversation.append.await_count == 1
+
+        # Force the workflow back to PENDING to simulate a crash
+        # between step-body completion and workflow return.
+        with dbos_instance._sys_db.engine.begin() as conn:
+            conn.execute(
+                sa.update(SystemSchema.workflow_status)
+                .values({"status": "PENDING"})
+                .where(SystemSchema.workflow_status.c.workflow_uuid == wfid)
+            )
+
+        _conversation_var.set(conversation)
+        handles = DBOS._recover_pending_workflows()
+        assert len(handles) == 1
+        handles[0].get_result()
+
+        # Step was replayed from the journal — conversation.append
+        # must NOT have been called a second time.
+        assert conversation.append.await_count == 1, (
+            "append was called on replay — step journal not honored"
+        )
+
+    async def test_post_turn_step_replayed_on_recovery(self, dbos_instance: Any) -> None:
+        """``_post_turn_step`` must replay from the journal so the
+        end-of-turn hooks (agent_end, consolidation triggers) don't
+        fire twice across a crash boundary."""
+        from dbos._schemas.system_database import SystemSchema
+        from exoclaw_executor_dbos.executor import (
+            _conversation_var,
+            _post_turn_step,
+        )
+
+        conversation = MagicMock()
+        conversation.post_turn = AsyncMock()
+        _conversation_var.set(conversation)
+
+        @DBOS.workflow()
+        async def single_post_turn_workflow() -> None:
+            await _post_turn_step("sess-post-1")
+
+        wfid = str(uuid.uuid4())
+        with SetWorkflowID(wfid):
+            await single_post_turn_workflow()
+
+        assert conversation.post_turn.await_count == 1
+
+        with dbos_instance._sys_db.engine.begin() as conn:
+            conn.execute(
+                sa.update(SystemSchema.workflow_status)
+                .values({"status": "PENDING"})
+                .where(SystemSchema.workflow_status.c.workflow_uuid == wfid)
+            )
+
+        _conversation_var.set(conversation)
+        handles = DBOS._recover_pending_workflows()
+        assert len(handles) == 1
+        handles[0].get_result()
+
+        assert conversation.post_turn.await_count == 1, (
+            "post_turn hooks fired twice on replay — step journal not honored"
+        )
+
     async def test_dbos_batch_store_survives_simulated_restart(
         self, dbos_instance: Any, tmp_path: Any
     ) -> None:

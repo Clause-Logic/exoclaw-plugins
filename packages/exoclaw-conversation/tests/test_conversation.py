@@ -973,6 +973,140 @@ class TestDefaultConversation:
         saved = session.messages[0]["content"]
         assert all(c["text"] != f"{CONV_TAG}\nmetadata" for c in saved)
 
+    # ------------------------------------------------------------------
+    # AppendableConversation surface (added for exoclaw>=0.19.0)
+    # ------------------------------------------------------------------
+
+    async def test_append_flushes_single_message(self) -> None:
+        """``append`` writes one message to disk via the existing
+        ``save_append`` path — one call, one message. The agent loop
+        uses this after each assistant/tool/user message instead of
+        batching at end-of-turn."""
+        session = Session(key="test:1")
+        history = _make_mock_history(session)
+        conv = DefaultConversation(
+            history=history,
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+        )
+
+        await conv.append("test:1", {"role": "user", "content": "hi"})
+
+        history.save_append.assert_called_once()
+        # save_append gets the single-element prepared list.
+        saved_msgs = history.save_append.call_args.args[1]
+        assert len(saved_msgs) == 1
+        assert saved_msgs[0]["role"] == "user"
+
+    async def test_append_applies_per_message_prepare(self) -> None:
+        """``append`` routes through ``_prepare_turn`` so the
+        per-message transformations (tool-result truncation,
+        runtime-context tag stripping, empty-assistant skip) still
+        apply — the append path must produce the same on-disk shape
+        as the legacy ``record`` path."""
+        session = Session(key="test:1")
+        conv = DefaultConversation(
+            history=_make_mock_history(session),
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+        )
+
+        big = "x" * 2000
+        await conv.append("test:1", {"role": "tool", "content": big})
+
+        assert len(session.messages) == 1
+        assert len(session.messages[0]["content"]) < 600
+        assert "truncated" in session.messages[0]["content"]
+
+    async def test_append_skips_write_for_dropped_message(self) -> None:
+        """Messages that ``_prepare_turn`` drops (empty assistant,
+        runtime-tag-only user) mustn't trigger a ``save_append`` call
+        — a no-op write on a fresh session would otherwise create the
+        session file with only the metadata header."""
+        session = Session(key="test:1")
+        history = _make_mock_history(session)
+        conv = DefaultConversation(
+            history=history,
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+        )
+
+        await conv.append("test:1", {"role": "assistant", "content": None})
+
+        history.save_append.assert_not_called()
+        assert len(session.messages) == 0
+
+    async def test_append_does_not_fire_hooks(self) -> None:
+        """Hooks belong to ``post_turn`` — a per-message append
+        firing hooks would run end-of-turn callbacks after every
+        tool result."""
+        session = Session(key="test:1")
+        bus = MagicMock()
+        bus.publish_inbound = AsyncMock()
+        conv = DefaultConversation(
+            history=_make_mock_history(session),
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+            bus=bus,
+        )
+
+        await conv.append("test:1", {"role": "user", "content": "hi"})
+
+        bus.publish_inbound.assert_not_called()
+
+    async def test_post_turn_delegates_to_fire_agent_hooks(self) -> None:
+        """``post_turn`` owns the hook-firing half of the legacy
+        ``record`` — assert the delegation rather than the nested
+        bus-publish so this test doesn't have to mock the skills
+        loader's hook discovery too."""
+        session = Session(key="test:1")
+        bus = MagicMock()
+        conv = DefaultConversation(
+            history=_make_mock_history(session),
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+            bus=bus,
+        )
+        conv._fire_agent_hooks = AsyncMock()  # type: ignore[method-assign]
+
+        await conv.post_turn("test:1")
+
+        conv._fire_agent_hooks.assert_awaited_once_with("test:1")
+
+    async def test_post_turn_skips_hook_turn(self) -> None:
+        """Hook turns (``channel="hook"``) must not re-fire hooks —
+        prevents recursion when an agent_end hook calls back into
+        the bot."""
+        session = Session(key="test:1")
+        bus = MagicMock()
+        conv = DefaultConversation(
+            history=_make_mock_history(session),
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+            bus=bus,
+        )
+        conv._turn_channel = "hook"
+        conv._fire_agent_hooks = AsyncMock()  # type: ignore[method-assign]
+
+        await conv.post_turn("test:1")
+
+        conv._fire_agent_hooks.assert_not_called()
+
+    async def test_post_turn_skips_when_no_bus(self) -> None:
+        """No bus means no hook dispatch — same guard shape as the
+        legacy ``record``."""
+        session = Session(key="test:1")
+        conv = DefaultConversation(
+            history=_make_mock_history(session),
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+        )
+        conv._fire_agent_hooks = AsyncMock()  # type: ignore[method-assign]
+
+        await conv.post_turn("test:1")
+
+        conv._fire_agent_hooks.assert_not_called()
+
     async def test_clear_success(self) -> None:
         session = Session(key="test:1")
         session.messages = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]

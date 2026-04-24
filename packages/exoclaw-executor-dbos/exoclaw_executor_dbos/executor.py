@@ -54,6 +54,9 @@ def _dict_to_response(d: dict[str, Any]) -> LLMResponse:
 # ContextVars are safe for concurrent workflows — each asyncio Task gets
 # its own copy, so parallel turns don't stomp on each other.
 
+_conversation_var: contextvars.ContextVar[Conversation | None] = contextvars.ContextVar(
+    "_conversation_var", default=None
+)
 _provider_var: contextvars.ContextVar[LLMProvider | None] = contextvars.ContextVar(
     "_provider_var", default=None
 )
@@ -103,6 +106,50 @@ async def _tool_step(
         raise RuntimeError("registry not set — call set_turn_context() before running turns")
     ctx = ToolContext(**ctx_data) if ctx_data else None
     return await registry.execute(name, params, ctx)
+
+
+@DBOS.step()
+async def _append_message_step(
+    session_id: str,
+    message: dict[str, Any],
+) -> None:
+    """Persist a single turn message via the Conversation, journaled.
+
+    Wrapped in a ``@DBOS.step`` so recovery replays the journaled
+    completion without re-invoking ``conversation.append`` — a plain
+    JSONL-append without idempotency would otherwise double-write on
+    crash replay. Conversation is read from a ContextVar set by
+    ``DBOSExecutor.append_message`` rather than passed in: Conversation
+    isn't JSON-serializable so it can't go through step arguments.
+    """
+    conversation = _conversation_var.get()
+    if conversation is None:
+        raise RuntimeError("conversation not set — call set_turn_context() before running turns")
+    # Only Conversations that implement ``AppendableConversation`` should
+    # reach this path; callers guard on ``_supports_append``. We re-check
+    # here because the ContextVar could in principle hold something else
+    # if the executor is wired unusually.
+    fn = getattr(conversation, "append", None)
+    if fn is None:
+        return
+    await fn(session_id, message)
+
+
+@DBOS.step()
+async def _post_turn_step(session_id: str) -> None:
+    """Fire end-of-turn hooks via the Conversation, journaled.
+
+    Same ContextVar pattern as ``_append_message_step`` — the step
+    carries ``session_id`` in its arguments and reads the conversation
+    from the process-local ContextVar.
+    """
+    conversation = _conversation_var.get()
+    if conversation is None:
+        raise RuntimeError("conversation not set — call set_turn_context() before running turns")
+    fn = getattr(conversation, "post_turn", None)
+    if fn is None:
+        return
+    await fn(session_id)
 
 
 @DBOS.step()
@@ -331,6 +378,42 @@ class DBOSExecutor:
         )
         self.set_messages(messages)
         return messages
+
+    async def append_message(
+        self,
+        conversation: Conversation,
+        session_id: str,
+        message: dict[str, object],
+    ) -> None:
+        """Per-message persistence, journaled via ``@DBOS.step``.
+
+        The actual ``conversation.append`` call runs inside
+        ``_append_message_step`` so its completion is written to the
+        DBOS journal — recovery then skips it rather than re-appending
+        the same message to the session JSONL (which would double-
+        write, since ``DefaultConversation.append`` is not idempotent
+        at the filesystem level).
+
+        Matches PR #44's posture for the final-reply send: accept
+        at-least-once semantics on the window between the step body
+        completing and the journal committing; that window is ~ms and
+        the resulting duplicate JSONL line is recoverable by the
+        session loader while a silent drop would not be.
+        """
+        _conversation_var.set(conversation)
+        # Cast to Any for the step argument — ``message`` is typed as
+        # ``dict[str, object]`` at the executor surface but the step
+        # body treats values opaquely.
+        await _append_message_step(session_id, message)  # type: ignore[arg-type]
+
+    async def post_turn(
+        self,
+        conversation: Conversation,
+        session_id: str,
+    ) -> None:
+        """End-of-turn hooks, journaled."""
+        _conversation_var.set(conversation)
+        await _post_turn_step(session_id)
 
     async def record(
         self,

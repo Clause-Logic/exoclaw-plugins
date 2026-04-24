@@ -594,14 +594,14 @@ wheels = [
 
 [[package]]
 name = "exoclaw"
-version = "0.18.0"
+version = "0.19.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "structlog" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/76/86/a32f5571ec89a92ab60bc9789f5798fd8fc9b4b1130403b8b34e1dbb6db8/exoclaw-0.18.0.tar.gz", hash = "sha256:d2ee9fdb3b529a0109b7324a60f1093b0d72a843a767a18edb8e51a6f2b95e99", size = 28909, upload-time = "2026-04-20T16:20:14.521Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/77/41/de5c929d81c6934e832913ae78b9ee85814c778e534f41fc20db0219e895/exoclaw-0.19.0.tar.gz", hash = "sha256:71924e47fb648ac304e8ee35b6211f16c76d9732d207da7b2370ec6ee1403797", size = 30858, upload-time = "2026-04-24T00:36:53.66Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/17/84/ca43e5ceac7f4996a1d334390897cb9ce48238473defd1ddfb7412aca593/exoclaw-0.18.0-py3-none-any.whl", hash = "sha256:feffa14e8b85b52f5460ddcfa0b1e8c3c172fe7bab53bdb7645ccc0733436983", size = 29652, upload-time = "2026-04-20T16:20:15.259Z" },
+    { url = "https://files.pythonhosted.org/packages/75/72/8a08ed4ae2344343f2219acbbcc65ac682a9e1d0dd11f344c74d379ac679/exoclaw-0.19.0-py3-none-any.whl", hash = "sha256:0b3a3e391bd12858f234d3684670ac6644a1f56609ada0a9dd517a9f5c49b8e3", size = 31909, upload-time = "2026-04-24T00:36:54.643Z" },
 ]
 
 [[package]]
@@ -665,7 +665,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", specifier = ">=0.9.0" },
+    { name = "exoclaw", specifier = ">=0.19.0" },
     { name = "rich", specifier = ">=14.0.0,<15.0.0" },
     { name = "structlog", specifier = ">=25.0.0" },
 ]
@@ -685,7 +685,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "dbos", specifier = ">=1.0.0" },
-    { name = "exoclaw", specifier = ">=0.18.0" },
+    { name = "exoclaw", specifier = ">=0.19.0" },
     { name = "exoclaw-subagent", editable = "packages/exoclaw-subagent" },
     { name = "structlog", specifier = ">=24.0.0" },
     { name = "uuid-utils", specifier = ">=0.9.0" },
