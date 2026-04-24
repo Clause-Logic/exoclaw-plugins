@@ -2,6 +2,7 @@
 
 import dataclasses
 import re
+from unittest.mock import AsyncMock, MagicMock
 
 from exoclaw.agent.tools.protocol import ToolContext
 from exoclaw.providers.types import LLMResponse, ToolCallRequest
@@ -162,6 +163,246 @@ class TestDBOSExecutorProtocol:
 
         assert [m["content"] for m in results["a"]] == ["a:user", "a:asst"]
         assert [m["content"] for m in results["b"]] == ["b:user", "b:asst"]
+
+
+class TestDBOSExecutorPriorDeltaSplit:
+    """Phase 2a/2b invariants on ``DBOSExecutor``. The single
+    ``_messages_var`` was replaced with a ``_prior_var`` source +
+    ``_delta_var`` list split — mirrors what ``DirectExecutor`` got
+    in exoclaw 0.19.1/0.20.0. Without this, the phase 2b disk-backed
+    prior-source path can't land on the openclaw-deployed executor.
+    """
+
+    def test_set_seeds_prior_not_delta(self) -> None:
+        executor = DBOSExecutor()
+        executor.set_messages([{"role": "system", "content": "sys"}])
+
+        assert executor._get_prior() == [{"role": "system", "content": "sys"}]
+        assert executor._get_delta() == []
+
+    def test_append_grows_delta_not_prior(self) -> None:
+        executor = DBOSExecutor()
+        executor.set_messages([{"role": "system", "content": "sys"}])
+        executor.append_messages([{"role": "assistant", "content": "ok"}])
+
+        assert executor._get_prior() == [{"role": "system", "content": "sys"}]
+        assert executor._get_delta() == [{"role": "assistant", "content": "ok"}]
+
+    def test_set_clears_delta(self) -> None:
+        """Mid-turn ``set_messages`` (compaction) must wipe any delta
+        that grew on the pre-compaction iterations — otherwise the
+        next ``append_messages`` double-counts."""
+        executor = DBOSExecutor()
+        executor.set_messages([{"role": "user", "content": "u"}])
+        executor.append_messages([{"role": "assistant", "content": "a1"}])
+
+        executor.set_messages([{"role": "user", "content": "compacted"}])
+
+        assert executor._get_prior() == [{"role": "user", "content": "compacted"}]
+        assert executor._get_delta() == []
+
+    def test_set_messages_snapshot_isolated_from_caller_mutation(self) -> None:
+        """Pre-refactor fresh-list-per-call guarantee preserved — a
+        caller that mutates its list after ``set_messages`` must not
+        see the mutation leak into the executor."""
+        executor = DBOSExecutor()
+        msgs: list[dict[str, object]] = [{"role": "user", "content": "original"}]
+        executor.set_messages(msgs)
+
+        msgs.append({"role": "assistant", "content": "injected"})
+        assert executor.load_messages() == [{"role": "user", "content": "original"}]
+
+    def test_set_prior_source_invokes_source_on_each_load(self) -> None:
+        """Phase 2b surface: the source is called on every
+        ``load_messages`` so a disk-backed implementation can re-read
+        the history slice instead of holding a Python list."""
+        executor = DBOSExecutor()
+        counter = {"n": 0}
+
+        def source() -> list[dict[str, object]]:
+            counter["n"] += 1
+            return [{"role": "user", "content": f"call-{counter['n']}"}]
+
+        executor.set_prior_source(source)
+        a = executor.load_messages()
+        b = executor.load_messages()
+
+        assert counter["n"] == 2
+        assert a == [{"role": "user", "content": "call-1"}]
+        assert b == [{"role": "user", "content": "call-2"}]
+
+    def test_set_prior_source_clears_delta(self) -> None:
+        executor = DBOSExecutor()
+        executor.set_messages([{"role": "user", "content": "t1"}])
+        executor.append_messages([{"role": "assistant", "content": "t1-asst"}])
+
+        executor.set_prior_source(lambda: [{"role": "user", "content": "t2"}])
+
+        assert executor._get_delta() == []
+        assert executor.load_messages() == [{"role": "user", "content": "t2"}]
+
+
+class TestDBOSExecutorBuildPromptAutoWire:
+    """Phase 2b auto-wire: when the Conversation exposes
+    ``load_persisted_history``, ``DBOSExecutor.build_prompt`` installs
+    a disk-backed ``PriorSource`` instead of holding the full list.
+    Successive LLM iterations re-read the history slice per call,
+    reducing the between-iteration heap footprint that caused the
+    openclaw OOM incident.
+    """
+
+    def _make_conversation(
+        self,
+        prefix: list[dict[str, str]],
+        history: list[dict[str, str]],
+        suffix: list[dict[str, str]],
+    ) -> MagicMock:
+        """Conversation whose build_prompt returns
+        ``[*prefix, *history, *suffix]`` with history dicts shared
+        with load_persisted_history's return. Mirrors how
+        ``DefaultConversation`` + ``session.get_history`` share
+        refs into ``session.messages``."""
+        conv = MagicMock()
+        conv.build_prompt = AsyncMock(return_value=[*prefix, *history, *suffix])
+        conv.load_persisted_history = lambda _sid: list(history)
+        conv.record = AsyncMock()
+        conv.clear = AsyncMock(return_value=True)
+        return conv
+
+    async def test_installs_prior_source_when_history_present(self) -> None:
+        prefix = [{"role": "system", "content": "sys"}]
+        history = [
+            {"role": "user", "content": "h1"},
+            {"role": "assistant", "content": "h2"},
+        ]
+        suffix = [{"role": "user", "content": "new"}]
+        conv = self._make_conversation(prefix, history, suffix)
+        executor = DBOSExecutor()
+
+        await executor.build_prompt(conv, "s:1", "new")
+
+        stored = executor._prior_var.get()
+        assert callable(stored)
+        assert stored() == [*prefix, *history, *suffix]
+
+    async def test_prior_source_reflects_history_mutations(self) -> None:
+        """Disk-backing's payoff: a new message appended to session
+        history between LLM iterations shows up on the next
+        ``load_messages`` without a full prompt rebuild."""
+        prefix = [{"role": "system", "content": "sys"}]
+        suffix = [{"role": "user", "content": "new"}]
+        history_ref = [{"role": "user", "content": "h1"}]
+
+        conv = MagicMock()
+        conv.build_prompt = AsyncMock(return_value=[*prefix, *history_ref, *suffix])
+        conv.load_persisted_history = lambda _sid: list(history_ref)
+        conv.record = AsyncMock()
+        conv.clear = AsyncMock(return_value=True)
+
+        executor = DBOSExecutor()
+        await executor.build_prompt(conv, "s:1", "new")
+
+        first = executor.load_messages()
+        assert [m["content"] for m in first] == ["sys", "h1", "new"]
+
+        history_ref.append({"role": "assistant", "content": "h2"})
+
+        second = executor.load_messages()
+        assert [m["content"] for m in second] == ["sys", "h1", "h2", "new"]
+
+    async def test_falls_back_when_history_empty(self) -> None:
+        prefix = [{"role": "system", "content": "sys"}]
+        suffix = [{"role": "user", "content": "new"}]
+        conv = self._make_conversation(prefix, [], suffix)
+        executor = DBOSExecutor()
+
+        await executor.build_prompt(conv, "s:1", "new")
+
+        # Snapshot fallback — full list captured in a closure.
+        assert executor.load_messages() == [*prefix, *suffix]
+
+    async def test_falls_back_when_history_refs_dont_match(self) -> None:
+        """If a PromptBuilder deep-copies history (breaks shared
+        refs), id() matching fails. Snapshot fallback keeps
+        behaviour correct."""
+        history = [{"role": "user", "content": "h1"}]
+        prefix = [{"role": "system", "content": "sys"}]
+        suffix = [{"role": "user", "content": "new"}]
+
+        conv = MagicMock()
+        conv.build_prompt = AsyncMock(return_value=[*prefix, *[dict(m) for m in history], *suffix])
+        conv.load_persisted_history = lambda _sid: list(history)
+        conv.record = AsyncMock()
+        conv.clear = AsyncMock(return_value=True)
+
+        executor = DBOSExecutor()
+        await executor.build_prompt(conv, "s:1", "new")
+
+        first = executor.load_messages()
+        history.append({"role": "assistant", "content": "injected"})
+        second = executor.load_messages()
+        assert first == second  # snapshot doesn't see post-build mutations
+
+    async def test_falls_back_when_history_refs_partially_overlap(self) -> None:
+        """If a PromptBuilder preserves SOME history dicts by ref but
+        replaces others (e.g. tool-result compaction rewrites a
+        subset), id matching would still hit on the preserved ones.
+        Using that match to build a lazy source would re-inject the
+        UN-transformed full history on later iterations, diverging
+        from what the initial LLM call actually saw. The slice-level
+        id check catches this and bails to the snapshot path.
+
+        Regression for PR #57 review — without the full-slice id
+        verification, this test would install a broken lazy source
+        and the second ``load_messages`` would reflect mutations to
+        ``history`` (the un-transformed version).
+        """
+        history = [
+            {"role": "user", "content": "h1"},
+            {"role": "assistant", "content": "h2"},
+        ]
+        prefix = [{"role": "system", "content": "sys"}]
+        suffix = [{"role": "user", "content": "new"}]
+
+        conv = MagicMock()
+        # Shared ref for h1, fresh dict for h2 — partial overlap.
+        conv.build_prompt = AsyncMock(return_value=[*prefix, history[0], dict(history[1]), *suffix])
+        conv.load_persisted_history = lambda _sid: list(history)
+        conv.record = AsyncMock()
+        conv.clear = AsyncMock(return_value=True)
+
+        executor = DBOSExecutor()
+        await executor.build_prompt(conv, "s:1", "new")
+
+        first = executor.load_messages()
+        history.append({"role": "assistant", "content": "injected"})
+        second = executor.load_messages()
+        # Snapshot path — mutations to ``history`` must NOT leak into
+        # the executor's prior view. A broken lazy source would let
+        # them through.
+        assert first == second
+
+    async def test_falls_back_when_no_load_persisted_history(self) -> None:
+        prefix = [{"role": "system", "content": "sys"}]
+        suffix = [{"role": "user", "content": "new"}]
+
+        class _LegacyConversation:
+            async def build_prompt(self, *a: object, **kw: object) -> list[dict[str, str]]:
+                return [*prefix, *suffix]
+
+            async def record(self, *a: object, **kw: object) -> None:
+                pass
+
+            async def clear(self, *a: object, **kw: object) -> bool:
+                return True
+
+            def list_sessions(self) -> list[dict[str, object]]:
+                return []
+
+        executor = DBOSExecutor()
+        await executor.build_prompt(_LegacyConversation(), "s:1", "new")  # type: ignore[arg-type]
+
+        assert executor.load_messages() == [*prefix, *suffix]
 
 
 class TestWorkflowIDUniqueness:
