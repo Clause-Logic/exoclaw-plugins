@@ -433,8 +433,7 @@ class TestPhase1And2ThroughFullAgentLoop:
         roles = [m.get("role") for m in turn_tail]
         # Expected tail: user → assistant-with-tool-calls → tool result → final assistant.
         assert roles == ["user", "assistant", "tool", "assistant"], (
-            f"phase 1 didn't append each message as produced; "
-            f"turn-tail JSONL roles: {roles}"
+            f"phase 1 didn't append each message as produced; turn-tail JSONL roles: {roles}"
         )
         contents = [m.get("content") for m in turn_tail]
         assert contents[0] == "hello"
