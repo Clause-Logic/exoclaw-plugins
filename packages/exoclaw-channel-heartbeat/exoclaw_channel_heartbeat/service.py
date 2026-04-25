@@ -8,6 +8,7 @@ from typing import Any, Callable, Coroutine
 
 import structlog
 from exoclaw.providers import LLMProvider
+from exoclaw.utils import create_isolated_task
 
 logger = structlog.get_logger()
 
@@ -121,7 +122,7 @@ class HeartbeatService:
             return
 
         self._running = True
-        self._task = asyncio.create_task(self._run_loop())
+        self._task = create_isolated_task(self._run_loop())
         logger.info("heartbeat_started", **{"heartbeat.interval_s": self.interval_s})
 
     def stop(self) -> None:

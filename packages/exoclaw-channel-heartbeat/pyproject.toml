@@ -5,7 +5,7 @@ description = "Periodic heartbeat channel for exoclaw"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "exoclaw>=0.10.1",
+    "exoclaw>=0.22.0",
     "structlog>=25.0.0",
 ]
 

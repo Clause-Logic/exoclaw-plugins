@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Callable, Coroutine
 
 import structlog
+from exoclaw.utils import create_isolated_task
 
 from exoclaw_tools_cron.types import CronJob, CronJobState, CronPayload, CronSchedule, CronStore
 
@@ -245,7 +246,15 @@ class CronService:
             if self._running:
                 await self._on_timer()
 
-        self._timer_task = asyncio.create_task(tick())
+        # Isolate from caller contextvars — most importantly DBOS's
+        # ``_dbos_context_var``. Without this, a cron added from inside
+        # a ``@DBOS.workflow`` leaks the parent workflow's
+        # ``DBOSContext`` (workflow_id + function_id snapshot) into
+        # this task; when the timer fires, the on_job callback's
+        # downstream workflow is recorded as a child step of the
+        # long-finished parent and crashes with
+        # ``DBOSUnexpectedStepError``.
+        self._timer_task = create_isolated_task(tick())
 
     async def _on_timer(self) -> None:
         """Handle timer tick - run due jobs."""

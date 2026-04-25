@@ -5,7 +5,7 @@ description = "Cron scheduling tool for exoclaw"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "exoclaw>=0.10.1",
+    "exoclaw>=0.22.0",
     "structlog>=25.0.0",
     "croniter>=6.0.0,<7.0.0",
 ]

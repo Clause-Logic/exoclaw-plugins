@@ -1,6 +1,7 @@
 """Message tool for sending messages to users."""
 
 import re
+from contextvars import ContextVar
 from typing import Any, Awaitable, Callable
 
 from exoclaw.agent.tools.protocol import ToolBase
@@ -49,18 +50,44 @@ class MessageTool(ToolBase):
         retrieval_fn: Callable[[str], Awaitable[str | None]] | None = None,
     ):
         self._send_callback = send_callback
-        self._default_channel = default_channel
-        self._default_chat_id = default_chat_id
-        self._default_message_id = default_message_id
-        self._sent_in_turn: bool = False
+        # Per-task destination via ContextVars so concurrent / sequential
+        # turns don't share singleton state. Construction-time defaults
+        # serve as the ContextVar default each fresh task observes.
+        # Without this isolation, whichever turn last called
+        # ``set_context`` would own routing for every other turn until
+        # someone else stomped it.
+        self._channel_var: ContextVar[str] = ContextVar(
+            f"message_tool_channel_{id(self)}", default=default_channel
+        )
+        self._chat_id_var: ContextVar[str] = ContextVar(
+            f"message_tool_chat_id_{id(self)}", default=default_chat_id
+        )
+        self._message_id_var: ContextVar[str | None] = ContextVar(
+            f"message_tool_message_id_{id(self)}", default=default_message_id
+        )
+        self._sent_in_turn_var: ContextVar[bool] = ContextVar(
+            f"message_tool_sent_in_turn_{id(self)}", default=False
+        )
         self._suppress_patterns: list[str] = suppress_patterns or []
         self._retrieval_fn = retrieval_fn
 
+    @property
+    def _default_channel(self) -> str:
+        return self._channel_var.get()
+
+    @property
+    def _default_chat_id(self) -> str:
+        return self._chat_id_var.get()
+
+    @property
+    def _default_message_id(self) -> str | None:
+        return self._message_id_var.get()
+
     def set_context(self, channel: str, chat_id: str, message_id: str | None = None) -> None:
-        """Set the current message context."""
-        self._default_channel = channel
-        self._default_chat_id = chat_id
-        self._default_message_id = message_id
+        """Set the current message context (per-task)."""
+        self._channel_var.set(channel)
+        self._chat_id_var.set(chat_id)
+        self._message_id_var.set(message_id)
 
     def set_send_callback(self, callback: Callable[[OutboundMessage], Awaitable[None]]) -> None:
         """Set the callback for sending messages."""
@@ -69,11 +96,21 @@ class MessageTool(ToolBase):
     @property
     def sent_in_turn(self) -> bool:
         """Public accessor used by AgentLoop to detect suppress-on-same-target."""
-        return self._sent_in_turn
+        return self._sent_in_turn_var.get()
+
+    @property
+    def _sent_in_turn(self) -> bool:
+        return self._sent_in_turn_var.get()
+
+    @_sent_in_turn.setter
+    def _sent_in_turn(self, value: bool) -> None:
+        # Setter exists so existing tests that assign ``tool._sent_in_turn = True``
+        # keep working. Writes route through the ContextVar.
+        self._sent_in_turn_var.set(value)
 
     def start_turn(self) -> None:
         """Reset per-turn send tracking."""
-        self._sent_in_turn = False
+        self._sent_in_turn_var.set(False)
 
     @property
     def name(self) -> str:
@@ -146,7 +183,7 @@ class MessageTool(ToolBase):
         try:
             await self._send_callback(msg)
             if channel == self._default_channel and chat_id == self._default_chat_id:
-                self._sent_in_turn = True
+                self._sent_in_turn_var.set(True)
             media_info = f" with {len(media)} attachments" if media else ""
             return f"Message sent to {channel}:{chat_id}{media_info}"
         except Exception as e:
