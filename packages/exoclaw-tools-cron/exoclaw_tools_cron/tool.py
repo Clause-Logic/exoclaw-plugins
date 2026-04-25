@@ -18,12 +18,8 @@ class CronTool(ToolBase):
         # MessageTool / SpawnTool (see test_cron_concurrency_bugs.py).
         # A non-context call after a context-bound call would otherwise
         # inherit the prior caller's destination from instance attrs.
-        self._channel_var: ContextVar[str] = ContextVar(
-            f"cron_tool_channel_{id(self)}", default=""
-        )
-        self._chat_id_var: ContextVar[str] = ContextVar(
-            f"cron_tool_chat_id_{id(self)}", default=""
-        )
+        self._channel_var: ContextVar[str] = ContextVar(f"cron_tool_channel_{id(self)}", default="")
+        self._chat_id_var: ContextVar[str] = ContextVar(f"cron_tool_chat_id_{id(self)}", default="")
         self._in_cron_context: ContextVar[bool] = ContextVar("cron_in_context", default=False)
 
     @property

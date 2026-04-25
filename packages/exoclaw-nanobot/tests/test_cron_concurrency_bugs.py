@@ -196,9 +196,7 @@ async def _consolidation_trigger_step(memory_holder_key: str) -> None:
     Looks the conversation up by key for the same picklability reason
     as ``_add_cron_step``."""
     conv: DefaultConversation = _SERVICES[memory_holder_key]  # type: ignore[assignment]
-    await conv.build_prompt(
-        "test-session", "hi", channel="zulip", chat_id="topic-A"
-    )
+    await conv.build_prompt("test-session", "hi", channel="zulip", chat_id="topic-A")
 
 
 @DBOS.workflow()
@@ -470,9 +468,7 @@ class TestSpawnToolDestinationIsSingleton:
 
         async def cron_callback() -> None:
             # _on_cron_job: prologue + finally
-            tool.set_context(
-                channel="zulip", chat_id="cron-target", session_key="cron:abc"
-            )
+            tool.set_context(channel="zulip", chat_id="cron-target", session_key="cron:abc")
             tool.set_context(
                 channel="zulip",
                 chat_id="cron-target",
@@ -483,9 +479,7 @@ class TestSpawnToolDestinationIsSingleton:
             await tool.execute(action="spawn", task="cron task")
 
         async def user_turn() -> None:
-            tool.set_context(
-                channel="zulip", chat_id="user-target", session_key="user:xyz"
-            )
+            tool.set_context(channel="zulip", chat_id="user-target", session_key="user:xyz")
             await tool.execute(action="spawn", task="user task")
 
         await asyncio.create_task(cron_callback())
@@ -544,9 +538,7 @@ class TestCronToolDestinationLeaksWhenCtxAbsent:
             async def remove(self, _job_id: str) -> bool:
                 return False
 
-            async def enable(
-                self, _job_id: str, enabled: bool = True
-            ) -> CronJob | None:
+            async def enable(self, _job_id: str, enabled: bool = True) -> CronJob | None:
                 return None
 
         return CronTool(backend=MockBackend()), added
@@ -559,20 +551,14 @@ class TestCronToolDestinationLeaksWhenCtxAbsent:
         tool, added = self._make_tool()
 
         async def turn_with_ctx() -> None:
-            ctx = ToolContext(
-                session_key="zulip:topic-A", channel="zulip", chat_id="topic-A"
-            )
-            await tool.execute_with_context(
-                ctx, action="add", message="task A", every_seconds=60
-            )
+            ctx = ToolContext(session_key="zulip:topic-A", channel="zulip", chat_id="topic-A")
+            await tool.execute_with_context(ctx, action="add", message="task A", every_seconds=60)
 
         async def turn_without_ctx() -> None:
             # No ctx: registry would call execute() directly. Without
             # per-task isolation, the cron tool reads A's leftover
             # state from its instance attrs and sends task B to A.
-            await tool.execute(
-                action="add", message="task B", every_seconds=60
-            )
+            await tool.execute(action="add", message="task B", every_seconds=60)
 
         await asyncio.create_task(turn_with_ctx())
         await asyncio.create_task(turn_without_ctx())
@@ -607,9 +593,7 @@ class TestConversationConsolidationInheritsDBOSContext:
     ``DBOSUnexpectedStepError``.
     """
 
-    async def test_consolidation_task_runs_as_top_level_workflow(
-        self, dbos_instance: Any
-    ) -> None:
+    async def test_consolidation_task_runs_as_top_level_workflow(self, dbos_instance: Any) -> None:
         consolidate_done = asyncio.Event()
         consolidate_error: list[BaseException] = []
 
@@ -644,9 +628,7 @@ class TestConversationConsolidationInheritsDBOSContext:
         prompt = MagicMock()
         prompt.build = AsyncMock(return_value=[{"role": "system", "content": ""}])
 
-        conv = DefaultConversation(
-            history=history, memory=memory, prompt=prompt, memory_window=10
-        )
+        conv = DefaultConversation(history=history, memory=memory, prompt=prompt, memory_window=10)
 
         key = f"conv-{uuid.uuid4().hex[:8]}"
         _SERVICES[key] = conv  # type: ignore[assignment]
@@ -698,9 +680,7 @@ class TestAsyncioSpawnerInheritsDBOSContext:
     re-acquires the same bug.
     """
 
-    async def test_spawner_task_runs_as_top_level_workflow(
-        self, dbos_instance: Any
-    ) -> None:
+    async def test_spawner_task_runs_as_top_level_workflow(self, dbos_instance: Any) -> None:
         runner_done = asyncio.Event()
         runner_error: list[BaseException] = []
 
