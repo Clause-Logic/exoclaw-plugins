@@ -541,7 +541,7 @@ class TestCronToolDestinationLeaksWhenCtxAbsent:
             async def enable(self, _job_id: str, enabled: bool = True) -> CronJob | None:
                 return None
 
-        return CronTool(backend=MockBackend()), added
+        return CronTool(backend=MockBackend()), added  # type: ignore[arg-type]
 
     async def test_destination_does_not_leak_to_no_ctx_call(self) -> None:
         """First add goes through ``execute_with_context`` (binds the
