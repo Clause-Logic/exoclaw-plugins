@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 import structlog.contextvars
+from exoclaw.utils import create_isolated_task
 
 from .protocols import ConsolidationPolicy, HistoryStore, MemoryBackend, PromptBuilder
 from .session.manager import Session
@@ -166,7 +167,12 @@ class DefaultConversation:
                         if _task is not None:
                             self._consolidation_tasks.discard(_task)
 
-                _task = asyncio.create_task(_consolidate_and_unlock())
+                # Isolate from caller contextvars — when build_prompt
+                # is reached from inside a DBOS workflow, the spawned
+                # consolidation task would otherwise inherit
+                # DBOSContext and any future workflow-aware call in
+                # the consolidation path would be misclassified.
+                _task = create_isolated_task(_consolidate_and_unlock())
                 self._consolidation_tasks.add(_task)
 
         # Isolated mode skips session history entirely — the LLM sees only

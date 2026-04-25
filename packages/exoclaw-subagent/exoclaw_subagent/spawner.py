@@ -23,6 +23,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Callable, Coroutine, Protocol, runtime_checkable
 
+from exoclaw.utils import create_isolated_task
+
 Runner = Callable[..., Coroutine[Any, Any, None]]
 """Async callable that executes one subagent given its keyword args.
 
@@ -175,7 +177,14 @@ class AsyncioSpawner:
             async with semaphore:
                 await runner(**kwargs)
 
-        bg_task: asyncio.Task[None] = asyncio.create_task(_gated())
+        # Isolate from caller contextvars so the subagent doesn't
+        # inherit DBOS workflow context if start() was reached from
+        # inside a workflow body. Durable-backend spawners
+        # (``DBOSSubagentSpawner``) avoid this by routing through
+        # ``DBOS.start_workflow_async`` which establishes its own
+        # context, but this in-process default still needs explicit
+        # isolation.
+        bg_task: asyncio.Task[None] = create_isolated_task(_gated())
         return _AsyncioHandle(task_id, bg_task)
 
 

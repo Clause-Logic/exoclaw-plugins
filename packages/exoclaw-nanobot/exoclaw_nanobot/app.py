@@ -15,6 +15,7 @@ from exoclaw.agent.tools.registry import ToolRegistry
 from exoclaw.bus.events import OutboundMessage
 from exoclaw.bus.queue import MessageBus
 from exoclaw.providers.protocol import LLMProvider
+from exoclaw.utils import create_isolated_task
 from exoclaw_channel_cli.channel import CLIChannel
 from exoclaw_channel_heartbeat.service import HeartbeatService
 from exoclaw_conversation.context import ContextBuilder
@@ -134,13 +135,13 @@ class ExoclawNanobot:
         tasks: list[asyncio.Task[None]] = []
         channel_tasks: list[asyncio.Task[None]] = []
         try:
-            tasks.append(asyncio.create_task(self._cron_service.start()))
-            tasks.append(asyncio.create_task(self._heartbeat.start()))
-            tasks.append(asyncio.create_task(self._agent_loop.run()))
+            tasks.append(create_isolated_task(self._cron_service.start()))
+            tasks.append(create_isolated_task(self._heartbeat.start()))
+            tasks.append(create_isolated_task(self._agent_loop.run()))
             if self._extra_channels:
-                tasks.append(asyncio.create_task(self._dispatch_outbound()))
+                tasks.append(create_isolated_task(self._dispatch_outbound()))
             for ch in self._extra_channels:
-                t = asyncio.create_task(ch.start(self._bus))
+                t = create_isolated_task(ch.start(self._bus))
                 tasks.append(t)
                 channel_tasks.append(t)
 
@@ -151,7 +152,7 @@ class ExoclawNanobot:
                 # Gateway: block until stop() is called or a channel dies.
                 # Only watch channel tasks — infrastructure tasks (cron, heartbeat,
                 # agent_loop) may complete normally and must not trigger shutdown.
-                watch = [asyncio.create_task(self._stop_event.wait()), *channel_tasks]
+                watch = [create_isolated_task(self._stop_event.wait()), *channel_tasks]
                 done, _ = await asyncio.wait(
                     watch,
                     return_when=asyncio.FIRST_COMPLETED,

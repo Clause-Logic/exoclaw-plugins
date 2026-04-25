@@ -1,6 +1,7 @@
 """Spawn tool for creating background subagents."""
 
 import json
+from contextvars import ContextVar
 from typing import Any, Protocol, runtime_checkable
 
 import structlog
@@ -79,10 +80,39 @@ class SpawnTool(ToolBase):
     ):
         self._manager = manager
         self._allowed_models = allowed_models
-        self._origin_channel = "cli"
-        self._origin_chat_id = "direct"
-        self._session_key = "cli:direct"
-        self._parent_skills: list[str] | None = None
+        # Per-task origin context via ContextVars so concurrent /
+        # sequential turns don't share singleton state. Without this,
+        # ``_on_cron_job``'s ``set_context`` would survive past the
+        # cron callback and cross-wire later turns whose ``execute()``
+        # path falls back to these defaults.
+        self._origin_channel_var: ContextVar[str] = ContextVar(
+            f"spawn_tool_origin_channel_{id(self)}", default="cli"
+        )
+        self._origin_chat_id_var: ContextVar[str] = ContextVar(
+            f"spawn_tool_origin_chat_id_{id(self)}", default="direct"
+        )
+        self._session_key_var: ContextVar[str] = ContextVar(
+            f"spawn_tool_session_key_{id(self)}", default="cli:direct"
+        )
+        self._parent_skills_var: ContextVar[list[str] | None] = ContextVar(
+            f"spawn_tool_parent_skills_{id(self)}", default=None
+        )
+
+    @property
+    def _origin_channel(self) -> str:
+        return self._origin_channel_var.get()
+
+    @property
+    def _origin_chat_id(self) -> str:
+        return self._origin_chat_id_var.get()
+
+    @property
+    def _session_key(self) -> str:
+        return self._session_key_var.get()
+
+    @property
+    def _parent_skills(self) -> list[str] | None:
+        return self._parent_skills_var.get()
 
     def set_context(
         self,
@@ -91,11 +121,11 @@ class SpawnTool(ToolBase):
         session_key: str | None = None,
         skills: list[str] | None = None,
     ) -> None:
-        """Set the origin context for subagent announcements."""
-        self._origin_channel = channel
-        self._origin_chat_id = chat_id
-        self._session_key = session_key or f"{channel}:{chat_id}"
-        self._parent_skills = skills
+        """Set the origin context for subagent announcements (per-task)."""
+        self._origin_channel_var.set(channel)
+        self._origin_chat_id_var.set(chat_id)
+        self._session_key_var.set(session_key or f"{channel}:{chat_id}")
+        self._parent_skills_var.set(skills)
 
     @property
     def name(self) -> str:

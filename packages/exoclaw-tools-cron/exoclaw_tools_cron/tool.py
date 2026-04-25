@@ -14,14 +14,26 @@ class CronTool(ToolBase):
 
     def __init__(self, backend: CronBackend):
         self._backend = backend
-        self._channel = ""
-        self._chat_id = ""
+        # Per-task destination via ContextVars — same pattern as
+        # MessageTool / SpawnTool (see test_cron_concurrency_bugs.py).
+        # A non-context call after a context-bound call would otherwise
+        # inherit the prior caller's destination from instance attrs.
+        self._channel_var: ContextVar[str] = ContextVar(f"cron_tool_channel_{id(self)}", default="")
+        self._chat_id_var: ContextVar[str] = ContextVar(f"cron_tool_chat_id_{id(self)}", default="")
         self._in_cron_context: ContextVar[bool] = ContextVar("cron_in_context", default=False)
 
+    @property
+    def _channel(self) -> str:
+        return self._channel_var.get()
+
+    @property
+    def _chat_id(self) -> str:
+        return self._chat_id_var.get()
+
     def set_context(self, channel: str, chat_id: str) -> None:
-        """Set the current session context for delivery."""
-        self._channel = channel
-        self._chat_id = chat_id
+        """Set the current session context for delivery (per-task)."""
+        self._channel_var.set(channel)
+        self._chat_id_var.set(chat_id)
 
     def set_cron_context(self, active: bool) -> object:
         """Mark whether the tool is executing inside a cron job callback."""
@@ -101,8 +113,8 @@ class CronTool(ToolBase):
         action: str,
         **kwargs: Any,
     ) -> str:
-        self._channel = ctx.channel
-        self._chat_id = ctx.chat_id
+        self._channel_var.set(ctx.channel)
+        self._chat_id_var.set(ctx.chat_id)
         return await self.execute(action=action, **kwargs)
 
     async def execute(

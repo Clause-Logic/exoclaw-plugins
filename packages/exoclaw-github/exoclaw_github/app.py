@@ -9,6 +9,7 @@ from typing import Any
 
 from exoclaw.agent.loop import AgentLoop
 from exoclaw.bus.queue import MessageBus
+from exoclaw.utils import create_isolated_task
 from exoclaw_conversation.conversation import DefaultConversation
 from exoclaw_provider_litellm.provider import LiteLLMProvider
 from exoclaw_tools_workspace.filesystem import (
@@ -124,7 +125,7 @@ async def create(
 async def run() -> None:
     """Create the stack and run one GitHub Actions turn."""
     agent_loop, channel, bus = await create()
-    loop_task = asyncio.create_task(agent_loop.run())
+    loop_task = create_isolated_task(agent_loop.run())
     try:
         await channel.start(bus)
     finally:

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 from exoclaw.bus.events import InboundMessage, OutboundMessage
+from exoclaw.utils import create_isolated_task
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
@@ -185,7 +186,7 @@ class CLIChannel:
                 except asyncio.CancelledError:
                     break
 
-        outbound_task = asyncio.create_task(_consume_outbound())
+        outbound_task = create_isolated_task(_consume_outbound())
 
         try:
             while self._running:
