@@ -166,9 +166,14 @@ async def run_durable_turn(
 # on the queue below. DBOS persists the enqueue record to SQLite
 # immediately, so the message survives any subsequent crash.
 #
-# ``concurrency=1`` replaces ``AgentLoop._processing_lock``: DBOS runs
-# at most one inbound turn at a time, matching the previous serial
-# behavior. If per-session parallelism is later wanted, revisit.
+# ``concurrency=1`` + ``partition_queue=True`` makes the per-chat
+# serialization that ``AgentLoop._processing_lock`` used to give us a
+# *per-chat* guarantee, not a global one. DBOS dequeues at most one
+# workflow per partition key at a time; ``DBOSExecutor.enqueue_inbound``
+# keys each workflow by the originating chat (channel+chat_id, with
+# system messages reusing the embedded origin). A long-running turn in
+# one chat no longer head-of-line blocks every other chat — pre-fix,
+# a multi-minute turn in a single chat stalled all inbound channels.
 
 INBOUND_QUEUE_NAME = "exoclaw-inbound"
 
@@ -185,7 +190,7 @@ INBOUND_QUEUE_NAME = "exoclaw-inbound"
 # DBOS once) keeps the same Queue instance, which continues to
 # work because the new ``DBOS.launch()`` discovers the existing
 # global queue registry.
-_INBOUND_QUEUE: Queue = Queue(INBOUND_QUEUE_NAME, concurrency=1)
+_INBOUND_QUEUE: Queue = Queue(INBOUND_QUEUE_NAME, concurrency=1, partition_queue=True)
 
 
 def _get_inbound_queue() -> Queue:
