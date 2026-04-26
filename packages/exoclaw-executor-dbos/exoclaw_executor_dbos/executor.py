@@ -20,8 +20,12 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import dataclasses
+import inspect
 import json
+import os
+import tempfile
 from collections.abc import Awaitable, Callable, Coroutine
+from pathlib import Path
 from typing import Any
 
 from dbos import DBOS, Queue, SetEnqueueOptions, SetWorkflowID
@@ -29,6 +33,7 @@ from exoclaw.agent.conversation import Conversation
 from exoclaw.agent.tools.protocol import ToolContext
 from exoclaw.agent.tools.registry import ToolRegistry
 from exoclaw.bus.events import InboundMessage
+from exoclaw.executor import ToolResult
 from exoclaw.providers.protocol import LLMProvider
 from exoclaw.providers.types import ContextWindowExceededError, LLMResponse, ToolCallRequest
 from uuid_utils import uuid7
@@ -384,6 +389,13 @@ class DBOSExecutor:
         self._delta_var: contextvars.ContextVar[list[dict[str, object]]] = contextvars.ContextVar(
             f"dbos_executor_delta_{id(self)}"
         )
+        # Per-task list of scratch files written by streaming tool
+        # results during this turn. Cleaned up at ``post_turn``.
+        # Mirrors ``DirectExecutor._scratch_paths_var``. See
+        # ``execute_tool_with_handle`` and memory-model.md Step D.
+        self._scratch_paths_var: contextvars.ContextVar[list[Path]] = contextvars.ContextVar(
+            f"dbos_executor_scratch_{id(self)}"
+        )
 
     def __deepcopy__(self, memo: dict) -> DBOSExecutor:
         # ContextVar objects are not deep-copyable (TypeError: cannot
@@ -506,6 +518,94 @@ class DBOSExecutor:
 
         return result
 
+    async def execute_tool_with_handle(
+        self,
+        registry: ToolRegistry,
+        name: str,
+        params: dict[str, object],
+        ctx: ToolContext | None = None,
+        *,
+        tool_call_id: str | None = None,
+    ) -> ToolResult:
+        """Step D opt-in: detect ``Tool.execute_streaming`` and drain
+        chunks into a per-turn scratch file. Mirrors
+        ``DirectExecutor.execute_tool_with_handle``.
+
+        **Durability tradeoff:** the streaming dispatch bypasses
+        ``_tool_step``. A real DBOS step would journal the tool's
+        output, but the output is now a scratch-file path that a
+        rebooted process won't have on disk. So instead, on
+        crash-mid-stream the parent workflow re-executes the whole
+        turn from the previous chat-step's journal entry — the
+        streaming tool runs again from scratch. Tools opting into
+        streaming must therefore be idempotent (or at least
+        retry-tolerant) under DBOS recovery: most multi-MB
+        producers (file reads, exec, web fetches with no
+        side effects) qualify; anything billable / state-mutating
+        should NOT use the streaming path.
+
+        Falls back to ``execute_tool`` (the durable path) for tools
+        that don't opt in. The fallback also fires on registry
+        resolution errors and async-iterator misshapes — see the
+        ``isasyncgenfunction`` check below.
+        """
+        resolved = registry.stream_dispatch(name, params)
+        if isinstance(resolved, str):
+            return ToolResult(content=resolved, content_file=None)
+        tool, validated = resolved
+
+        streamer = getattr(tool, "execute_streaming", None)
+        if not inspect.isasyncgenfunction(streamer):
+            inline = await self.execute_tool(registry, name, params, ctx, tool_call_id=tool_call_id)
+            return ToolResult(content=inline, content_file=None)
+
+        # Sanitize tool_call_id same as DirectExecutor: LLM-supplied
+        # ids may contain path separators / nulls / newlines.
+        suffix = ""
+        if tool_call_id:
+            safe = "".join(c if c.isalnum() or c in {"-", "_"} else "_" for c in tool_call_id)[:64]
+            if safe:
+                suffix = f"-{safe}"
+
+        fd, path_str = tempfile.mkstemp(prefix="exoclaw-tool-", suffix=f"{suffix}.txt")
+        path = Path(path_str)
+        bytes_written = 0
+        preview_chunks: list[bytes] = []
+        preview_budget = 256
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
+                # Bind dispatch ContextVar — same fan-out-tool support
+                # ``ToolRegistry.execute`` provides on the inline path.
+                with registry.bind_dispatch():
+                    async for chunk in streamer(**validated):
+                        if not isinstance(chunk, str):
+                            chunk = str(chunk)
+                        chunk_bytes = chunk.encode("utf-8")
+                        fh.write(chunk)
+                        bytes_written += len(chunk_bytes)
+                        if preview_budget > 0:
+                            take = min(preview_budget, len(chunk_bytes))
+                            preview_chunks.append(chunk_bytes[:take])
+                            preview_budget -= take
+        except Exception:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+            raise
+
+        try:
+            scratch_paths = self._scratch_paths_var.get()
+        except LookupError:
+            scratch_paths = []
+            self._scratch_paths_var.set(scratch_paths)
+        scratch_paths.append(path)
+
+        preview = b"".join(preview_chunks).decode("utf-8", errors="ignore")
+        if bytes_written > len(preview.encode("utf-8")):
+            preview = f"{preview}…\n[streamed {bytes_written} bytes to {path.name}]"
+        return ToolResult(content=preview, content_file=path)
+
     async def _dispatch_intents(self, intents: list[StartChildWorkflow]) -> None:
         """Start child workflows for queued intents from workflow context.
 
@@ -607,6 +707,22 @@ class DBOSExecutor:
         """End-of-turn hooks, journaled."""
         _conversation_var.set(conversation)
         await _post_turn_step(session_id)
+        # Clean up streaming-tool-result scratch files registered
+        # during this turn. Mirrors ``DirectExecutor.post_turn``.
+        # Best-effort: a missing file is fine; other ``OSError``s
+        # get swallowed because we don't want a stat-style hiccup
+        # to break end-of-turn hooks.
+        try:
+            scratch_paths = self._scratch_paths_var.get()
+        except LookupError:
+            scratch_paths = []
+        for path in scratch_paths:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+        if scratch_paths:
+            self._scratch_paths_var.set([])
 
     async def record(
         self,
