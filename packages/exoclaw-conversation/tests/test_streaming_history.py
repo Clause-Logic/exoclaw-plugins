@@ -55,9 +55,7 @@ class TestStreamingHistoryFlag:
         assert history[0]["content"] == "msg-4"
         assert history[-1]["content"] == "msg-9"
 
-    def test_session_messages_stays_empty_across_many_turns(
-        self, tmp_path: Path
-    ) -> None:
+    def test_session_messages_stays_empty_across_many_turns(self, tmp_path: Path) -> None:
         """Drive the conversation surface (build_prompt + record-style
         save_append) for many turns. session.messages must remain empty
         — that's the entire RAM win."""

@@ -96,6 +96,7 @@ class MemoryStore:
         Legacy interface — reads messages from session.messages in RAM.
         Prefer consolidate_messages() which accepts pre-loaded messages.
         """
+
         # Streaming-aware loader: when session.messages is empty and the
         # store is wired in, read the consolidation slice from disk so
         # streaming_history sessions still consolidate correctly.
@@ -241,9 +242,7 @@ class MemoryStore:
                     # Need messages around [boundary-1, total). A small
                     # window is enough — repair only walks forward.
                     window_start = max(boundary - 1, 0)
-                    repair_window = self._history.load_range(
-                        session.key, window_start, total
-                    )
+                    repair_window = self._history.load_range(session.key, window_start, total)
                     window_offset = window_start
                 else:
                     repair_window = []

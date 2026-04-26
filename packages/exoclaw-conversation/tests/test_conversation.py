@@ -802,9 +802,11 @@ def _make_mock_history(session: Session | None = None) -> MagicMock:
     h.load_range.return_value = []
     # Match the protocol's default impl: delegate to session.get_history so
     # tests that seed session.messages keep working without needing to
-    # configure read_history separately.
+    # configure read_history separately. ``max_messages=None`` is passed
+    # through unchanged so the unbounded-tail contract on read_history is
+    # preserved.
     h.read_history.side_effect = lambda key, max_messages=None: s.get_history(
-        max_messages=max_messages or 500
+        max_messages=max_messages
     )
     return h
 

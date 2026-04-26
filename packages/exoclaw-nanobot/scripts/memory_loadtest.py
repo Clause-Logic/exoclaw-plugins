@@ -122,9 +122,7 @@ async def run(
     samples: list[Sample] = []
 
     tracemalloc.start()
-    session_path = (
-        workspace / "sessions" / "loadtest_single.jsonl"
-    )
+    session_path = workspace / "sessions" / "loadtest_single.jsonl"
 
     for turn in range(1, turns + 1):
         tracemalloc.reset_peak()
@@ -162,10 +160,10 @@ async def run(
             )
             print(
                 f"turn={turn:>4}  msgs={session.total_messages:>5}  "
-                f"jsonl={jsonl_bytes/1024:>7.1f}KiB  "
-                f"tm_current={tm_current/1024:>7.1f}KiB  "
-                f"tm_peak={tm_peak/1024:>7.1f}KiB  "
-                f"rss={samples[-1].rss/1024/1024:>6.1f}MiB"
+                f"jsonl={jsonl_bytes / 1024:>7.1f}KiB  "
+                f"tm_current={tm_current / 1024:>7.1f}KiB  "
+                f"tm_peak={tm_peak / 1024:>7.1f}KiB  "
+                f"rss={samples[-1].rss / 1024 / 1024:>6.1f}MiB"
             )
     tracemalloc.stop()
     return samples
@@ -174,13 +172,9 @@ async def run(
 def write_csv(samples: list[Sample], out: Path) -> None:
     with open(out, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(
-            ["turn", "session_messages", "jsonl_bytes", "tm_current", "tm_peak", "rss"]
-        )
+        w.writerow(["turn", "session_messages", "jsonl_bytes", "tm_current", "tm_peak", "rss"])
         for s in samples:
-            w.writerow(
-                [s.turn, s.session_messages, s.jsonl_bytes, s.tm_current, s.tm_peak, s.rss]
-            )
+            w.writerow([s.turn, s.session_messages, s.jsonl_bytes, s.tm_current, s.tm_peak, s.rss])
 
 
 def write_png(samples: list[Sample], out: Path) -> None:

@@ -29,9 +29,7 @@ class HistoryStore(Protocol):
         """Load a range of messages from disk by index. Returns empty list by default."""
         return []
 
-    def read_history(
-        self, key: str, max_messages: int | None = None
-    ) -> list[dict[str, Any]]:
+    def read_history(self, key: str, max_messages: int | None = None) -> list[dict[str, Any]]:
         """Return the unconsolidated tail for LLM input, applying orphan repair.
 
         Default implementation reads from ``get_or_create(key).get_history()`` —
@@ -42,7 +40,7 @@ class HistoryStore(Protocol):
         tail (callers that don't want a window cap pass ``None``).
         """
         session = self.get_or_create(key)
-        return session.get_history(max_messages=max_messages or 500)
+        return session.get_history(max_messages=max_messages)
 
 
 @runtime_checkable

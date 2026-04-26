@@ -15,7 +15,7 @@ logger = structlog.get_logger()
 
 
 def _normalize_history(
-    messages: list[dict[str, Any]], max_messages: int = 500
+    messages: list[dict[str, Any]], max_messages: int | None = 500
 ) -> list[dict[str, Any]]:
     """Apply LLM-input cleanup to a slice of messages.
 
@@ -118,11 +118,12 @@ class Session:
         self._total_messages = new_total
         self.updated_at = datetime.now()
 
-    def get_history(self, max_messages: int = 500) -> list[dict[str, Any]]:
+    def get_history(self, max_messages: int | None = 500) -> list[dict[str, Any]]:
         """Return unconsolidated messages for LLM input, aligned to a user turn.
 
         When loaded from disk, self.messages starts at _messages_offset so
-        we compute the relative skip from last_consolidated.
+        we compute the relative skip from last_consolidated. ``max_messages
+        =None`` returns the full unconsolidated tail (no window cap).
         """
         relative_consolidated = max(0, self.last_consolidated - self._messages_offset)
         unconsolidated = self.messages[relative_consolidated:]
@@ -249,9 +250,7 @@ class SessionManager:
             logger.warning("session_load_failed", **{"session.key": key}, error=e)
             return None
 
-    def read_history(
-        self, key: str, max_messages: int | None = None
-    ) -> list[dict[str, Any]]:
+    def read_history(self, key: str, max_messages: int | None = None) -> list[dict[str, Any]]:
         """Read the unconsolidated tail from disk and apply LLM-input cleanup.
 
         Bypasses ``session.messages`` entirely — ``streaming_history=True``
@@ -270,7 +269,7 @@ class SessionManager:
         else:
             relative = max(0, session.last_consolidated - session._messages_offset)
             tail = session.messages[relative:]
-        return _normalize_history(tail, max_messages=max_messages or 500)
+        return _normalize_history(tail, max_messages=max_messages)
 
     def load_range(self, key: str, start: int, end: int) -> list[dict[str, Any]]:
         """Load a range of messages from disk by index.
@@ -318,9 +317,7 @@ class SessionManager:
         """
         path = self._get_session_path(session.key)
 
-        if self.streaming_history and (
-            session.total_messages > 0 or session.last_consolidated > 0
-        ):
+        if self.streaming_history and (session.total_messages > 0 or session.last_consolidated > 0):
             # session.messages is intentionally empty — fetch from disk so
             # the rewrite preserves the tail. Consolidated lines are
             # below ``last_consolidated`` and we keep them too because

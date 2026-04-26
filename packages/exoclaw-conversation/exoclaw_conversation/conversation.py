@@ -186,9 +186,7 @@ class DefaultConversation:
             # Route through the store rather than session.get_history so a
             # streaming-enabled HistoryStore reads the unconsolidated tail
             # from disk on demand instead of holding it in session.messages.
-            history = self.history.read_history(
-                session_id, max_messages=self.memory_window
-            )
+            history = self.history.read_history(session_id, max_messages=self.memory_window)
 
         extra_context: str | None = None
         if plugin_context:

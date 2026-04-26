@@ -247,8 +247,8 @@ async def _run_mode(
         )
         print(
             f"  {mode:>9} n={n:>3} in_flight  "
-            f"tm_current={tm_current/1024:>8.1f}KiB  "
-            f"tm_peak={tm_peak/1024:>8.1f}KiB"
+            f"tm_current={tm_current / 1024:>8.1f}KiB  "
+            f"tm_peak={tm_peak / 1024:>8.1f}KiB"
         )
 
         provider.release.set()
@@ -272,10 +272,7 @@ async def _run_mode(
                 rss=_rss_bytes(),
             )
         )
-        print(
-            f"  {mode:>9} n={n:>3} post_turn  "
-            f"tm_current={tm_current/1024:>8.1f}KiB"
-        )
+        print(f"  {mode:>9} n={n:>3} post_turn  tm_current={tm_current / 1024:>8.1f}KiB")
 
     return samples
 
@@ -360,9 +357,7 @@ def write_png(samples: list[Sample], out: Path) -> None:
         marker="s",
     )
     ax.set_ylabel("tracemalloc current (KiB)")
-    ax.set_title(
-        "Post-turn baseline — RAM held between LLM calls (Step C win)"
-    )
+    ax.set_title("Post-turn baseline — RAM held between LLM calls (Step C win)")
     ax.legend(loc="upper left")
     ax.grid(True, alpha=0.3)
 
