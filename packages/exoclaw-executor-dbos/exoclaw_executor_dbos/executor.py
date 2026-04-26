@@ -24,7 +24,7 @@ import json
 from collections.abc import Awaitable, Callable, Coroutine
 from typing import Any
 
-from dbos import DBOS, Queue, SetWorkflowID
+from dbos import DBOS, Queue, SetEnqueueOptions, SetWorkflowID
 from exoclaw.agent.conversation import Conversation
 from exoclaw.agent.tools.protocol import ToolContext
 from exoclaw.agent.tools.registry import ToolRegistry
@@ -688,6 +688,14 @@ class DBOSExecutor:
         replaying through the channel (e.g. after a ``BAD_EVENT_QUEUE_ID``
         reconnect) dedupes on DBOS's side. Missing ``message_id`` falls
         back to a uuid7 — still durable, just not dedup'd.
+
+        Partition key — the queue is ``partition_queue=True``, so each
+        enqueue must declare which chat it belongs to. Channel messages
+        key as ``"{channel}:{chat_id}"``; system messages already encode
+        their origin channel inside ``chat_id`` (see
+        ``AgentLoop._process_message``) and pass that through verbatim,
+        so a subagent posting back into chat X lands in the same
+        partition as a real user message in chat X.
         """
         from .turn import _get_inbound_queue, run_inbound_turn
 
@@ -697,8 +705,12 @@ class DBOSExecutor:
         else:
             wfid = f"inbound:{msg.channel}:{msg.chat_id}:{uuid7().hex}"
 
+        partition_key = (
+            msg.chat_id if msg.channel == "system" else f"{msg.channel}:{msg.chat_id}"
+        )
+
         queue = _get_inbound_queue()
-        with SetWorkflowID(wfid):
+        with SetEnqueueOptions(queue_partition_key=partition_key), SetWorkflowID(wfid):
             await queue.enqueue_async(
                 run_inbound_turn,
                 channel=msg.channel,
