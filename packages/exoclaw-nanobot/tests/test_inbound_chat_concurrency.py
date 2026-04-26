@@ -61,16 +61,18 @@ def _reset_loop_default_executor() -> None:
     shuts down the running event loop's default ``ThreadPoolExecutor``.
     ``queue.enqueue_async`` hands work off via ``loop.run_in_executor
     (None, …)`` and dies with "cannot schedule new futures after
-    shutdown" against the dead executor. Clearing ``_default_executor``
-    on the *currently running* loop makes asyncio lazily mint a fresh
+    shutdown" against the dead executor. Installing a fresh executor
+    via the public ``loop.set_default_executor`` restores the path —
+    asyncio's ``run_in_executor(None, …)`` then routes through the new
     one. Must be called from inside the async test body — fixture
     setup runs on a different loop than the one the test ultimately
     uses, so resetting at fixture-entry time has no effect.
     """
     import asyncio
+    from concurrent.futures import ThreadPoolExecutor
 
     loop = asyncio.get_running_loop()
-    loop._default_executor = None  # type: ignore[attr-defined]
+    loop.set_default_executor(ThreadPoolExecutor())
 
 
 class _ConcurrencyProbe:
