@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 import structlog
 import structlog.contextvars
@@ -13,6 +13,7 @@ from exoclaw.agent.loop import AgentLoop
 from exoclaw.agent.tools.protocol import Tool
 from exoclaw.bus.events import InboundMessage
 from exoclaw.bus.protocol import Bus
+from exoclaw.iteration_policy import IterationPolicy
 from exoclaw.providers.protocol import LLMProvider
 
 from .batch_store import BatchSnapshot, BatchStore, InMemoryBatchStore
@@ -83,6 +84,7 @@ class SubagentManager:
         workspace: Path | None = None,
         spawner_factory: SpawnerFactory | None = None,
         batch_store: BatchStore | None = None,
+        iteration_policy_factory: Callable[[], IterationPolicy] | None = None,
     ):
         self._provider = provider
         self._bus = bus
@@ -90,6 +92,12 @@ class SubagentManager:
         self._tools = tools or []
         self._model = model
         self._max_iterations = max_iterations
+        # Build a fresh policy per spawn — LoopDetectionPolicy carries a
+        # tool-call history that must not be shared with the parent or
+        # with sibling subagents, otherwise their patterns would cross-
+        # contaminate the detector. When unset, the child falls back to
+        # the static ``max_iterations`` cap.
+        self._iteration_policy_factory = iteration_policy_factory
         self._handles: dict[str, SubagentHandle] = {}
         self._sessions: dict[str, str | None] = {}
         self._results_dir: Path | None = None
@@ -235,6 +243,23 @@ class SubagentManager:
 
         try:
             try:
+                child_policy = (
+                    self._iteration_policy_factory()
+                    if self._iteration_policy_factory is not None
+                    else None
+                )
+                child_on_tool_calls = None
+                if child_policy is not None:
+                    _record = cast(
+                        "Callable[[str, Any], None] | None",
+                        getattr(child_policy, "record", None),
+                    )
+                    if _record is not None:
+
+                        async def child_on_tool_calls(tool_calls: list[Any]) -> None:
+                            for tc in tool_calls:
+                                _record(tc.name, tc.arguments)
+
                 loop = AgentLoop(
                     bus=self._bus,
                     provider=self._provider,
@@ -242,6 +267,8 @@ class SubagentManager:
                     model=effective_model,
                     max_iterations=self._max_iterations,
                     tools=[t for t in self._tools if t.name != "spawn"],
+                    iteration_policy=child_policy,
+                    on_tool_calls=child_on_tool_calls,
                 )
                 kwargs: dict = {}
                 if skills is not None:
