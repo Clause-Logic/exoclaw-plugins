@@ -354,6 +354,7 @@ async def create(
     _ld = config.agents.defaults.loop_detection
     subagent_iteration_policy_factory: Any = None
     if _ld.enabled:
+
         def subagent_iteration_policy_factory() -> LoopDetectionPolicy:
             return LoopDetectionPolicy(
                 LoopDetectionConfig(
