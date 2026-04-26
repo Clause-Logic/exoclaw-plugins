@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 import structlog
 import structlog.contextvars
@@ -249,12 +249,16 @@ class SubagentManager:
                     else None
                 )
                 child_on_tool_calls = None
-                if child_policy is not None and hasattr(child_policy, "record"):
-                    _record = child_policy.record
+                if child_policy is not None:
+                    _record = cast(
+                        "Callable[[str, Any], None] | None",
+                        getattr(child_policy, "record", None),
+                    )
+                    if _record is not None:
 
-                    async def child_on_tool_calls(tool_calls: list[Any]) -> None:
-                        for tc in tool_calls:
-                            _record(tc.name, tc.arguments)
+                        async def child_on_tool_calls(tool_calls: list[Any]) -> None:
+                            for tc in tool_calls:
+                                _record(tc.name, tc.arguments)
 
                 loop = AgentLoop(
                     bus=self._bus,
