@@ -352,20 +352,22 @@ async def create(
     # siblings. Without this, child loops fall back to the static
     # ``max_iterations`` cap (default 40) even though loop detection is on.
     _ld = config.agents.defaults.loop_detection
-    subagent_iteration_policy_factory: Any = None
-    if _ld.enabled:
 
-        def subagent_iteration_policy_factory() -> LoopDetectionPolicy:
-            return LoopDetectionPolicy(
-                LoopDetectionConfig(
-                    history_size=_ld.history_size,
-                    warning_threshold=_ld.warning_threshold,
-                    critical_threshold=_ld.critical_threshold,
-                    global_circuit_breaker=_ld.global_circuit_breaker,
-                    detect_repeat=_ld.detect_repeat,
-                    detect_ping_pong=_ld.detect_ping_pong,
-                )
+    def _build_subagent_policy() -> LoopDetectionPolicy:
+        return LoopDetectionPolicy(
+            LoopDetectionConfig(
+                history_size=_ld.history_size,
+                warning_threshold=_ld.warning_threshold,
+                critical_threshold=_ld.critical_threshold,
+                global_circuit_breaker=_ld.global_circuit_breaker,
+                detect_repeat=_ld.detect_repeat,
+                detect_ping_pong=_ld.detect_ping_pong,
             )
+        )
+
+    subagent_iteration_policy_factory: Callable[[], LoopDetectionPolicy] | None = (
+        _build_subagent_policy if _ld.enabled else None
+    )
 
     subagent_mgr = SubagentManager(
         provider=provider,
