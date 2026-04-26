@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -125,16 +126,12 @@ class TestStreamBody:
         # Outgoing message has no ``_content_file`` key.
         assert "_content_file" not in parsed["messages"][0]
 
-    async def test_file_backed_content_streamed_from_disk(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
+    async def test_file_backed_content_streamed_from_disk(self, tmp_path: Path) -> None:
         """When ``_content_file`` is set and the file exists, the
         ``content`` field on the wire is sourced from disk — proves
         the Step D consumer end-to-end. Round-trips as valid JSON
         with the file's exact contents."""
-        from pathlib import Path
-
-        scratch = Path(tmp_path) / "tool-output.txt"  # type: ignore[arg-type]
+        scratch = tmp_path / "tool-output.txt"
         scratch.write_text('line one\nline two\nspecial: "quote" and \\backslash\n')
 
         head = {"model": "m1"}
@@ -176,9 +173,7 @@ class TestStreamBody:
 
         assert parsed["messages"][0]["content"] == "fallback-preview"
 
-    async def test_file_backed_content_does_not_materialise_in_python(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
+    async def test_file_backed_content_does_not_materialise_in_python(self, tmp_path: Path) -> None:
         """The whole point of Step D: the file contents must NEVER
         live as one contiguous Python string in the provider's
         request-body assembly. Verify that the streamed bytes can
@@ -191,9 +186,7 @@ class TestStreamBody:
         implementation detail), only that no single chunk is the
         entire body — i.e. the streaming actually streams.
         """
-        from pathlib import Path
-
-        scratch = Path(tmp_path) / "big.txt"  # type: ignore[arg-type]
+        scratch = tmp_path / "big.txt"
         scratch.write_text("x" * 100_000)  # well above the 8192-char read chunk
 
         head = {"model": "m1"}

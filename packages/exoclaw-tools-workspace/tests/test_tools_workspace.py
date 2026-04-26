@@ -744,3 +744,61 @@ class TestExecToolStreaming:
         chunks = [c async for c in tool.execute_streaming("rm -rf /")]
         assert len(chunks) == 1
         assert "blocked by safety guard" in chunks[0]
+
+    async def test_concurrent_drain_avoids_pipe_buffer_deadlock(self) -> None:
+        """Sequential drain (stdout-then-stderr) deadlocks if the
+        child writes enough to stderr to fill the OS pipe buffer
+        (~64 KB on Linux) while stdout is still being read: the
+        child blocks on the stderr write, stdout never reaches EOF,
+        the iterator hangs until the deadline trips.
+
+        Concurrent drain (this PR's fix) routes both pipes through
+        a shared queue so neither blocks on the other. Test:
+        write 256 KB to stderr — well past any plausible pipe
+        buffer size — and confirm the iterator completes well
+        under the 10-second timeout.
+        """
+        tool = ExecTool(timeout=10)
+        # 256 KB to stderr, then a short stdout marker so we know
+        # both pipes get drained interleaved, not one-after-the-other.
+        cmd = "python3 -c \"import sys; sys.stderr.write('x' * (256 * 1024)); sys.stdout.write('done')\""
+
+        chunks: list[str] = []
+        # If the deadlock regresses, ``async for`` would hang until
+        # the 10-second timeout and the test wall time would jump.
+        # pytest's default per-test timeout (10s repo-wide) catches
+        # that as a failure even without an explicit assertion.
+        async for c in tool.execute_streaming(cmd):
+            chunks.append(c)
+
+        full = "".join(chunks)
+        assert "done" in full
+        assert "STDERR:" in full
+        # Round-trip: 256 KB of 'x' arrived in the stderr section.
+        assert full.count("x") == 256 * 1024
+
+
+class TestReadFileToolStreamingValidation:
+    """Streaming variant must validate the same inputs the inline
+    path does — a negative ``offset`` would otherwise slip past the
+    ``offset > 0`` ranged-read check and silently stream the full
+    file instead of returning the expected error string.
+    """
+
+    async def test_negative_offset_yields_error(self, tmp_path: Path) -> None:
+        f = tmp_path / "f.txt"
+        f.write_text("hello")
+        tool = ReadFileTool(workspace=tmp_path)
+
+        chunks = [c async for c in tool.execute_streaming(str(f), offset=-1)]
+        assert len(chunks) == 1
+        assert "offset must be >= 0" in chunks[0]
+
+    async def test_zero_limit_yields_error(self, tmp_path: Path) -> None:
+        f = tmp_path / "f.txt"
+        f.write_text("hello")
+        tool = ReadFileTool(workspace=tmp_path)
+
+        chunks = [c async for c in tool.execute_streaming(str(f), limit=0)]
+        assert len(chunks) == 1
+        assert "limit must be >= 1" in chunks[0]

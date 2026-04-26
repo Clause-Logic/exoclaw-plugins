@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from exoclaw.agent.tools.protocol import ToolBase
+from exoclaw.utils import create_isolated_task
 
 
 class ExecTool(ToolBase):
@@ -125,18 +126,27 @@ class ExecTool(ToolBase):
 
         Same safety guard, working-dir, env, and timeout semantics as
         :meth:`execute` — but truncation is dropped (the whole point
-        of streaming is to support multi-MB output) and chunks are
-        yielded line-by-line as the subprocess produces them. The
-        executor drains the iterator into a per-turn scratch file,
-        so transient Python heap pressure is bounded by one line at
-        a time, not by the full output size.
+        of streaming is to support multi-MB output) and output is
+        yielded in bounded byte-chunks as the subprocess produces it.
+        The executor drains the iterator into a per-turn scratch file,
+        so transient Python heap pressure is bounded by one read
+        chunk at a time, not by the full output size.
 
         Timeout enforcement is deadline-based: the total wall time
         from process start to finish is capped at ``self.timeout``,
-        same as the inline path. Per-readline waits use the
-        remaining deadline so a hung-with-no-output process trips
-        the timeout reliably (the inline path's
-        ``process.communicate()`` would have done the same).
+        same as the inline path. Per-read waits use the remaining
+        deadline so a hung-with-no-output process trips the timeout
+        reliably (the inline path's ``process.communicate()`` would
+        have done the same).
+
+        ``stdout`` and ``stderr`` are drained **concurrently** — each
+        pipe gets its own consumer task pushing decoded chunks into a
+        shared queue. Sequential drain (``stdout`` first, then
+        ``stderr``) deadlocks if the child writes enough to ``stderr``
+        to fill the OS pipe buffer (~64 KB on Linux) while ``stdout``
+        is still being drained: the child blocks on the ``stderr``
+        write, ``stdout`` never reaches EOF, and the iterator hangs
+        until the deadline.
         """
         cwd = working_dir or self.working_dir or os.getcwd()
         guard_error = self._guard_command(command, cwd)
@@ -163,49 +173,68 @@ class ExecTool(ToolBase):
         deadline = time.monotonic() + self.timeout
         timed_out = False
 
-        async def _drain(reader: asyncio.StreamReader | None) -> AsyncIterator[str]:
-            """Yield decoded chunks from a pipe, respecting the deadline.
+        # Tagged-chunk queue: ``(origin, chunk)`` where ``chunk=None``
+        # is the EOF sentinel for that origin. Bounded queue size
+        # provides natural backpressure — if the consumer (the agent
+        # loop / scratch-file write) is slow, the producer task
+        # awaits ``put`` and the OS pipe buffer absorbs the rest.
+        queue: asyncio.Queue[tuple[str, str | None]] = asyncio.Queue(maxsize=64)
 
-            Reads in **fixed byte chunks** (not lines) — a single
-            2 MB line of unformatted JSON or minified HTML would
-            otherwise force a 2 MB allocation in ``readline``,
-            defeating the whole point of streaming. Each chunk is
-            fed to an incremental UTF-8 decoder so partial codepoints
-            at chunk boundaries are buffered until the next chunk
-            completes them. ``errors='replace'`` swaps any truly
+        async def _consume(reader: asyncio.StreamReader | None, origin: str) -> None:
+            """Read fixed byte chunks from a pipe and push decoded
+            text into the shared queue.
+
+            **Fixed byte chunks** (not lines) — a single 2 MB line of
+            unformatted JSON or minified HTML would otherwise force
+            a 2 MB allocation in ``readline``, defeating streaming.
+            Each chunk feeds an incremental UTF-8 decoder so partial
+            codepoints at chunk boundaries buffer until the next
+            chunk completes them. ``errors='replace'`` swaps truly
             invalid sequences for U+FFFD rather than crashing.
             """
-            if reader is None:
-                return
-            decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
-            while True:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
+            try:
+                if reader is None:
                     return
-                try:
-                    chunk = await asyncio.wait_for(reader.read(8192), timeout=remaining)
-                except asyncio.TimeoutError:
-                    return
-                if not chunk:
-                    tail = decoder.decode(b"", final=True)
-                    if tail:
-                        yield tail
-                    return
-                text = decoder.decode(chunk)
-                if text:
-                    yield text
+                decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        return
+                    try:
+                        chunk = await asyncio.wait_for(reader.read(8192), timeout=remaining)
+                    except asyncio.TimeoutError:
+                        return
+                    if not chunk:
+                        tail = decoder.decode(b"", final=True)
+                        if tail:
+                            await queue.put((origin, tail))
+                        return
+                    text = decoder.decode(chunk)
+                    if text:
+                        await queue.put((origin, text))
+            finally:
+                # Always signal EOF for this origin so the consumer
+                # knows when both pipes are done.
+                await queue.put((origin, None))
+
+        stdout_task = create_isolated_task(_consume(process.stdout, "stdout"))
+        stderr_task = create_isolated_task(_consume(process.stderr, "stderr"))
+
+        done = {"stdout": False, "stderr": False}
+        stderr_prefix_emitted = False
 
         try:
-            async for chunk in _drain(process.stdout):
-                yield chunk
-            if time.monotonic() < deadline:
-                stderr_first = True
-                async for chunk in _drain(process.stderr):
-                    if stderr_first:
-                        yield "STDERR:\n" + chunk
-                        stderr_first = False
-                    else:
-                        yield chunk
+            while not (done["stdout"] and done["stderr"]):
+                origin, chunk = await queue.get()
+                if chunk is None:
+                    done[origin] = True
+                    continue
+                if origin == "stderr" and not stderr_prefix_emitted:
+                    yield "STDERR:\n" + chunk
+                    stderr_prefix_emitted = True
+                else:
+                    yield chunk
+
             timed_out = time.monotonic() >= deadline and process.returncode is None
             if not timed_out:
                 try:
@@ -224,6 +253,15 @@ class ExecTool(ToolBase):
                     await asyncio.wait_for(process.wait(), timeout=5.0)
                 except asyncio.TimeoutError:
                     pass
+            # Both consumer tasks should already be done (their
+            # readers see EOF when the process exits / is killed),
+            # but await them so there are no orphan tasks. Cancel
+            # first if for some reason they're still running, e.g.
+            # the deadline tripped mid-read with an unflushed pipe.
+            for task in (stdout_task, stderr_task):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
 
         if timed_out:
             yield f"\nError: Command timed out after {self.timeout} seconds"

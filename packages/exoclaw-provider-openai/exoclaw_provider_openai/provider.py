@@ -522,20 +522,27 @@ async def _emit_message(msg: dict[str, Any]) -> AsyncIterator[bytes]:
     # control characters, multi-byte chars); slicing off the
     # surrounding quotes gives just the escaped body bytes.
     try:
-        with open(content_file_str, encoding="utf-8") as fh:
+        # ``newline=""`` matches the writer's open mode in
+        # ``DirectExecutor.execute_tool_with_handle`` so universal-
+        # newline translation doesn't turn the writer's exact byte
+        # sequence (``\r\n`` on Windows when a tool emits CRLF) into
+        # ``\n`` here, drifting wire content from on-disk content.
+        with open(content_file_str, encoding="utf-8", newline="") as fh:
             while True:
                 chunk = fh.read(8192)
                 if not chunk:
                     break
                 escaped = json.dumps(chunk, ensure_ascii=False)[1:-1]
                 yield escaped.encode("utf-8")
-    except FileNotFoundError:
+    except (OSError, UnicodeError):
         # Scratch file disappeared between tool execution and provider
-        # send (manual cleanup, OS tmpwatch, race with post_turn). Fall
-        # back to the inline ``content`` preview that the executor
-        # already populated when it returned the ``ToolResult``. The
-        # LLM sees the head + footer line (``[streamed N bytes ...]``)
-        # rather than a 400 from a malformed JSON payload.
+        # send (manual cleanup, OS tmpwatch, race with post_turn) or
+        # a transient read error / encoding glitch. Fall back to the
+        # inline ``content`` preview that the executor already
+        # populated when it returned the ``ToolResult``. The LLM sees
+        # the head + footer line (``[streamed N bytes ...]``) rather
+        # than a 400 from a malformed JSON payload, and the request
+        # streaming continues for the rest of the messages.
         fallback = msg.get("content")
         if isinstance(fallback, str) and fallback:
             escaped = json.dumps(fallback, ensure_ascii=False)[1:-1]

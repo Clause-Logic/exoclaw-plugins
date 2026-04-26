@@ -145,6 +145,17 @@ class ReadFileTool(ToolBase):
         partial-codepoint dance is needed here, unlike the
         subprocess-pipe path in ``ExecTool``.
         """
+        # Same input validation as ``execute``. A negative ``offset``
+        # would otherwise slip through into the streaming branch
+        # (which checks ``offset > 0``) and silently stream the full
+        # file instead of returning the expected error.
+        if offset < 0:
+            yield "Error: offset must be >= 0"
+            return
+        if limit is not None and limit < 1:
+            yield "Error: limit must be >= 1"
+            return
+
         if offset > 0 or limit is not None:
             # Ranged reads: line-count semantics, keep the inline
             # path. The executor's ``execute_tool_with_handle``
