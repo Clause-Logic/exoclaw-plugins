@@ -326,6 +326,56 @@ class TestRun:
         _, kwargs = MockLoop.call_args
         assert kwargs["model"] == "claude-haiku-4-5"
 
+    async def test_run_without_policy_factory_passes_none(self) -> None:
+        mgr = _make_manager()
+        mock_loop = MagicMock()
+        mock_loop.process_direct = AsyncMock(return_value="done")
+
+        with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop) as MockLoop:  # noqa: N806
+            await mgr._run("t1", "task", "label", "cli", "user1", None, None)
+
+        _, kwargs = MockLoop.call_args
+        assert kwargs["iteration_policy"] is None
+        assert kwargs["on_tool_calls"] is None
+
+    async def test_run_with_policy_factory_passes_fresh_policy_per_spawn(self) -> None:
+        policies: list[MagicMock] = []
+
+        def factory() -> MagicMock:
+            p = MagicMock()
+            p.record = MagicMock()
+            policies.append(p)
+            return p
+
+        mgr = SubagentManager(
+            provider=_make_provider(),
+            bus=_make_bus(),
+            conversation_factory=_make_conversation,
+            iteration_policy_factory=factory,
+        )
+        mock_loop = MagicMock()
+        mock_loop.process_direct = AsyncMock(return_value="done")
+
+        with patch("exoclaw_subagent.manager.AgentLoop", return_value=mock_loop) as MockLoop:  # noqa: N806
+            await mgr._run("t1", "task", "label", "cli", "user1", None, None)
+            await mgr._run("t2", "task", "label", "cli", "user1", None, None)
+
+        # Each spawn got a freshly built policy — no cross-contamination.
+        assert len(policies) == 2
+        assert policies[0] is not policies[1]
+
+        # The most recent AgentLoop call wired the second policy in.
+        _, kwargs = MockLoop.call_args
+        assert kwargs["iteration_policy"] is policies[1]
+        assert callable(kwargs["on_tool_calls"])
+
+        # And the on_tool_calls hook routes records to the same policy.
+        tc = MagicMock()
+        tc.name = "read_file"
+        tc.arguments = {"path": "/x"}
+        await kwargs["on_tool_calls"]([tc])
+        policies[1].record.assert_called_once_with("read_file", {"path": "/x"})
+
     async def test_run_none_model_falls_back_to_manager_default(self) -> None:
         bus = _make_bus()
         mgr = SubagentManager(

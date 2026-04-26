@@ -347,6 +347,25 @@ async def create(
             max_concurrent=config.agents.subagent_max_concurrent,
         )
 
+    # Subagents need their own iteration policy — a fresh one per spawn so
+    # the loop-detection history stays isolated from the parent and from
+    # siblings. Without this, child loops fall back to the static
+    # ``max_iterations`` cap (default 40) even though loop detection is on.
+    _ld = config.agents.defaults.loop_detection
+    subagent_iteration_policy_factory: Any = None
+    if _ld.enabled:
+        def subagent_iteration_policy_factory() -> LoopDetectionPolicy:
+            return LoopDetectionPolicy(
+                LoopDetectionConfig(
+                    history_size=_ld.history_size,
+                    warning_threshold=_ld.warning_threshold,
+                    critical_threshold=_ld.critical_threshold,
+                    global_circuit_breaker=_ld.global_circuit_breaker,
+                    detect_repeat=_ld.detect_repeat,
+                    detect_ping_pong=_ld.detect_ping_pong,
+                )
+            )
+
     subagent_mgr = SubagentManager(
         provider=provider,
         bus=bus,
@@ -370,6 +389,7 @@ async def create(
         # subagents completed into an empty in-memory ``_batches`` dict
         # and the batch announcement never fired).
         batch_store=DBOSBatchStore(workspace=workspace),
+        iteration_policy_factory=subagent_iteration_policy_factory,
     )
     spawn_tool = SpawnTool(
         manager=subagent_mgr,
