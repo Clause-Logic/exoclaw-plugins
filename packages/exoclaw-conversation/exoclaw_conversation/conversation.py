@@ -183,7 +183,12 @@ class DefaultConversation:
         if isolated:
             history = []
         else:
-            history = session.get_history(max_messages=self.memory_window)
+            # Route through the store rather than session.get_history so a
+            # streaming-enabled HistoryStore reads the unconsolidated tail
+            # from disk on demand instead of holding it in session.messages.
+            history = self.history.read_history(
+                session_id, max_messages=self.memory_window
+            )
 
         extra_context: str | None = None
         if plugin_context:
@@ -263,8 +268,7 @@ class DefaultConversation:
         ``[*prefix, *load_persisted_history(session_id), *suffix]``
         per iteration — prefix and suffix are small and cheap to hold.
         """
-        session = self.history.get_or_create(session_id)
-        return session.get_history(max_messages=self.memory_window)
+        return self.history.read_history(session_id, max_messages=self.memory_window)
 
     async def append(
         self,
@@ -334,8 +338,15 @@ class DefaultConversation:
         self._consolidating.add(session_id)
         try:
             async with lock:
-                # session.messages contains only unconsolidated messages
-                snapshot = list(session.messages)
+                # Under streaming_history session.messages is empty — read
+                # the unconsolidated tail from disk so clear()-time
+                # archival still has something to consolidate.
+                if getattr(self.history, "streaming_history", False):
+                    snapshot = self.history.load_range(
+                        session_id, session.last_consolidated, session.total_messages
+                    )
+                else:
+                    snapshot = list(session.messages)
                 if snapshot:
                     temp = Session(key=session_id)
                     temp.messages = list(snapshot)
@@ -511,7 +522,13 @@ class DefaultConversation:
 
             entry.setdefault("timestamp", datetime.now().isoformat())
             new_total = session.total_messages + 1
-            session.messages.append(entry)
+            # Under streaming_history we don't grow session.messages — the
+            # whole point is that the unconsolidated tail lives only on
+            # disk between turns. ``save_append`` still flushes ``entry``
+            # to JSONL; ``total_messages`` advances so the next
+            # ``read_history`` reads through the new boundary.
+            if not getattr(self.history, "streaming_history", False):
+                session.messages.append(entry)
             session._total_messages = new_total
             prepared.append(entry)
 
