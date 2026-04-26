@@ -1,6 +1,7 @@
 """File system tools: read, write, edit, list."""
 
 import difflib
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -122,6 +123,61 @@ class ReadFileTool(ToolBase):
             return f"Error: {e}"
         except Exception as e:
             return f"Error reading file: {str(e)}"
+
+
+    async def execute_streaming(
+        self, path: str, offset: int = 0, limit: int | None = None, **kwargs: Any
+    ) -> AsyncIterator[str]:
+        """Step D opt-in: stream the file's content from disk in fixed
+        character chunks, lifting the inline path's ``_MAX_CHARS`` cap.
+
+        Only the **full-file** path streams. Ranged reads (``offset``
+        or ``limit`` set) fall back to the inline implementation
+        because line-counting requires reading lines, and a single
+        2 MB line in a minified JSON would force a 2 MB allocation
+        regardless of how we structure the iteration. The streaming
+        variant is the safe path for "I want the whole file no
+        matter how big" — typically logs, transcripts, exported
+        data — where line size is not under the user's control.
+
+        ``open(..., encoding='utf-8').read(8192)`` returns up to
+        8192 **characters** (not bytes) at a time, with codepoint
+        boundaries handled by ``TextIOWrapper`` internally. So no
+        partial-codepoint dance is needed here, unlike the
+        subprocess-pipe path in ``ExecTool``.
+        """
+        if offset > 0 or limit is not None:
+            # Ranged reads: line-count semantics, keep the inline
+            # path. The executor's ``execute_tool_with_handle``
+            # checks ``inspect.isasyncgenfunction`` to decide which
+            # path to take, so we have to actually be an async
+            # generator here even for the fallback case.
+            yield await self.execute(path, offset=offset, limit=limit, **kwargs)
+            return
+
+        try:
+            file_path = _resolve_path(path, self._workspace, self._allowed_dir)
+        except PermissionError as e:
+            yield f"Error: {e}"
+            return
+        if not file_path.exists():
+            yield f"Error: File not found: {path}"
+            return
+        if not file_path.is_file():
+            yield f"Error: Not a file: {path}"
+            return
+
+        try:
+            with open(file_path, encoding="utf-8") as fh:
+                while True:
+                    chunk = fh.read(8192)
+                    if not chunk:
+                        return
+                    yield chunk
+        except PermissionError as e:
+            yield f"Error: {e}"
+        except Exception as e:
+            yield f"Error reading file: {e}"
 
 
 class WriteFileTool(ToolBase):
