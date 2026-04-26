@@ -53,6 +53,7 @@ from exoclaw.agent.loop import AgentLoop
 from exoclaw.bus.queue import MessageBus
 from exoclaw.executor import DirectExecutor
 from exoclaw.providers.types import LLMResponse
+from exoclaw.utils import create_isolated_task
 from exoclaw_conversation.context import ContextBuilder
 from exoclaw_conversation.conversation import DefaultConversation
 from exoclaw_conversation.memory import MemoryStore
@@ -224,7 +225,7 @@ async def _run_mode(
                     lambda key=session_keys[i]: conversation.load_persisted_history(key)
                 )
 
-        tasks = [asyncio.create_task(_one(i)) for i in range(n)]
+        tasks = [create_isolated_task(_one(i)) for i in range(n)]
 
         await provider.entered.wait()
         # ── In-flight sample ─────────────────────────────────────────
