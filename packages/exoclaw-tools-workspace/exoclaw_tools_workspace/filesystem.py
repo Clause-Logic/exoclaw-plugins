@@ -124,7 +124,6 @@ class ReadFileTool(ToolBase):
         except Exception as e:
             return f"Error reading file: {str(e)}"
 
-
     async def execute_streaming(
         self, path: str, offset: int = 0, limit: int | None = None, **kwargs: Any
     ) -> AsyncIterator[str]:

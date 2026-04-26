@@ -135,7 +135,7 @@ class TestStreamBody:
         from pathlib import Path
 
         scratch = Path(tmp_path) / "tool-output.txt"  # type: ignore[arg-type]
-        scratch.write_text("line one\nline two\nspecial: \"quote\" and \\backslash\n")
+        scratch.write_text('line one\nline two\nspecial: "quote" and \\backslash\n')
 
         head = {"model": "m1"}
         messages = [
