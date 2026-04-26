@@ -705,9 +705,7 @@ class DBOSExecutor:
         else:
             wfid = f"inbound:{msg.channel}:{msg.chat_id}:{uuid7().hex}"
 
-        partition_key = (
-            msg.chat_id if msg.channel == "system" else f"{msg.channel}:{msg.chat_id}"
-        )
+        partition_key = msg.chat_id if msg.channel == "system" else f"{msg.channel}:{msg.chat_id}"
 
         queue = _get_inbound_queue()
         with SetEnqueueOptions(queue_partition_key=partition_key), SetWorkflowID(wfid):
