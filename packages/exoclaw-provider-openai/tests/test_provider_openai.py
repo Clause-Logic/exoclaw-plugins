@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -100,6 +101,114 @@ class TestStreamBody:
         parsed = json.loads(body)
 
         assert parsed == {"model": "m1", "messages": []}
+
+    async def test_underscore_keys_stripped_from_output(self) -> None:
+        """Transport-metadata keys (``_``-prefixed) must never reach
+        the wire — the LLM API would reject ``_content_file`` as an
+        unknown property. Symmetric to ``loop.py``'s persistence
+        strip; the wire path is the other place that strip needs to
+        happen.
+        """
+        head = {"model": "m1"}
+        messages = [
+            {
+                "role": "tool",
+                "tool_call_id": "tc1",
+                "name": "exec",
+                "content": "preview",
+                "_content_file": "/nonexistent/path",  # should be stripped, not opened
+            }
+        ]
+
+        body = await _collect_bytes(_stream_body(head, messages))
+        parsed = json.loads(body)
+
+        # Outgoing message has no ``_content_file`` key.
+        assert "_content_file" not in parsed["messages"][0]
+
+    async def test_file_backed_content_streamed_from_disk(self, tmp_path: Path) -> None:
+        """When ``_content_file`` is set and the file exists, the
+        ``content`` field on the wire is sourced from disk — proves
+        the Step D consumer end-to-end. Round-trips as valid JSON
+        with the file's exact contents."""
+        scratch = tmp_path / "tool-output.txt"
+        scratch.write_text('line one\nline two\nspecial: "quote" and \\backslash\n')
+
+        head = {"model": "m1"}
+        messages = [
+            {
+                "role": "tool",
+                "tool_call_id": "tc1",
+                "name": "exec",
+                "content": "preview-only",  # ignored — file content wins
+                "_content_file": str(scratch),
+            }
+        ]
+
+        body = await _collect_bytes(_stream_body(head, messages))
+        parsed = json.loads(body)
+
+        assert parsed["messages"][0]["content"] == scratch.read_text()
+        assert "_content_file" not in parsed["messages"][0]
+
+    async def test_file_backed_falls_back_to_preview_when_missing(self) -> None:
+        """Scratch file disappeared between tool exec and provider
+        send (race with ``post_turn`` cleanup, manual rm, OS
+        tmpwatch). Provider should emit the inline ``content``
+        preview rather than crash with a 400-inducing malformed
+        body. The LLM still sees something diagnostic."""
+        head = {"model": "m1"}
+        messages = [
+            {
+                "role": "tool",
+                "tool_call_id": "tc1",
+                "name": "exec",
+                "content": "fallback-preview",
+                "_content_file": "/no/such/file.txt",
+            }
+        ]
+
+        body = await _collect_bytes(_stream_body(head, messages))
+        parsed = json.loads(body)
+
+        assert parsed["messages"][0]["content"] == "fallback-preview"
+
+    async def test_file_backed_content_does_not_materialise_in_python(self, tmp_path: Path) -> None:
+        """The whole point of Step D: the file contents must NEVER
+        live as one contiguous Python string in the provider's
+        request-body assembly. Verify that the streamed bytes can
+        be consumed chunk-by-chunk without ever holding more than
+        one chunk's worth in memory at the consumer's hand.
+
+        The structural test: the body iterator yields multiple
+        bytes objects that, when joined, equal the expected JSON.
+        We don't assert specific chunk counts (that's an
+        implementation detail), only that no single chunk is the
+        entire body — i.e. the streaming actually streams.
+        """
+        scratch = tmp_path / "big.txt"
+        scratch.write_text("x" * 100_000)  # well above the 8192-char read chunk
+
+        head = {"model": "m1"}
+        messages = [
+            {
+                "role": "tool",
+                "tool_call_id": "tc1",
+                "name": "exec",
+                "content": "preview",
+                "_content_file": str(scratch),
+            }
+        ]
+
+        chunks: list[bytes] = []
+        async for c in _stream_body(head, messages):
+            chunks.append(c)
+
+        # No single chunk holds the entire 100 KiB body.
+        assert all(len(c) < 100_000 for c in chunks)
+        # The full body assembles to valid JSON with the file content.
+        parsed = json.loads(b"".join(chunks))
+        assert parsed["messages"][0]["content"] == "x" * 100_000
 
 
 # SSE helpers ---------------------------------------------------------------

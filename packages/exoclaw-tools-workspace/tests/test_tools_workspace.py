@@ -638,3 +638,167 @@ class TestListDirToolExtra:
         with patch.object(Path, "iterdir", side_effect=OSError("permission denied")):
             result = await tool.execute(str(tmp_path))
         assert "Error" in result
+
+
+class TestReadFileToolStreaming:
+    """Step D opt-in: ``execute_streaming`` reads files of any size in
+    fixed-character chunks, lifting the inline path's _MAX_CHARS cap."""
+
+    async def test_full_file_streams_in_chunks(self, tmp_path: Path) -> None:
+        # Bigger than the 8192-char read window so we know the iterator
+        # actually yields multiple chunks (not a single take).
+        f = tmp_path / "big.txt"
+        f.write_text("x" * 30_000)
+        tool = ReadFileTool(workspace=tmp_path)
+
+        chunks: list[str] = []
+        async for c in tool.execute_streaming(str(f)):
+            chunks.append(c)
+
+        assert "".join(chunks) == "x" * 30_000
+        # Multiple chunks proves we're streaming, not buffering.
+        assert len(chunks) > 1
+        # No truncation footer like the inline path's "(truncated…)".
+        assert not any("truncated" in c for c in chunks)
+
+    async def test_full_file_with_huge_single_line(self, tmp_path: Path) -> None:
+        """A 2 MB single-line minified-JSON-style file is the
+        motivating case for byte-chunk streaming. Line-by-line would
+        force the whole line into one allocation; chunked read keeps
+        every yield bounded by the read window."""
+        f = tmp_path / "minified.json"
+        f.write_text("{" + ",".join(f'"k{i}":{i}' for i in range(50_000)) + "}")
+        tool = ReadFileTool(workspace=tmp_path)
+
+        chunks: list[str] = []
+        async for c in tool.execute_streaming(str(f)):
+            chunks.append(c)
+
+        # No chunk holds more than the read window's worth of chars.
+        assert all(len(c) <= 8192 for c in chunks)
+        # Round-trip equality.
+        assert "".join(chunks) == f.read_text()
+
+    async def test_ranged_read_falls_back_to_inline(self, tmp_path: Path) -> None:
+        """Ranged reads (``offset`` or ``limit``) keep line-counting
+        semantics — they go through the inline ``execute`` path even
+        when accessed via ``execute_streaming``."""
+        f = tmp_path / "lines.txt"
+        f.write_text("\n".join(f"line-{i}" for i in range(20)))
+        tool = ReadFileTool(workspace=tmp_path)
+
+        chunks = [c async for c in tool.execute_streaming(str(f), offset=5, limit=3)]
+        result = "".join(chunks)
+        assert "line-5" in result
+        assert "line-6" in result
+        assert "line-7" in result
+        assert "line-0" not in result
+        # Inline path adds the [lines N-M of T] header.
+        assert result.startswith("[lines 6-8")
+
+    async def test_missing_file_yields_error(self, tmp_path: Path) -> None:
+        tool = ReadFileTool(workspace=tmp_path)
+        chunks = [c async for c in tool.execute_streaming("nonexistent.txt")]
+        assert len(chunks) == 1
+        assert "Error" in chunks[0]
+
+
+class TestExecToolStreaming:
+    """Step D opt-in: subprocess output streams in fixed byte chunks
+    with incremental UTF-8 decoding so a single very-long line of
+    output (large JSON, base64 blob) doesn't force a multi-MB
+    allocation in ``readline``."""
+
+    async def test_stdout_streams_chunked(self) -> None:
+        # Print a 30 KB line — well over the 8192-byte read window.
+        # Without chunked reads this would force one big allocation.
+        long_line = "x" * 30_000
+        tool = ExecTool(timeout=10)
+
+        chunks: list[str] = []
+        async for c in tool.execute_streaming(f"printf '%s' '{long_line}'"):
+            chunks.append(c)
+
+        # Round-trip equality.
+        assert "".join(chunks) == long_line
+        # Multiple chunks: streaming, not buffering.
+        assert len(chunks) >= 2
+
+    async def test_stderr_appended_with_prefix(self) -> None:
+        tool = ExecTool(timeout=10)
+        chunks: list[str] = []
+        async for c in tool.execute_streaming("printf 'hi'; printf 'err' >&2"):
+            chunks.append(c)
+        full = "".join(chunks)
+        assert "hi" in full
+        assert "STDERR:" in full
+        assert "err" in full
+
+    async def test_nonzero_exit_code_emitted(self) -> None:
+        tool = ExecTool(timeout=10)
+        chunks = [c async for c in tool.execute_streaming("exit 7")]
+        assert any("Exit code: 7" in c for c in chunks)
+
+    async def test_safety_guard_short_circuits_streaming(self) -> None:
+        tool = ExecTool(timeout=10)
+        chunks = [c async for c in tool.execute_streaming("rm -rf /")]
+        assert len(chunks) == 1
+        assert "blocked by safety guard" in chunks[0]
+
+    async def test_concurrent_drain_avoids_pipe_buffer_deadlock(self) -> None:
+        """Sequential drain (stdout-then-stderr) deadlocks if the
+        child writes enough to stderr to fill the OS pipe buffer
+        (~64 KB on Linux) while stdout is still being read: the
+        child blocks on the stderr write, stdout never reaches EOF,
+        the iterator hangs until the deadline trips.
+
+        Concurrent drain (this PR's fix) routes both pipes through
+        a shared queue so neither blocks on the other. Test:
+        write 256 KB to stderr — well past any plausible pipe
+        buffer size — and confirm the iterator completes well
+        under the 10-second timeout.
+        """
+        tool = ExecTool(timeout=10)
+        # 256 KB to stderr, then a short stdout marker so we know
+        # both pipes get drained interleaved, not one-after-the-other.
+        cmd = "python3 -c \"import sys; sys.stderr.write('x' * (256 * 1024)); sys.stdout.write('done')\""
+
+        chunks: list[str] = []
+        # If the deadlock regresses, ``async for`` would hang until
+        # the 10-second timeout and the test wall time would jump.
+        # pytest's default per-test timeout (10s repo-wide) catches
+        # that as a failure even without an explicit assertion.
+        async for c in tool.execute_streaming(cmd):
+            chunks.append(c)
+
+        full = "".join(chunks)
+        assert "done" in full
+        assert "STDERR:" in full
+        # Round-trip: 256 KB of 'x' arrived in the stderr section.
+        assert full.count("x") == 256 * 1024
+
+
+class TestReadFileToolStreamingValidation:
+    """Streaming variant must validate the same inputs the inline
+    path does — a negative ``offset`` would otherwise slip past the
+    ``offset > 0`` ranged-read check and silently stream the full
+    file instead of returning the expected error string.
+    """
+
+    async def test_negative_offset_yields_error(self, tmp_path: Path) -> None:
+        f = tmp_path / "f.txt"
+        f.write_text("hello")
+        tool = ReadFileTool(workspace=tmp_path)
+
+        chunks = [c async for c in tool.execute_streaming(str(f), offset=-1)]
+        assert len(chunks) == 1
+        assert "offset must be >= 0" in chunks[0]
+
+    async def test_zero_limit_yields_error(self, tmp_path: Path) -> None:
+        f = tmp_path / "f.txt"
+        f.write_text("hello")
+        tool = ReadFileTool(workspace=tmp_path)
+
+        chunks = [c async for c in tool.execute_streaming(str(f), limit=0)]
+        assert len(chunks) == 1
+        assert "limit must be >= 1" in chunks[0]

@@ -476,6 +476,81 @@ async def _is_context_window_error(resp: httpx.Response) -> bool:
     return "context_length_exceeded" in lower or "context window" in lower
 
 
+async def _emit_message(msg: dict[str, Any]) -> AsyncIterator[bytes]:
+    """Serialize one message, streaming ``content`` from disk if the
+    message carries a ``_content_file`` reference.
+
+    Step D (memory-model.md): tools that opt into ``execute_streaming``
+    drain their output to a per-turn scratch file. The agent loop
+    attaches the path to the tool message via the ``_content_file``
+    transport-metadata key. This helper detects that key and streams
+    the file's bytes into the JSON ``content`` field as JSON-escaped
+    chunks, so a multi-MB tool result never materialises as one
+    contiguous Python string at the moment of the LLM call.
+
+    Underscore-prefixed keys are stripped from the serialized output
+    regardless — they're transport metadata, not part of the LLM
+    message. (``loop.py`` already strips them on the persistence
+    path; this is the symmetric strip on the wire path.)
+    """
+    content_file_str = msg.get("_content_file")
+    if not content_file_str:
+        clean = {k: v for k, v in msg.items() if not k.startswith("_")}
+        yield json.dumps(clean, ensure_ascii=False).encode("utf-8")
+        return
+
+    # File-backed: assemble ``{<head>, "content": "<streamed escaped>"}``
+    # without ever holding the full content in heap. Head is
+    # everything except ``content`` and underscore-prefixed transport
+    # metadata; serialised once, then we splice in the streamed
+    # content field by hand so we control byte-by-byte emission.
+    head = {k: v for k, v in msg.items() if k != "content" and not k.startswith("_")}
+    head_json = json.dumps(head, ensure_ascii=False)
+    assert head_json.endswith("}"), "head_json must end with closing brace"
+    prefix = head_json[:-1]  # everything except final ``}``
+    # ``head`` always has at least ``role``, so ``prefix`` is never
+    # just ``{`` after stripping the closing brace — comma-separator
+    # before ``"content":`` is always correct. Defensive check kept
+    # in case a future caller passes a content-only message.
+    sep = b"," if prefix.rstrip() != "{" else b""
+    yield prefix.encode("utf-8") + sep + b'"content":"'
+
+    # Read the scratch file in fixed-size character chunks. ``open``
+    # in text mode handles UTF-8 codepoint-boundary alignment for us,
+    # so a chunk is always whole codepoints. ``json.dumps`` of each
+    # chunk gives correct JSON-string escaping (backslashes, quotes,
+    # control characters, multi-byte chars); slicing off the
+    # surrounding quotes gives just the escaped body bytes.
+    try:
+        # ``newline=""`` matches the writer's open mode in
+        # ``DirectExecutor.execute_tool_with_handle`` so universal-
+        # newline translation doesn't turn the writer's exact byte
+        # sequence (``\r\n`` on Windows when a tool emits CRLF) into
+        # ``\n`` here, drifting wire content from on-disk content.
+        with open(content_file_str, encoding="utf-8", newline="") as fh:
+            while True:
+                chunk = fh.read(8192)
+                if not chunk:
+                    break
+                escaped = json.dumps(chunk, ensure_ascii=False)[1:-1]
+                yield escaped.encode("utf-8")
+    except (OSError, UnicodeError):
+        # Scratch file disappeared between tool execution and provider
+        # send (manual cleanup, OS tmpwatch, race with post_turn) or
+        # a transient read error / encoding glitch. Fall back to the
+        # inline ``content`` preview that the executor already
+        # populated when it returned the ``ToolResult``. The LLM sees
+        # the head + footer line (``[streamed N bytes ...]``) rather
+        # than a 400 from a malformed JSON payload, and the request
+        # streaming continues for the rest of the messages.
+        fallback = msg.get("content")
+        if isinstance(fallback, str) and fallback:
+            escaped = json.dumps(fallback, ensure_ascii=False)[1:-1]
+            yield escaped.encode("utf-8")
+
+    yield b'"}'
+
+
 async def _stream_body(
     head: dict[str, Any], messages: list[dict[str, Any]]
 ) -> AsyncIterator[bytes]:
@@ -487,9 +562,13 @@ async def _stream_body(
     can pipe it to the socket and the serialized bytes can be
     garbage-collected before the next message is processed.
 
-    Everything except ``messages`` is stable and small — serialize it
-    once, trim the closing brace, and reuse that prefix. The closing
-    brace is emitted last, after the messages array is closed.
+    Per-message serialization is delegated to ``_emit_message`` which
+    handles both inline messages (the common case) and file-backed
+    Step-D streaming-tool-result messages (which stream their content
+    field from a scratch file rather than materialising it). Everything
+    except ``messages`` is stable and small — serialize it once, trim
+    the closing brace, and reuse that prefix. The closing brace is
+    emitted last, after the messages array is closed.
     """
     # Serialize the non-messages part once — these keys are fixed-size
     # scalars (model, temperature, etc.) plus ``tools`` which is stable
@@ -510,7 +589,9 @@ async def _stream_body(
         yield b'{"messages":['
 
     for i, msg in enumerate(messages):
-        sep = b"," if i > 0 else b""
-        yield sep + json.dumps(msg, ensure_ascii=False).encode("utf-8")
+        if i > 0:
+            yield b","
+        async for chunk in _emit_message(msg):
+            yield chunk
 
     yield b"]}"

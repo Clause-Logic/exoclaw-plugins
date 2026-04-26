@@ -494,3 +494,121 @@ class TestWorkflowIDUniqueness:
 
         assert len(captured_ids) == 2
         assert captured_ids[0] != captured_ids[1]
+
+
+class TestDBOSExecutorStreamingTool:
+    """Step D opt-in: parity with ``DirectExecutor.execute_tool_with_handle``.
+
+    The streaming path bypasses ``_tool_step`` (DBOS's durable
+    wrapper) — see the method's docstring for the durability
+    tradeoff. Tests run without booting a DBOS instance because the
+    streaming branch never reaches ``@DBOS.step`` machinery.
+    """
+
+    async def test_inline_path_when_tool_has_no_execute_streaming(self) -> None:
+        """Default behaviour — falls back to ``execute_tool`` (the
+        durable inline path), no scratch file."""
+        from unittest.mock import patch
+
+        from exoclaw.agent.tools.registry import ToolRegistry
+        from exoclaw.executor import ToolResult
+
+        executor = DBOSExecutor()
+        registry = ToolRegistry()
+
+        class _Plain:
+            name = "plain"
+            description = "no streaming"
+            parameters: dict[str, object] = {"type": "object", "properties": {}}
+
+            async def execute(self, **kwargs: object) -> str:
+                return "inline-result"
+
+        registry.register(_Plain())
+
+        # Stub out ``_tool_step`` (the @DBOS.step) so we don't need
+        # a running DBOS instance. We only care that the inline
+        # branch dispatches there, not that the step machinery runs.
+        async def _fake_step(*, name: str, params: dict[str, object], ctx_data: object) -> str:
+            t = registry.get(name)
+            assert t is not None
+            return await t.execute(**params)
+
+        with patch("exoclaw_executor_dbos.executor._tool_step", _fake_step):
+            outcome = await executor.execute_tool_with_handle(registry, "plain", {})
+
+        assert isinstance(outcome, ToolResult)
+        assert outcome.content == "inline-result"
+        assert outcome.content_file is None
+
+    async def test_streaming_drains_chunks_to_scratch_file(self) -> None:
+        """Tool with ``execute_streaming`` writes chunks to disk;
+        the returned ``ToolResult`` carries the path. No DBOS step
+        involvement on this branch."""
+        from collections.abc import AsyncIterator
+        from pathlib import Path
+
+        from exoclaw.agent.tools.registry import ToolRegistry
+
+        executor = DBOSExecutor()
+        registry = ToolRegistry()
+
+        class _Streaming:
+            name = "s"
+            description = ""
+            parameters: dict[str, object] = {"type": "object", "properties": {}}
+
+            async def execute(self, **kwargs: object) -> str:
+                raise AssertionError("inline execute should be skipped")
+
+            async def execute_streaming(self, **kwargs: object) -> AsyncIterator[str]:
+                yield "alpha"
+                yield "beta"
+
+        registry.register(_Streaming())
+
+        outcome = await executor.execute_tool_with_handle(registry, "s", {})
+
+        assert outcome.content_file is not None
+        assert isinstance(outcome.content_file, Path)
+        assert outcome.content_file.read_text() == "alphabeta"
+
+    async def test_post_turn_cleans_up_scratch_files(self) -> None:
+        """Per-turn scratch files get unlinked at ``post_turn``,
+        same lifecycle as DirectExecutor."""
+        from collections.abc import AsyncIterator
+        from unittest.mock import patch
+
+        from exoclaw.agent.tools.registry import ToolRegistry
+
+        executor = DBOSExecutor()
+        registry = ToolRegistry()
+
+        class _Streaming:
+            name = "s"
+            description = ""
+            parameters: dict[str, object] = {"type": "object", "properties": {}}
+
+            async def execute(self, **kwargs: object) -> str:
+                return ""
+
+            async def execute_streaming(self, **kwargs: object) -> AsyncIterator[str]:
+                yield "data"
+
+        registry.register(_Streaming())
+
+        a = await executor.execute_tool_with_handle(registry, "s", {})
+        b = await executor.execute_tool_with_handle(registry, "s", {})
+        assert a.content_file is not None and a.content_file.exists()
+        assert b.content_file is not None and b.content_file.exists()
+
+        # post_turn dispatches to a DBOS step we don't want to run
+        # without a launched DBOS — patch the step body to a no-op.
+        async def _fake_post(_: str) -> None:
+            return None
+
+        with patch("exoclaw_executor_dbos.executor._post_turn_step", _fake_post):
+            await executor.post_turn(MagicMock(), "session:1")
+
+        assert not a.content_file.exists()
+        assert not b.content_file.exists()
