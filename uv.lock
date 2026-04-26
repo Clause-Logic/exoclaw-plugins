@@ -728,7 +728,7 @@ requires-dist = [{ name = "exoclaw", specifier = ">=0.7.0" }]
 
 [[package]]
 name = "exoclaw-nanobot"
-version = "0.26.0"
+version = "0.27.0"
 source = { editable = "packages/exoclaw-nanobot" }
 dependencies = [
     { name = "exoclaw" },
@@ -750,7 +750,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", specifier = ">=0.22.0" },
+    { name = "exoclaw", specifier = ">=0.24.0" },
     { name = "exoclaw-channel-cli", editable = "packages/exoclaw-channel-cli" },
     { name = "exoclaw-channel-heartbeat", editable = "packages/exoclaw-channel-heartbeat" },
     { name = "exoclaw-conversation", editable = "packages/exoclaw-conversation" },
