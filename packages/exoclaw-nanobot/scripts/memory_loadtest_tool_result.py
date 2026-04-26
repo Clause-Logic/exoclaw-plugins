@@ -245,8 +245,7 @@ def write_png(samples: list[Sample], out: Path) -> None:
     ax.set_xlabel("tool result size (KiB)")
     ax.set_ylabel("peak Python heap during _stream_body (KiB)")
     ax.set_title(
-        "Step D win: peak during wire serialization\n"
-        "vs tool result size — inline vs streaming"
+        "Step D win: peak during wire serialization\nvs tool result size — inline vs streaming"
     )
     ax.set_xscale("log")
     ax.set_yscale("log")
