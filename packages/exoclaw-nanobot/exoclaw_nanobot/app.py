@@ -283,10 +283,17 @@ async def create(
 
     bus = MessageBus()
 
-    memory_store = MemoryStore(workspace, provider, model)
+    # streaming_history=True drops the per-session unconsolidated tail
+    # from RAM — the unconsolidated history lives only on disk, read
+    # on demand by ``read_history``. Required for multi-tenant openclaw:
+    # without it, N concurrent sessions × per-session message-list size
+    # blows the cgroup as session length grows. See
+    # docs/memory-model.md Step C.
+    history_store = SessionManager(workspace, streaming_history=True)
+    memory_store = MemoryStore(workspace, provider, model, history=history_store)
     consolidation_policy = SummarizingConsolidationPolicy(memory=memory_store)
     conversation = DefaultConversation(
-        history=SessionManager(workspace),
+        history=history_store,
         memory=memory_store,
         prompt=ContextBuilder(
             workspace, memory=memory_store, skill_packages=config.skills.packages or None

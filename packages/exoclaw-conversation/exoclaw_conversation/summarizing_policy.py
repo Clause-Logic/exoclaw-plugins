@@ -30,7 +30,10 @@ class SummarizingConsolidationPolicy:
 
     async def should_consolidate(self, session: Session, *, memory_window: int) -> bool:
         """Trigger when unconsolidated messages reach memory_window."""
-        unconsolidated = len(session.messages) - session.last_consolidated
+        # Use total_messages, not len(session.messages) — under
+        # streaming_history the in-memory list is empty by design but
+        # total_messages still advances on every save_append.
+        unconsolidated = session.total_messages - session.last_consolidated
         return unconsolidated >= memory_window
 
     async def consolidate(

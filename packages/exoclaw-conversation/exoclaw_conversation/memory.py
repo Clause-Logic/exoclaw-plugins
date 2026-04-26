@@ -15,6 +15,7 @@ logger = structlog.get_logger()
 if TYPE_CHECKING:
     from exoclaw.providers.protocol import LLMProvider
 
+    from .protocols import HistoryStore
     from .session.manager import Session
 
 
@@ -53,12 +54,17 @@ class MemoryStore:
         workspace: Path,
         provider: LLMProvider | None = None,
         model: str | None = None,
+        history: "HistoryStore | None" = None,
     ):
         self.memory_dir = ensure_dir(workspace / "memory")
         self.memory_file = self.memory_dir / "MEMORY.md"
         self.history_file = self.memory_dir / "HISTORY.md"
         self._provider = provider
         self._model = model
+        # Optional HistoryStore reference. Used by consolidate() and the
+        # consolidate_messages boundary-repair pass to read messages from
+        # disk when ``session.messages`` is empty (streaming_history mode).
+        self._history = history
 
     def read_long_term(self) -> str:
         if self.memory_file.exists():
@@ -90,9 +96,23 @@ class MemoryStore:
         Legacy interface — reads messages from session.messages in RAM.
         Prefer consolidate_messages() which accepts pre-loaded messages.
         """
+
+        # Streaming-aware loader: when session.messages is empty and the
+        # store is wired in, read the consolidation slice from disk so
+        # streaming_history sessions still consolidate correctly.
+        def _load_slice(start: int, end: int) -> list[dict[str, Any]]:
+            if session.messages:
+                offset = getattr(session, "_messages_offset", 0)
+                rel_start = max(start - offset, 0)
+                rel_end = end - offset
+                return list(session.messages[rel_start:rel_end])
+            if self._history is not None:
+                return self._history.load_range(session.key, start, end)
+            return []
+
         if archive_all:
-            old_messages = session.messages
             keep_count = 0
+            old_messages = _load_slice(0, session.total_messages)
         else:
             keep_count = memory_window // 2
             total = getattr(session, "total_messages", len(session.messages))
@@ -100,13 +120,7 @@ class MemoryStore:
                 return True
             if total - session.last_consolidated <= 0:
                 return True
-            # Translate absolute last_consolidated to relative index within
-            # session.messages (which may start at _messages_offset for
-            # disk-backed sessions).
-            offset = getattr(session, "_messages_offset", 0)
-            rel_start = max(session.last_consolidated - offset, 0)
-            rel_end = len(session.messages) - keep_count
-            old_messages = session.messages[rel_start:rel_end] if rel_end > rel_start else []
+            old_messages = _load_slice(session.last_consolidated, total - keep_count)
             if not old_messages:
                 return True
 
@@ -218,12 +232,27 @@ class MemoryStore:
                 # nor kept) over producing an invalid conversation shape.
                 boundary = total - keep_count
                 offset = getattr(session, "_messages_offset", 0)
+                # Streaming-aware read: when session.messages is empty,
+                # load the boundary window from disk so the repair pass
+                # can still see the messages it needs to inspect.
+                if session.messages:
+                    repair_window: list[dict[str, Any]] = list(session.messages)
+                    window_offset = offset
+                elif self._history is not None:
+                    # Need messages around [boundary-1, total). A small
+                    # window is enough — repair only walks forward.
+                    window_start = max(boundary - 1, 0)
+                    repair_window = self._history.load_range(session.key, window_start, total)
+                    window_offset = window_start
+                else:
+                    repair_window = []
+                    window_offset = offset
                 while boundary < total:
-                    rel = boundary - offset
-                    if rel < 0 or rel >= len(session.messages):
+                    rel = boundary - window_offset
+                    if rel < 0 or rel >= len(repair_window):
                         break
-                    curr = session.messages[rel]
-                    prev = session.messages[rel - 1] if rel > 0 else None
+                    curr = repair_window[rel]
+                    prev = repair_window[rel - 1] if rel > 0 else None
                     if curr.get("role") == "tool":
                         boundary += 1
                         continue

@@ -14,6 +14,63 @@ from ..helpers import ensure_dir, safe_filename
 logger = structlog.get_logger()
 
 
+def _normalize_history(
+    messages: list[dict[str, Any]], max_messages: int | None = 500
+) -> list[dict[str, Any]]:
+    """Apply LLM-input cleanup to a slice of messages.
+
+    Pure transform: drop leading non-user messages, repair orphan tool
+    references (declared-without-response or response-without-declaration),
+    and project to the minimal LLM-input dict shape. Used by both
+    ``Session.get_history`` (in-memory path) and the streaming
+    ``SessionManager.read_history`` (on-disk path).
+    """
+    sliced = messages[-max_messages:] if max_messages else list(messages)
+
+    for i, m in enumerate(sliced):
+        if m.get("role") == "user":
+            sliced = sliced[i:]
+            break
+
+    declared_ids: set[str] = set()
+    responded_ids: set[str] = set()
+    for m in sliced:
+        if m.get("role") == "assistant":
+            for tc in m.get("tool_calls") or []:
+                if tid := tc.get("id"):
+                    declared_ids.add(tid)
+        elif m.get("role") == "tool":
+            if tid := m.get("tool_call_id"):
+                responded_ids.add(tid)
+    valid_ids = declared_ids & responded_ids
+
+    if declared_ids != valid_ids or responded_ids != valid_ids:
+        repaired: list[dict[str, Any]] = []
+        for m in sliced:
+            role = m.get("role")
+            if role == "tool":
+                if m.get("tool_call_id") in valid_ids:
+                    repaired.append(m)
+            elif role == "assistant" and m.get("tool_calls"):
+                kept = [tc for tc in m["tool_calls"] if tc.get("id") in valid_ids]
+                if kept:
+                    repaired.append({**m, "tool_calls": kept})
+                elif m.get("content"):
+                    repaired.append({k: v for k, v in m.items() if k != "tool_calls"})
+            else:
+                repaired.append(m)
+        sliced = repaired
+
+    out: list[dict[str, Any]] = []
+    for m in sliced:
+        entry: dict[str, Any] = {"role": m["role"], "content": m.get("content", "")}
+        for k in ("tool_calls", "tool_call_id", "name"):
+            if k in m:
+                entry[k] = m[k]
+        out.append(entry)
+    return out
+
+
 @dataclass
 class Session:
     """
@@ -61,65 +118,16 @@ class Session:
         self._total_messages = new_total
         self.updated_at = datetime.now()
 
-    def get_history(self, max_messages: int = 500) -> list[dict[str, Any]]:
+    def get_history(self, max_messages: int | None = 500) -> list[dict[str, Any]]:
         """Return unconsolidated messages for LLM input, aligned to a user turn.
 
         When loaded from disk, self.messages starts at _messages_offset so
-        we compute the relative skip from last_consolidated.
+        we compute the relative skip from last_consolidated. ``max_messages
+        =None`` returns the full unconsolidated tail (no window cap).
         """
         relative_consolidated = max(0, self.last_consolidated - self._messages_offset)
         unconsolidated = self.messages[relative_consolidated:]
-        sliced = unconsolidated[-max_messages:]
-
-        # Drop leading non-user messages to avoid orphaned tool_result blocks
-        for i, m in enumerate(sliced):
-            if m.get("role") == "user":
-                sliced = sliced[i:]
-                break
-
-        # Repair pass: strip orphan tool references. Handles sessions that were
-        # persisted before the consolidation-boundary fix (pair-split bug), or
-        # any other source of dangling tool_call_ids. MiniMax and other strict
-        # providers 400 with "tool result's tool id(...) not found" otherwise.
-        declared_ids: set[str] = set()
-        responded_ids: set[str] = set()
-        for m in sliced:
-            if m.get("role") == "assistant":
-                for tc in m.get("tool_calls") or []:
-                    if tid := tc.get("id"):
-                        declared_ids.add(tid)
-            elif m.get("role") == "tool":
-                if tid := m.get("tool_call_id"):
-                    responded_ids.add(tid)
-        valid_ids = declared_ids & responded_ids
-
-        if declared_ids != valid_ids or responded_ids != valid_ids:
-            repaired: list[dict[str, Any]] = []
-            for m in sliced:
-                role = m.get("role")
-                if role == "tool":
-                    if m.get("tool_call_id") in valid_ids:
-                        repaired.append(m)
-                    # else drop: orphan tool_result
-                elif role == "assistant" and m.get("tool_calls"):
-                    kept = [tc for tc in m["tool_calls"] if tc.get("id") in valid_ids]
-                    if kept:
-                        repaired.append({**m, "tool_calls": kept})
-                    elif m.get("content"):
-                        repaired.append({k: v for k, v in m.items() if k != "tool_calls"})
-                    # else drop: no content and all tool_calls unmatched
-                else:
-                    repaired.append(m)
-            sliced = repaired
-
-        out: list[dict[str, Any]] = []
-        for m in sliced:
-            entry: dict[str, Any] = {"role": m["role"], "content": m.get("content", "")}
-            for k in ("tool_calls", "tool_call_id", "name"):
-                if k in m:
-                    entry[k] = m[k]
-            out.append(entry)
-        return out
+        return _normalize_history(unconsolidated, max_messages=max_messages)
 
     def clear(self) -> None:
         """Clear all messages and reset session to initial state."""
@@ -143,12 +151,18 @@ class SessionManager:
     garbage-collected, the next call reloads from disk.
     """
 
-    def __init__(self, workspace: Path):
+    def __init__(self, workspace: Path, *, streaming_history: bool = False):
         self.workspace = workspace
         self.sessions_dir = ensure_dir(self.workspace / "sessions")
         # WeakValueDict: sessions stay cached while any caller holds a reference,
         # then get GC'd automatically — no unbounded growth.
         self._cache: weakref.WeakValueDictionary[str, Session] = weakref.WeakValueDictionary()
+        # streaming_history=True: ``_load`` does not populate ``session.messages``.
+        # The unconsolidated tail lives only on disk and ``read_history`` reads
+        # it on demand. Cuts the per-session RAM floor — the headline win for
+        # multi-tenant deployments where N concurrent sessions each holding
+        # their tail blows the cgroup. See docs/memory-model.md Step C.
+        self.streaming_history = streaming_history
 
     def _get_session_path(self, key: str) -> Path:
         """Get the file path for a session."""
@@ -210,8 +224,13 @@ class SessionManager:
                             last_consolidated = data.get("last_consolidated", 0)
                             continue
 
-                    # Skip consolidated messages — only keep the tail
-                    if total_messages >= last_consolidated:
+                    # Skip consolidated messages. Under streaming_history we
+                    # don't even buffer the tail lines — read_history pulls
+                    # them from disk on demand. Without streaming the tail
+                    # lives in session.messages, which means the unconsolidated
+                    # history is RAM-resident for the lifetime of the
+                    # cached Session.
+                    if not self.streaming_history and total_messages >= last_consolidated:
                         tail_lines.append(line)
                     total_messages += 1
 
@@ -230,6 +249,27 @@ class SessionManager:
         except Exception as e:
             logger.warning("session_load_failed", **{"session.key": key}, error=e)
             return None
+
+    def read_history(self, key: str, max_messages: int | None = None) -> list[dict[str, Any]]:
+        """Read the unconsolidated tail from disk and apply LLM-input cleanup.
+
+        Bypasses ``session.messages`` entirely — ``streaming_history=True``
+        callers get a fresh read on every call, no per-session RAM tail.
+        With ``streaming_history=False`` we still call this on demand
+        (cheap: ``session.messages`` is already in RAM, the only cost is
+        the orphan-repair pass).
+
+        ``max_messages=None`` returns the entire unconsolidated tail. The
+        usual caller (``DefaultConversation.load_persisted_history``)
+        passes ``memory_window``; tests / debugging may pass None.
+        """
+        session = self.get_or_create(key)
+        if self.streaming_history:
+            tail = self.load_range(key, session.last_consolidated, session.total_messages)
+        else:
+            relative = max(0, session.last_consolidated - session._messages_offset)
+            tail = session.messages[relative:]
+        return _normalize_history(tail, max_messages=max_messages)
 
     def load_range(self, key: str, start: int, end: int) -> list[dict[str, Any]]:
         """Load a range of messages from disk by index.
@@ -268,8 +308,24 @@ class SessionManager:
         Used after clear() or consolidation — operations that change
         metadata or restructure the file.  For normal turn recording,
         prefer save_append() which only writes new messages.
+
+        Under ``streaming_history`` the in-memory ``session.messages``
+        list is empty, so naive iteration would wipe the JSONL on every
+        save. To preserve the persisted tail we re-read it from disk
+        before rewriting. Empty-after-clear() sessions skip this read
+        because ``last_consolidated`` and ``total_messages`` are both 0.
         """
         path = self._get_session_path(session.key)
+
+        if self.streaming_history and (session.total_messages > 0 or session.last_consolidated > 0):
+            # session.messages is intentionally empty — fetch from disk so
+            # the rewrite preserves the tail. Consolidated lines are
+            # below ``last_consolidated`` and we keep them too because
+            # ``save`` is a *full* rewrite (clear() resets everything,
+            # other callers want the full file recomposed).
+            messages = self.load_range(session.key, 0, session.total_messages)
+        else:
+            messages = list(session.messages)
 
         with open(path, "w", encoding="utf-8") as f:
             metadata_line = {
@@ -281,7 +337,7 @@ class SessionManager:
                 "last_consolidated": session.last_consolidated,
             }
             f.write(json.dumps(metadata_line, ensure_ascii=False) + "\n")
-            for msg in session.messages:
+            for msg in messages:
                 f.write(json.dumps(msg, ensure_ascii=False) + "\n")
 
     def save_append(self, session: Session, new_messages: list[dict[str, Any]]) -> None:

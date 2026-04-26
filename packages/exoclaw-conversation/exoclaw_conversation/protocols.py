@@ -29,6 +29,19 @@ class HistoryStore(Protocol):
         """Load a range of messages from disk by index. Returns empty list by default."""
         return []
 
+    def read_history(self, key: str, max_messages: int | None = None) -> list[dict[str, Any]]:
+        """Return the unconsolidated tail for LLM input, applying orphan repair.
+
+        Default implementation reads from ``get_or_create(key).get_history()`` —
+        which materializes ``session.messages`` into RAM. Streaming-aware
+        backends override this to read the tail directly from disk / DB on
+        each call so the unconsolidated history isn't held between turns.
+        ``max_messages=None`` lets the backend return the full unconsolidated
+        tail (callers that don't want a window cap pass ``None``).
+        """
+        session = self.get_or_create(key)
+        return session.get_history(max_messages=max_messages)
+
 
 @runtime_checkable
 class MemoryBackend(Protocol):
