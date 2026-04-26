@@ -28,7 +28,6 @@ import asyncio
 import os
 import time
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 from dbos import DBOS, DBOSConfig
@@ -132,7 +131,7 @@ async def test_two_chats_process_concurrently(dbos_instance: Any) -> None:
     probe.expect(2)
 
     saved_loop = turn_mod._loop
-    turn_mod._loop = probe  # type: ignore[assignment]
+    turn_mod._loop = probe
     try:
         executor = DBOSExecutor()
 
@@ -159,7 +158,7 @@ async def test_two_chats_process_concurrently(dbos_instance: Any) -> None:
         await probe.wait_for_completion(timeout=5.0)
         elapsed = time.monotonic() - start
     finally:
-        turn_mod._loop = saved_loop  # type: ignore[assignment]
+        turn_mod._loop = saved_loop
 
     assert sorted(probe.dispatched_chats) == ["zulip:111:chat-a", "zulip:222:chat-b"]
 
