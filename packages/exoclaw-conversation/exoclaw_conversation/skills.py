@@ -122,14 +122,42 @@ class SkillsLoader:
         workspace: Path,
         builtin_skills_dir: Path | None = None,
         skill_packages: list[str] | None = None,
+        allowed_names: list[str] | None = None,
     ):
+        """
+        Args:
+            workspace: Path to the agent's workspace (workspace/skills/ holds
+                user-added skills).
+            builtin_skills_dir: Optional directory of skills bundled with the
+                consuming application (e.g. ``standd-agent/templates/skills``).
+            skill_packages: Optional list of installed Python packages that
+                publish skills via the ``exoclaw.skills`` entry point.
+            allowed_names: Optional allow-list of skill names. When provided,
+                the loader behaves as if any skill not in the list does not
+                exist — it is excluded from ``list_skills``, the
+                ``<skills>`` summary, hook discovery, ``load_skill``, and
+                ``activate_skill``. Use this to scope a deployment's surface
+                to exactly the capabilities it ships with, so the model
+                cannot reference or load skills meant for a different
+                deployment profile. ``None`` (default) preserves legacy
+                behavior — every discovered skill is visible.
+        """
         self.workspace = workspace
         self.workspace_skills = workspace / "skills"
         self.builtin_skills = builtin_skills_dir or BUILTIN_SKILLS_DIR
         self._package_skills: dict[str, str] = {}
         self._package_skill_dirs: dict[str, Path] = {}
+        self._allowed: set[str] | None = set(allowed_names) if allowed_names is not None else None
         if skill_packages:
             self._load_package_skills(skill_packages)
+
+    def _is_allowed(self, name: str) -> bool:
+        """Return True if ``name`` is visible under the current allow-list.
+
+        When no allow-list is configured (``allowed_names=None`` at init),
+        every skill is visible.
+        """
+        return self._allowed is None or name in self._allowed
 
     def _load_package_skills(self, packages: list[str]) -> None:
         """Load skills from installed Python packages via entry points.
@@ -168,27 +196,35 @@ class SkillsLoader:
 
     @property
     def _all_skill_dirs(self) -> list[tuple[Path, str]]:
-        """Return all skill directories as (dir, source) pairs for hook scanning."""
+        """Return all skill directories as (dir, source) pairs for hook scanning.
+
+        Honors ``allowed_names`` — disallowed skills are excluded as if their
+        directories did not exist, so hook discovery, bootstrap injections,
+        etc. don't pull from skills the deployment doesn't expose.
+        """
         dirs: list[tuple[Path, str]] = []
         # Workspace (highest priority)
         if self.workspace_skills.exists():
             for d in self.workspace_skills.iterdir():
-                if d.is_dir():
+                if d.is_dir() and self._is_allowed(d.name):
                     dirs.append((d, "workspace"))
         # Builtin
         if self.builtin_skills and self.builtin_skills.exists():
             for d in self.builtin_skills.iterdir():
-                if d.is_dir():
+                if d.is_dir() and self._is_allowed(d.name):
                     dirs.append((d, "builtin"))
         # Package
         for name, path in self._package_skill_dirs.items():
-            if path.is_dir():
+            if path.is_dir() and self._is_allowed(name):
                 dirs.append((path, "package"))
         return dirs
 
     def list_skills(self, filter_unavailable: bool = True) -> list[dict[str, str]]:
         """
         List all available skills.
+
+        Honors ``allowed_names`` — disallowed skills are omitted entirely so
+        callers (including the ``<skills>`` summary) cannot reference them.
 
         Args:
             filter_unavailable: If True, filter out skills with unmet requirements.
@@ -201,7 +237,7 @@ class SkillsLoader:
         # Workspace skills (highest priority)
         if self.workspace_skills.exists():
             for skill_dir in self.workspace_skills.iterdir():
-                if skill_dir.is_dir():
+                if skill_dir.is_dir() and self._is_allowed(skill_dir.name):
                     skill_file = skill_dir / "SKILL.md"
                     if skill_file.exists():
                         skills.append(
@@ -211,7 +247,7 @@ class SkillsLoader:
         # Built-in skills
         if self.builtin_skills and self.builtin_skills.exists():
             for skill_dir in self.builtin_skills.iterdir():
-                if skill_dir.is_dir():
+                if skill_dir.is_dir() and self._is_allowed(skill_dir.name):
                     skill_file = skill_dir / "SKILL.md"
                     if skill_file.exists() and not any(s["name"] == skill_dir.name for s in skills):
                         skills.append(
@@ -220,6 +256,8 @@ class SkillsLoader:
 
         # Package skills (lowest priority — workspace and builtin override)
         for name in self._package_skills:
+            if not self._is_allowed(name):
+                continue
             if not any(s["name"] == name for s in skills):
                 path = (
                     str(self._package_skill_dirs[name] / "SKILL.md")
@@ -237,12 +275,20 @@ class SkillsLoader:
         """
         Load a skill by name.
 
+        Honors ``allowed_names`` — names not on the allow-list are treated
+        as if they don't exist, so the ``load_skill`` tool can't be coaxed
+        into activating a deployment-disabled skill by passing its name
+        directly.
+
         Args:
             name: Skill name (directory name).
 
         Returns:
             Skill content or None if not found.
         """
+        if not self._is_allowed(name):
+            return None
+
         # Check workspace first
         workspace_skill = self.workspace_skills / name / "SKILL.md"
         if workspace_skill.exists():
