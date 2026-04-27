@@ -596,33 +596,19 @@ wheels = [
 
 [[package]]
 name = "exoclaw"
-version = "0.25.0"
-source = { editable = "../exoclaw" }
+version = "0.26.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "structlog" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8f/ca/bf21f37f6216c4b0b1ad2835979e7db4322b9d009f2484bb1c41877da9db/exoclaw-0.26.0.tar.gz", hash = "sha256:a38af91ce703e9733ac370d1da6c63c9cf153e931b7afef246be2d27c03a3425", size = 75404, upload-time = "2026-04-27T14:43:30.629Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f3/18/42f7454de903b1033df5afd71ceea3c7236051c7c80a903057509b28cd2b/exoclaw-0.26.0-py3-none-any.whl", hash = "sha256:2acdd35b43a22e4d21a28708c00d4a9ea378d398f22b613e0fdf8747e0db3bbd", size = 79037, upload-time = "2026-04-27T14:43:31.595Z" },
 ]
 
 [package.optional-dependencies]
 http = [
     { name = "httpx" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },
-    { name = "httpx", marker = "extra == 'http'", specifier = ">=0.27.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.0,<10.0.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1.3.0,<2.0.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
-    { name = "structlog", specifier = ">=25.0.0" },
-    { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.1" },
-]
-provides-extras = ["http", "dev"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest-asyncio", specifier = ">=1.3.0,<2.0.0" },
-    { name = "pytest-cov", specifier = ">=7.0.0" },
 ]
 
 [[package]]
@@ -638,7 +624,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", editable = "../exoclaw" },
+    { name = "exoclaw", specifier = ">=0.22.0" },
     { name = "prompt-toolkit", specifier = ">=3.0.50,<4.0.0" },
     { name = "rich", specifier = ">=14.0.0,<15.0.0" },
     { name = "structlog", specifier = ">=25.0.0" },
@@ -655,7 +641,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", editable = "../exoclaw" },
+    { name = "exoclaw", specifier = ">=0.22.0" },
     { name = "structlog", specifier = ">=25.0.0" },
 ]
 
@@ -670,7 +656,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", editable = "../exoclaw" },
+    { name = "exoclaw", specifier = ">=0.6.0" },
     { name = "structlog", specifier = ">=25.0.0" },
 ]
 
@@ -686,7 +672,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", editable = "../exoclaw" },
+    { name = "exoclaw", specifier = ">=0.22.0" },
     { name = "rich", specifier = ">=14.0.0,<15.0.0" },
     { name = "structlog", specifier = ">=25.0.0" },
 ]
@@ -706,7 +692,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "dbos", specifier = ">=1.0.0" },
-    { name = "exoclaw", editable = "../exoclaw" },
+    { name = "exoclaw", specifier = ">=0.24.0" },
     { name = "exoclaw-subagent", editable = "packages/exoclaw-subagent" },
     { name = "structlog", specifier = ">=24.0.0" },
     { name = "uuid-utils", specifier = ">=0.9.0" },
@@ -724,7 +710,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", extras = ["http"], editable = "../exoclaw" },
+    { name = "exoclaw", extras = ["http"], specifier = ">=0.26.0" },
     { name = "exoclaw-conversation", editable = "packages/exoclaw-conversation" },
     { name = "exoclaw-provider-openai", editable = "packages/exoclaw-provider-openai" },
 ]
@@ -744,7 +730,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", editable = "../exoclaw" },
+    { name = "exoclaw", specifier = ">=0.22.0" },
     { name = "exoclaw-conversation", editable = "packages/exoclaw-conversation" },
     { name = "exoclaw-provider-litellm", editable = "packages/exoclaw-provider-litellm" },
     { name = "exoclaw-tools-workspace", editable = "packages/exoclaw-tools-workspace" },
@@ -761,7 +747,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "exoclaw", editable = "../exoclaw" }]
+requires-dist = [{ name = "exoclaw", specifier = ">=0.7.0" }]
 
 [[package]]
 name = "exoclaw-nanobot"
@@ -787,7 +773,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", editable = "../exoclaw" },
+    { name = "exoclaw", specifier = ">=0.24.0" },
     { name = "exoclaw-channel-cli", editable = "packages/exoclaw-channel-cli" },
     { name = "exoclaw-channel-heartbeat", editable = "packages/exoclaw-channel-heartbeat" },
     { name = "exoclaw-conversation", editable = "packages/exoclaw-conversation" },
@@ -816,7 +802,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", editable = "../exoclaw" },
+    { name = "exoclaw", specifier = ">=0.10.1" },
     { name = "litellm", specifier = ">=1.0.0,<1.82.7" },
     { name = "structlog", specifier = ">=25.0.0" },
 ]
@@ -834,7 +820,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", editable = "../exoclaw" },
+    { name = "exoclaw", specifier = ">=0.10.1" },
     { name = "json-repair", specifier = ">=0.1.0" },
     { name = "litellm", specifier = ">=1.0.0,<1.82.7" },
     { name = "structlog", specifier = ">=25.0.0" },
@@ -852,7 +838,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", extras = ["http"], editable = "../exoclaw" },
+    { name = "exoclaw", extras = ["http"], specifier = ">=0.26.0" },
     { name = "json-repair", specifier = ">=0.1.0" },
     { name = "structlog", specifier = ">=25.0.0" },
 ]
@@ -868,7 +854,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", editable = "../exoclaw" },
+    { name = "exoclaw", specifier = ">=0.22.0" },
     { name = "structlog", specifier = ">=25.0.0" },
 ]
 
@@ -881,7 +867,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "exoclaw", editable = "../exoclaw" }]
+requires-dist = [{ name = "exoclaw", specifier = ">=0.15.2" }]
 
 [[package]]
 name = "exoclaw-tools-cron"
@@ -896,7 +882,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "croniter", specifier = ">=6.0.0,<7.0.0" },
-    { name = "exoclaw", editable = "../exoclaw" },
+    { name = "exoclaw", specifier = ">=0.22.0" },
     { name = "structlog", specifier = ">=25.0.0" },
 ]
 
@@ -911,7 +897,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", editable = "../exoclaw" },
+    { name = "exoclaw", specifier = ">=0.10.0" },
     { name = "jinja2", specifier = ">=3.1.0" },
 ]
 
@@ -928,7 +914,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", editable = "../exoclaw" },
+    { name = "exoclaw", specifier = ">=0.10.1" },
     { name = "httpx", specifier = ">=0.28.0,<1.0.0" },
     { name = "mcp", specifier = ">=1.26.0,<2.0.0" },
     { name = "structlog", specifier = ">=25.0.0" },
@@ -943,7 +929,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "exoclaw", editable = "../exoclaw" }]
+requires-dist = [{ name = "exoclaw", specifier = ">=0.1.0" }]
 
 [[package]]
 name = "exoclaw-tools-spawn"
@@ -969,7 +955,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", editable = "../exoclaw" },
+    { name = "exoclaw", specifier = ">=0.24.0" },
     { name = "httpx", specifier = ">=0.28.0,<1.0.0" },
     { name = "readability-lxml", specifier = ">=0.8.1" },
     { name = "structlog", specifier = ">=25.0.0" },
