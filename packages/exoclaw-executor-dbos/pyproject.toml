@@ -1,11 +1,13 @@
 [project]
 name = "exoclaw-executor-dbos"
-version = "0.15.0"
+version = "0.15.1"
 description = "DBOS-backed durable executor for exoclaw — turns and tool calls survive restarts"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "exoclaw>=0.24.0",
+    # 0.26.0 changed ``ToolResult.content_file`` from ``Path`` to
+    # ``str | None`` for cross-runtime serialisation.
+    "exoclaw>=0.26.0",
     "exoclaw-subagent>=0.12.0",
     "dbos>=1.0.0",
     "structlog>=24.0.0",
