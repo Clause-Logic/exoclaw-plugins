@@ -394,11 +394,23 @@ class OpenAIStreamingProvider:
         # Demand the first line inside the TTFT budget. Without this
         # the much larger ``request_timeout`` wins when a server
         # accepts the connection then never sends a byte.
+        #
+        # CPython uses ``asyncio.wait_for`` (clean cancellation
+        # semantics, runs in a separate task). MicroPython skips
+        # ``wait_for`` here: it puts the calling task on
+        # ``_task_queue`` (sleep) while the wrapped IO inner task
+        # registers in ``IOQueue``; combined with SSL streaming reads
+        # this hits a pairheap-double-push assert in MP's asyncio.
+        # On MP we just await the first line and rely on the
+        # broader ``request_timeout`` to surface stalls.
         line_iter = resp.aiter_lines().__aiter__()
         try:
-            first_line = await asyncio.wait_for(
-                line_iter.__anext__(), timeout=self._stream_ttft_timeout
-            )
+            if IS_MICROPYTHON:  # pragma: no cover (cpython)
+                first_line = await line_iter.__anext__()
+            else:  # pragma: no cover (micropython)
+                first_line = await asyncio.wait_for(
+                    line_iter.__anext__(), timeout=self._stream_ttft_timeout
+                )
         except asyncio.TimeoutError:
             raise _RetryableError(f"TTFT exceeded {self._stream_ttft_timeout}s") from None
         except StopAsyncIteration:

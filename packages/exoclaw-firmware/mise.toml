@@ -19,6 +19,7 @@ sources = [
     "boards/${EXOCLAW_BOARD}/**/*.py",
     "../exoclaw-conversation/exoclaw_conversation/**/*.py",
     "../exoclaw-provider-openai/exoclaw_provider_openai/**/*.py",
+    "../exoclaw-tools-cron/exoclaw_tools_cron/**/*.py",
     "../../../exoclaw/exoclaw/**/*.py",
 ]
 outputs = [".stage/.stamp"]
@@ -33,6 +34,7 @@ mkdir -p .stage
 cp -r ../../../exoclaw/exoclaw .stage/exoclaw
 cp -r ../exoclaw-conversation/exoclaw_conversation .stage/exoclaw_conversation
 cp -r ../exoclaw-provider-openai/exoclaw_provider_openai .stage/exoclaw_provider_openai
+cp -r ../exoclaw-tools-cron/exoclaw_tools_cron .stage/exoclaw_tools_cron
 cp -r exoclaw_firmware .stage/exoclaw_firmware
 # MP-runtime fillers at stage root — flat so plain ``import
 # typing`` / ``import dataclasses`` / ``import datetime`` resolve
