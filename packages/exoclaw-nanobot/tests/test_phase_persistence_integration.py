@@ -398,7 +398,7 @@ class TestPhase1And2ThroughFullAgentLoop:
             conversation=conv,
             model="test-model",
             tools=[_LookupTool()],
-            executor=executor,
+            executor=executor,  # type: ignore[invalid-argument-type]
             max_iterations=5,
         )
 

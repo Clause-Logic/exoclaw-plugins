@@ -118,13 +118,17 @@ class TestDBOSExecutorProtocol:
         after the per-instance-ContextVar refactor landed.
         """
         executor = DBOSExecutor()
+        # ``ToolContext`` and ``DBOSExecutor`` are dual-class
+        # (``@dataclass`` on CPython, plain on MP); ty sees the
+        # union and can't narrow ``__init__`` / ``asdict`` calls.
+        # Runtime is the CPython dataclass branch here.
         ctx = ToolContext(
             session_key="test:deepcopy",
             channel="ipc",
             chat_id="x",
-            executor=executor,
+            executor=executor,  # type: ignore[invalid-argument-type]
         )
-        data = dataclasses.asdict(ctx)  # must not raise
+        data = dataclasses.asdict(ctx)  # type: ignore[invalid-argument-type]  # must not raise
         assert data["session_key"] == "test:deepcopy"
 
     async def test_concurrent_turns_isolate_messages(self) -> None:
@@ -570,13 +574,17 @@ class TestDBOSExecutorStreamingTool:
         outcome = await executor.execute_tool_with_handle(registry, "s", {})
 
         assert outcome.content_file is not None
-        assert isinstance(outcome.content_file, Path)
-        assert outcome.content_file.read_text() == "alphabeta"
+        # ``content_file`` is ``str | None`` (was ``Path``) so the
+        # streaming-tool wire serialisation can stay
+        # cross-runtime — wrap with ``Path`` for filesystem ops.
+        assert isinstance(outcome.content_file, str)
+        assert Path(outcome.content_file).read_text() == "alphabeta"
 
     async def test_post_turn_cleans_up_scratch_files(self) -> None:
         """Per-turn scratch files get unlinked at ``post_turn``,
         same lifecycle as DirectExecutor."""
         from collections.abc import AsyncIterator
+        from pathlib import Path
         from unittest.mock import patch
 
         from exoclaw.agent.tools.registry import ToolRegistry
@@ -599,8 +607,12 @@ class TestDBOSExecutorStreamingTool:
 
         a = await executor.execute_tool_with_handle(registry, "s", {})
         b = await executor.execute_tool_with_handle(registry, "s", {})
-        assert a.content_file is not None and a.content_file.exists()
-        assert b.content_file is not None and b.content_file.exists()
+        # ``content_file`` is now ``str | None`` (was ``Path``) so
+        # the streaming-tool wire serialisation can stay
+        # cross-runtime — wrap with ``Path`` here for the
+        # filesystem checks.
+        assert a.content_file is not None and Path(a.content_file).exists()
+        assert b.content_file is not None and Path(b.content_file).exists()
 
         # post_turn dispatches to a DBOS step we don't want to run
         # without a launched DBOS — patch the step body to a no-op.
@@ -610,5 +622,5 @@ class TestDBOSExecutorStreamingTool:
         with patch("exoclaw_executor_dbos.executor._post_turn_step", _fake_post):
             await executor.post_turn(MagicMock(), "session:1")
 
-        assert not a.content_file.exists()
-        assert not b.content_file.exists()
+        assert a.content_file is not None and not Path(a.content_file).exists()
+        assert b.content_file is not None and not Path(b.content_file).exists()
