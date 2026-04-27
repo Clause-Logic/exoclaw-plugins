@@ -130,9 +130,11 @@ def _stage(packages: list[str]) -> Path:
 
 
 def _run_micro(pkg_name: str, exo_meta: dict) -> int:
-    """Run MP tests for one package. Returns the runner's
-    JSON-parsed result printed to stdout, exits non-zero on
-    failure."""
+    """Run MP tests for one package. Returns ``0`` if every test
+    passed (or the package has no MP test directory yet),
+    ``1`` on any failure or unparseable runner output. The
+    runner's JSON report is parsed for the failed-test list and
+    printed to stderr on failure."""
     pkg_dir = PACKAGES_DIR / pkg_name
     tests_subdir = exo_meta.get("mp_tests_dir", "tests/micro")
     tests_dir = pkg_dir / tests_subdir

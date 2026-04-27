@@ -1,10 +1,11 @@
 """Builds the agent stack from config.
 
-Single-shot v0: ``run_demo`` constructs a provider + conversation,
-runs one turn against a hardcoded prompt, prints the response.
-Proves the full path (WiFi → TLS → OpenAI → SSE parse → tool
-dispatch) works end-to-end on hardware. Real channel integration
-(HTTP webhook / MQTT / polling queue) lives on top.
+Smoke test: ``run_demo`` constructs a provider + conversation,
+runs one turn against a hardcoded prompt, and returns the
+assistant text. Proves the full path (WiFi → TLS → OpenAI → SSE
+parse → tool dispatch) works end-to-end on hardware. Caller
+prints the result. Real channel integration (HTTP webhook / MQTT
+/ polling queue) lives on top of ``build_agent``.
 
 Configuration comes from a ``secrets`` module the caller provides
 (``import secrets`` on MP — typically ``boards/<board>/secrets.py``,
@@ -13,15 +14,9 @@ gitignored). Keeps API keys out of the source tree.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from exoclaw._compat import Path, get_logger
 from exoclaw_conversation.conversation import DefaultConversation
 from exoclaw_provider_openai import Deployment, OpenAIStreamingProvider
-
-if TYPE_CHECKING:
-    from exoclaw.providers.protocol import LLMProvider
-    from exoclaw_conversation.protocols import Conversation
 
 logger = get_logger()
 
@@ -33,7 +28,7 @@ def build_agent(
     base_url: str = "https://api.openai.com/v1",
     model: str = "gpt-4o-mini",
     request_timeout: float = 60.0,
-) -> "tuple[LLMProvider, Conversation]":
+) -> "tuple[OpenAIStreamingProvider, DefaultConversation]":
     """Build a (provider, conversation) pair ready to drive a turn.
 
     Args:

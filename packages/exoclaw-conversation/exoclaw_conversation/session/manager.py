@@ -371,7 +371,11 @@ class SessionManager:
                         data = json.loads(line)
                         if data.get("_type") == "metadata":
                             continue
-                    except json.JSONDecodeError:
+                    except (ValueError, json.JSONDecodeError):
+                        # MicroPython's ``json.loads`` raises plain
+                        # ``ValueError`` (no ``JSONDecodeError`` is
+                        # exposed); CPython's ``JSONDecodeError`` is
+                        # a ``ValueError`` subclass. Catch the union.
                         pass
                 if idx >= end:
                     break

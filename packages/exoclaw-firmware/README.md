@@ -37,7 +37,8 @@ adapt the `boot.py` for that platform's WiFi / SD / clock APIs.
    ```
 5. **Reset the board** (or `mise run repl` to watch output). On
    first boot you should see `boot: SD mounted`, `boot: WiFi up`,
-   `boot: clock synced`, then the demo prompt's response.
+   `boot: clock synced`, then a `you>` prompt — type a message
+   and press enter to chat with the agent over USB serial.
 
 ## What's in the flash image
 
@@ -47,7 +48,7 @@ The `mise run stage` task assembles the deployable tree under
 ```
 .stage/
 ├── boot.py                    # WiFi + SD + NTP setup
-├── main.py                    # runs run_demo() once
+├── main.py                    # runs run_serial_chat() (USB-CDC chat loop)
 ├── secrets.py                 # gitignored; your credentials
 ├── exoclaw/                   # core (with _cpython.py stripped)
 ├── exoclaw_conversation/      # MP-compatible conversation plugin

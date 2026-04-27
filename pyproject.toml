@@ -48,7 +48,16 @@ ignore_missing_imports = true
 # psutil) that aren't workspace dependencies and use stub LLMProvider
 # implementations that don't structurally satisfy the protocol. These
 # are dev tooling, not shipped code — skip them in the type check.
-exclude = ["**/scripts/**"]
+#
+# ``packages/*/boards/**`` holds MicroPython-only entry points
+# (``import machine``, ``import network``, ``import ntptime``,
+# ``time.sleep_ms``, etc.) that don't resolve under CPython's ty.
+# Skip them — the MP gate exercises the imports on the actual
+# runtime.
+exclude = [
+    "**/scripts/**",
+    "**/boards/**",
+]
 
 [tool.ruff]
 line-length = 100

@@ -374,7 +374,10 @@ class SkillsLoader:
                 result = data.get("exoclaw", data.get("nanobot", data.get("openclaw", {})))
                 return dict(result) if isinstance(result, dict) else {}
             return {}
-        except (json.JSONDecodeError, TypeError):
+        except (ValueError, json.JSONDecodeError, TypeError):
+            # MP's ``json.loads`` raises plain ``ValueError``;
+            # CPython's ``JSONDecodeError`` is a ``ValueError``
+            # subclass. Catch the union for cross-runtime safety.
             return {}
 
     def _check_requirements(self, skill_meta: dict[str, Any]) -> bool:

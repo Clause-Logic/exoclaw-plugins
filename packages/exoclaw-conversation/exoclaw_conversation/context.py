@@ -346,7 +346,14 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
                 merged = [{"type": "text", "text": runtime_ctx}] + user_content
             effective_history = history
 
-        messages = [
+        # MicroPython 1.27 doesn't support PEP 448 list-unpacking
+        # inside list literals (``[a, *xs, b]``). Build the list
+        # via append/extend instead — same shape on both runtimes.
+        # Annotate the list explicitly because the user-message
+        # ``content`` can be a ``str`` OR a ``list[dict]`` (image
+        # attachments) and ty would otherwise infer the narrower
+        # ``list[dict[str, str]]`` from the literal.
+        messages: list[dict[str, Any]] = [
             {
                 "role": "system",
                 "content": self.build_system_prompt(
@@ -356,9 +363,6 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
                 ),
             },
         ]
-        # MicroPython 1.27 doesn't support PEP 448 list-unpacking
-        # inside list literals (``[a, *xs, b]``). Build the list
-        # via append/extend instead — same shape on both runtimes.
         messages.extend(effective_history)
         messages.append({"role": "user", "content": merged})
 
