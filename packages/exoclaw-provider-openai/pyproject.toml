@@ -1,12 +1,14 @@
 [project]
 name = "exoclaw-provider-openai"
-version = "0.2.0"
-description = "Direct-httpx OpenAI-compatible provider for exoclaw with streaming request bodies and per-model routing"
+version = "0.3.0"
+description = "OpenAI-compatible LLM provider for exoclaw with streaming request bodies, per-model routing, and CPython + MicroPython support"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "exoclaw>=0.24.0",
-    "httpx>=0.27.0",
+    # ``exoclaw[http]`` pulls in ``httpx`` on CPython for the
+    # ``exoclaw.http.HTTPClient`` backend; MicroPython doesn't need
+    # the extra (uses ``asyncio.open_connection`` directly).
+    "exoclaw[http]>=0.26.0",
     "json-repair>=0.1.0",
     "structlog>=25.0.0",
 ]

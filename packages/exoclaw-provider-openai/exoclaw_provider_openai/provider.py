@@ -1,15 +1,22 @@
-"""Direct-httpx OpenAI-compatible provider for exoclaw.
+"""OpenAI-compatible LLM provider for exoclaw, runs on CPython + MicroPython.
 
-The key property: the request body is emitted as an ``AsyncIterable[bytes]``
-into ``httpx.AsyncClient.post(url, content=_stream_body(...))`` so the full
-JSON never materializes as one contiguous string. That's the peak-memory
-reduction the ``docs/memory-model.md`` Step B plan is aimed at, delivered
-without forking or upstreaming LiteLLM.
+The provider speaks the OpenAI chat-completions protocol and streams
+the request body via HTTP/1.1 chunked transfer encoding, so the full
+JSON never materialises as one contiguous string. That's the
+peak-memory reduction the ``docs/memory-model.md`` Step B plan is
+aimed at.
+
+Network plumbing is delegated to ``exoclaw.http.HTTPClient``:
+CPython gets the ``httpx``-backed implementation (connection
+pooling, battle-tested error handling); MicroPython gets the
+hand-rolled ``asyncio.open_connection`` path. Same provider source
+either way — no runtime gates here.
 
 Per-model routing and fallback: each model name maps to exactly one
-``Deployment`` (base URL + API key + optional extra headers), and each
-model has an optional fallback chain. A retryable error on the primary
-walks the chain; non-retryable errors (auth, 400-class) bubble up.
+``Deployment`` (base URL + API key + optional extra headers), and
+each model has an optional fallback chain. A retryable error on the
+primary walks the chain; non-retryable errors (auth, 400-class)
+bubble up.
 """
 
 from __future__ import annotations
@@ -17,16 +24,20 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import secrets
-import string
 import time
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import httpx
 import json_repair
 import structlog
+from exoclaw._compat import IS_MICROPYTHON
+from exoclaw.http import (
+    HTTPClient,
+    HTTPConnectError,
+    HTTPError,
+    HTTPReadTimeout,
+    HTTPWriteTimeout,
+)
 from exoclaw.providers.types import (
     ContextWindowExceededError,
     LLMResponse,
@@ -34,43 +45,88 @@ from exoclaw.providers.types import (
     ToolCallRequest,
 )
 
+if TYPE_CHECKING:
+    from exoclaw.http import ClientProto, ResponseProto
+
 logger = structlog.get_logger()
 
-_ALNUM = string.ascii_letters + string.digits
+# 9-char alnum tool-call id alphabet. OpenAI/Anthropic accept arbitrary
+# strings for ``tool_calls[].id``; some providers (Mistral) reject
+# longer/punctuated ids, so keep to a safe subset.
+_ALNUM = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 
-# Response-retryable HTTP status codes. 408/425 join the 5xx/429 set for
-# safety — some providers emit them on transient queue pressure.
+# Response-retryable HTTP status codes. 408/425 join the 5xx/429 set
+# for safety — some providers emit them on transient queue pressure.
 _RETRYABLE_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
 
 
 def _short_tool_id() -> str:
-    """9-char alnum id. OpenAI/Anthropic accept arbitrary strings for
-    ``tool_calls[].id``; some providers (Mistral) reject longer/punctuated
-    ids, so we keep to a safe subset that everything accepts."""
-    return "".join(secrets.choice(_ALNUM) for _ in range(9))
+    """9-char alnum tool-call id."""
+    if IS_MICROPYTHON:  # pragma: no cover (cpython)
+        # ``secrets`` doesn't ship on MP; ``os.urandom`` is the
+        # cross-runtime CSPRNG. Map each byte to one char in
+        # ``_ALNUM`` (62-char alphabet — close enough to flat;
+        # the bias is negligible for an id-shape value).
+        raw = os.urandom(9)
+        return "".join(_ALNUM[b % len(_ALNUM)] for b in raw)
+    import secrets  # pragma: no cover (micropython)
+
+    return "".join(secrets.choice(_ALNUM) for _ in range(9))  # pragma: no cover (micropython)
 
 
-@dataclass(frozen=True)
-class Deployment:
-    """A single model → endpoint binding.
+# Dataclass-or-plain-class dual pattern: MicroPython strips
+# annotations at compile time so the runtime ``@dataclass`` decorator
+# can't introspect ``base_url: str`` etc. and ends up with no fields.
+# Build a hand-written class on MP; keep ``@dataclass`` on CPython
+# for the standard ``__repr__``/``__eq__`` machinery.
+if not IS_MICROPYTHON:  # pragma: no cover (micropython)
+    from dataclasses import dataclass, field
 
-    ``extra_headers`` is merged into the request headers on every call;
-    ``extra_body`` is merged into the JSON body at the top level (e.g. for
-    OpenRouter's ``provider`` routing object, or a custom ``transforms``
-    flag). Both are read-only after construction.
-    """
+    @dataclass(frozen=True)
+    class Deployment:
+        """A single model → endpoint binding.
 
-    base_url: str
-    api_key: str
-    extra_headers: dict[str, str] = field(default_factory=dict)
-    extra_body: dict[str, Any] = field(default_factory=dict)
+        ``extra_headers`` is merged into the request headers on every
+        call; ``extra_body`` is merged into the JSON body at the top
+        level (e.g. for OpenRouter's ``provider`` routing object, or
+        a custom ``transforms`` flag). Both are read-only after
+        construction.
+        """
+
+        base_url: str
+        api_key: str
+        extra_headers: dict[str, str] = field(default_factory=dict)
+        extra_body: dict[str, Any] = field(default_factory=dict)
+
+else:  # pragma: no cover (cpython)
+
+    class Deployment:
+        """MicroPython fallback — plain class with hand-written
+        ``__init__``. Same shape as the CPython ``@dataclass`` branch
+        above; MP can't introspect ``base_url: str`` annotations at
+        runtime, so the ``@dataclass`` decorator would produce a
+        no-field class."""
+
+        def __init__(
+            self,
+            base_url: str,
+            api_key: str,
+            extra_headers: dict[str, str] | None = None,
+            extra_body: dict[str, Any] | None = None,
+        ) -> None:
+            self.base_url = base_url
+            self.api_key = api_key
+            self.extra_headers = extra_headers if extra_headers is not None else {}
+            self.extra_body = extra_body if extra_body is not None else {}
 
 
 class OpenAIStreamingProvider:
-    """Direct-httpx provider speaking OpenAI chat-completions protocol.
+    """Direct-HTTP provider speaking OpenAI chat-completions protocol.
 
-    Implements the exoclaw ``LLMProvider`` protocol.
-    """
+    Implements the exoclaw ``LLMProvider`` protocol. The HTTP layer
+    is ``exoclaw.http.HTTPClient``, so the same source runs on both
+    CPython (httpx underneath) and MicroPython (hand-rolled
+    HTTP/1.1)."""
 
     def __init__(
         self,
@@ -80,7 +136,7 @@ class OpenAIStreamingProvider:
         *,
         request_timeout: float = 120.0,
         stream_ttft_timeout: float = 15.0,
-        client: httpx.AsyncClient | None = None,
+        client: "ClientProto | None" = None,
     ) -> None:
         if default_model not in deployments:
             raise ValueError(
@@ -99,10 +155,11 @@ class OpenAIStreamingProvider:
         self._request_timeout = request_timeout
         self._stream_ttft_timeout = stream_ttft_timeout
 
-        # Allow dependency injection for tests. In production one client
-        # is reused across all requests so httpx can pool connections.
+        # Allow dependency injection for tests. In production one
+        # client is reused across all requests so the underlying
+        # transport (httpx on CPython) can pool connections.
         self._owns_client = client is None
-        self._client = client or httpx.AsyncClient(timeout=request_timeout)
+        self._client: ClientProto = client or HTTPClient(timeout=request_timeout)
 
         self._llm_logging = os.environ.get("LLM_LOGGING", "").lower() == "true"
         self._llm_log_truncate = int(os.environ.get("LLM_LOG_TRUNCATE", "500"))
@@ -111,7 +168,7 @@ class OpenAIStreamingProvider:
         return self.default_model
 
     async def close(self) -> None:
-        """Close the underlying httpx client. Safe to call multiple times."""
+        """Close the underlying HTTP client. Safe to call multiple times."""
         if self._owns_client:
             await self._client.aclose()
 
@@ -150,10 +207,9 @@ class OpenAIStreamingProvider:
                 )
             except _RetryableError as e:
                 # ``__cause__`` can be any BaseException; narrow to
-                # Exception for the type checker and fall through to the
-                # _RetryableError itself if the cause isn't a plain
-                # Exception (it always is in practice — we only chain
-                # from httpx errors).
+                # Exception for the type checker and fall through to
+                # the _RetryableError itself if the cause isn't a
+                # plain Exception (it always is in practice).
                 cause = e.__cause__
                 last_err = cause if isinstance(cause, Exception) else e
                 logger.warning(
@@ -194,9 +250,10 @@ class OpenAIStreamingProvider:
         url = deployment.base_url.rstrip("/") + "/chat/completions"
         headers = self._build_headers(deployment)
 
-        # Request body is assembled as a dict of metadata + the messages
-        # list, but we stream it out chunk-per-message so the full JSON
-        # never lives in memory as one string. See ``_stream_body``.
+        # Request body is assembled as a dict of metadata + the
+        # messages list, but we stream it out chunk-per-message so
+        # the full JSON never lives in memory as one string. See
+        # ``_stream_body``.
         body_head: dict[str, Any] = {
             "model": model,
             "max_tokens": max(1, max_tokens),
@@ -220,8 +277,7 @@ class OpenAIStreamingProvider:
 
         t0 = time.monotonic()
         try:
-            async with self._client.stream(
-                "POST",
+            async with self._client.stream_post(
                 url,
                 headers=headers,
                 content=_stream_body(body_head, messages),
@@ -239,14 +295,21 @@ class OpenAIStreamingProvider:
 
                 response = await self._consume_sse_stream(resp)
 
-        except httpx.ConnectError as e:
+        except HTTPConnectError as e:
             raise _RetryableError(f"connect error: {e}") from e
-        except httpx.ReadTimeout as e:
+        except HTTPReadTimeout as e:
             raise _RetryableError(f"read timeout: {e}") from e
-        except httpx.WriteTimeout as e:
+        except HTTPWriteTimeout as e:
             raise _RetryableError(f"write timeout: {e}") from e
         except asyncio.TimeoutError as e:
             raise _RetryableError(f"timeout: {e}") from e
+        # ``HTTPStatusError`` from ``resp.raise_for_status()`` is NOT
+        # caught here — non-retryable 4xx (auth, malformed request)
+        # is caller-fault and should bubble up so the caller sees
+        # the misconfiguration instead of silently walking the
+        # fallback chain. Retryable 5xx/429 status codes are filtered
+        # earlier in this function and re-raised as ``_RetryableError``
+        # before ever reaching ``raise_for_status``.
 
         elapsed = time.monotonic() - t0
         if self._llm_logging:
@@ -274,25 +337,23 @@ class OpenAIStreamingProvider:
                 extra_body["user"] = str(session_key)
         return extra_body
 
-    async def _consume_sse_stream(self, resp: httpx.Response) -> LLMResponse:
+    async def _consume_sse_stream(self, resp: "ResponseProto") -> LLMResponse:
         """Accumulate SSE chunks into a single ``LLMResponse``.
 
-        We need the full response anyway (the turn loop wants tool_calls
-        and finish_reason materialized) — streaming is purely for the
-        server-side TTFT and incremental-decode wins. The memory benefit
-        of this provider lives in the request path, not the response
-        path: response bodies are much smaller than prompts.
+        We need the full response anyway (the turn loop wants
+        tool_calls and finish_reason materialized) — streaming is
+        purely for the server-side TTFT and incremental-decode wins.
 
-        Implements a TTFT budget: we demand the first SSE event inside
-        ``stream_ttft_timeout`` seconds, after which the fallback chain
-        engages.
+        Implements a TTFT budget: we demand the first SSE event
+        inside ``stream_ttft_timeout`` seconds, after which the
+        fallback chain engages.
         """
         # A real SSE response has ``content-type: text/event-stream``.
-        # If an upstream misbehaves and returns JSON with status 200 (e.g.
-        # an error body they forgot to set a 4xx for), the ``data:`` line
-        # filter below would swallow every line and we'd silently return
-        # an empty ``LLMResponse``. Surface a retryable error instead so
-        # the fallback chain engages and the caller sees the failure.
+        # If an upstream misbehaves and returns JSON with status 200
+        # (e.g. an error body they forgot to set a 4xx for), the
+        # ``data:`` line filter below would swallow every line and
+        # we'd silently return an empty ``LLMResponse``. Surface a
+        # retryable error instead so the fallback chain engages.
         ct = (resp.headers.get("content-type") or "").lower()
         if "text/event-stream" not in ct:
             body = await resp.aread()
@@ -302,16 +363,16 @@ class OpenAIStreamingProvider:
 
         content_parts: list[str] = []
         reasoning_parts: list[str] = []
-        # Tool calls arrive streamed: first chunk carries ``index`` + name,
-        # subsequent chunks for the same index carry ``arguments`` deltas.
+        # Tool calls arrive streamed: first chunk carries ``index`` +
+        # name, subsequent chunks for the same index carry
+        # ``arguments`` deltas.
         tool_call_parts: dict[int, dict[str, Any]] = {}
         finish_reason = "stop"
         usage: dict[str, int] = {}
 
-        # Demand the first line inside the TTFT budget. Without this the
-        # much larger ``request_timeout`` wins when a server accepts the
-        # connection then never sends a byte, so fallback takes minutes
-        # instead of seconds. The Copilot review on PR #60 flagged this.
+        # Demand the first line inside the TTFT budget. Without this
+        # the much larger ``request_timeout`` wins when a server
+        # accepts the connection then never sends a byte.
         line_iter = resp.aiter_lines().__aiter__()
         try:
             first_line = await asyncio.wait_for(
@@ -339,7 +400,9 @@ class OpenAIStreamingProvider:
                 break
             try:
                 chunk = json.loads(payload)
-            except json.JSONDecodeError:
+            except (ValueError, json.JSONDecodeError):
+                # MP's ``json.JSONDecodeError`` is ``ValueError``;
+                # CPython's is a subclass. Catch both via the base.
                 continue
 
             # Usage arrives in its own final chunk when ``stream_options
@@ -380,10 +443,10 @@ class OpenAIStreamingProvider:
             if not slot["name"]:
                 continue
             raw_args = "".join(slot["arguments"])
-            # json_repair can return non-dict shapes for malformed input;
-            # coerce to an empty dict in that case so the tool call still
-            # dispatches (the model will get a schema error back, which is
-            # more useful than a hard provider-side failure).
+            # json_repair can return non-dict shapes for malformed
+            # input; coerce to an empty dict so the tool call still
+            # dispatches (the model will get a schema error back,
+            # which is more useful than a hard provider-side failure).
             parsed = json_repair.loads(raw_args) if raw_args else {}
             args_obj: dict[str, object] = parsed if isinstance(parsed, dict) else {}
             tool_calls.append(
@@ -443,27 +506,21 @@ class OpenAIStreamingProvider:
         )
 
 
-class _RetryableError(Exception):
+class _RetryableError(HTTPError):
     """Marker for errors that should trigger the fallback chain.
 
-    ``chat`` catches this and walks to the next model in the chain. If
-    the whole chain exhausts and the cause chain doesn't surface a
-    non-internal exception (e.g. a pure HTTP-status path with no
-    chained httpx error), callers can see this type on the exhaustion
-    path. Treat it as a generic "all fallbacks failed" signal.
-    """
+    ``chat`` catches this and walks to the next model in the chain.
+    Inherits from ``HTTPError`` so the catch block in ``_chat_once``
+    that re-raises HTTP-layer errors as ``_RetryableError`` does the
+    right thing if the underlying client raised an
+    ``exoclaw.http`` exception we didn't enumerate explicitly."""
 
 
-async def _is_context_window_error(resp: httpx.Response) -> bool:
+async def _is_context_window_error(resp: "ResponseProto") -> bool:
     """Heuristic: OpenAI returns 400 with ``code: "context_length_exceeded"``;
     OpenRouter proxies that code. Treat the response body as authoritative.
     Only called on 400 responses so the cost of reading the body is paid
     exactly once and only in the error path.
-
-    Async-read on the streaming response — ``resp.read()`` would be
-    synchronous and fails against a real async httpx stream (only works
-    against MockTransport because mocks buffer eagerly). See Copilot
-    review on PR #60.
     """
     try:
         await resp.aread()
@@ -492,20 +549,21 @@ async def _emit_message(msg: dict[str, Any]) -> AsyncIterator[bytes]:
     regardless — they're transport metadata, not part of the LLM
     message. (``loop.py`` already strips them on the persistence
     path; this is the symmetric strip on the wire path.)
+
+    ``ensure_ascii=False`` is omitted — MicroPython's ``json.dumps``
+    doesn't accept the kwarg, and the default (``True``) is fine on
+    both runtimes for OpenAI-compatible servers.
     """
     content_file_str = msg.get("_content_file")
     if not content_file_str:
         clean = {k: v for k, v in msg.items() if not k.startswith("_")}
-        yield json.dumps(clean, ensure_ascii=False).encode("utf-8")
+        yield json.dumps(clean).encode("utf-8")
         return
 
     # File-backed: assemble ``{<head>, "content": "<streamed escaped>"}``
-    # without ever holding the full content in heap. Head is
-    # everything except ``content`` and underscore-prefixed transport
-    # metadata; serialised once, then we splice in the streamed
-    # content field by hand so we control byte-by-byte emission.
+    # without ever holding the full content in heap.
     head = {k: v for k, v in msg.items() if k != "content" and not k.startswith("_")}
-    head_json = json.dumps(head, ensure_ascii=False)
+    head_json = json.dumps(head)
     assert head_json.endswith("}"), "head_json must end with closing brace"
     prefix = head_json[:-1]  # everything except final ``}``
     # ``head`` always has at least ``role``, so ``prefix`` is never
@@ -515,11 +573,10 @@ async def _emit_message(msg: dict[str, Any]) -> AsyncIterator[bytes]:
     sep = b"," if prefix.rstrip() != "{" else b""
     yield prefix.encode("utf-8") + sep + b'"content":"'
 
-    # Read the scratch file in fixed-size character chunks. ``open``
-    # in text mode handles UTF-8 codepoint-boundary alignment for us,
-    # so a chunk is always whole codepoints. ``json.dumps`` of each
-    # chunk gives correct JSON-string escaping (backslashes, quotes,
-    # control characters, multi-byte chars); slicing off the
+    # Read the scratch file in fixed-size character chunks. Text
+    # mode handles UTF-8 codepoint-boundary alignment for us, so a
+    # chunk is always whole codepoints. ``json.dumps`` of each
+    # chunk gives correct JSON-string escaping; slicing off the
     # surrounding quotes gives just the escaped body bytes.
     try:
         # ``newline=""`` matches the writer's open mode in
@@ -527,13 +584,21 @@ async def _emit_message(msg: dict[str, Any]) -> AsyncIterator[bytes]:
         # newline translation doesn't turn the writer's exact byte
         # sequence (``\r\n`` on Windows when a tool emits CRLF) into
         # ``\n`` here, drifting wire content from on-disk content.
-        with open(content_file_str, encoding="utf-8", newline="") as fh:
+        # MicroPython's ``open`` doesn't accept ``encoding`` /
+        # ``newline``; gate on runtime so the same source works.
+        if IS_MICROPYTHON:  # pragma: no cover (cpython)
+            fh = open(content_file_str)
+        else:  # pragma: no cover (micropython)
+            fh = open(content_file_str, encoding="utf-8", newline="")
+        try:
             while True:
                 chunk = fh.read(8192)
                 if not chunk:
                     break
-                escaped = json.dumps(chunk, ensure_ascii=False)[1:-1]
+                escaped = json.dumps(chunk)[1:-1]
                 yield escaped.encode("utf-8")
+        finally:
+            fh.close()
     except (OSError, UnicodeError):
         # Scratch file disappeared between tool execution and provider
         # send (manual cleanup, OS tmpwatch, race with post_turn) or
@@ -545,7 +610,7 @@ async def _emit_message(msg: dict[str, Any]) -> AsyncIterator[bytes]:
         # streaming continues for the rest of the messages.
         fallback = msg.get("content")
         if isinstance(fallback, str) and fallback:
-            escaped = json.dumps(fallback, ensure_ascii=False)[1:-1]
+            escaped = json.dumps(fallback)[1:-1]
             yield escaped.encode("utf-8")
 
     yield b'"}'
@@ -558,26 +623,20 @@ async def _stream_body(
 
     The point is to avoid ever holding the full body as a contiguous
     string. ``messages`` is typically 90%+ of body size; we serialize
-    each message individually and yield it as its own chunk so httpx
-    can pipe it to the socket and the serialized bytes can be
-    garbage-collected before the next message is processed.
+    each message individually and yield it as its own chunk so the
+    HTTP client can pipe it to the socket and the serialized bytes
+    can be garbage-collected before the next message is processed.
 
     Per-message serialization is delegated to ``_emit_message`` which
     handles both inline messages (the common case) and file-backed
-    Step-D streaming-tool-result messages (which stream their content
-    field from a scratch file rather than materialising it). Everything
-    except ``messages`` is stable and small — serialize it once, trim
-    the closing brace, and reuse that prefix. The closing brace is
-    emitted last, after the messages array is closed.
+    Step-D streaming-tool-result messages.
     """
-    # Serialize the non-messages part once — these keys are fixed-size
-    # scalars (model, temperature, etc.) plus ``tools`` which is stable
-    # across a turn's LLM iterations, so this serialization is small
-    # and doesn't repeat for each message.
-    head_json = json.dumps(head, ensure_ascii=False)
-    # Splice ``"messages":[...]`` in just before the closing ``}``. The
-    # dict has no ``messages`` key (caller passes it separately), so
-    # ``head_json`` ends with ``}``.
+    # Serialize the non-messages part once — these keys are
+    # fixed-size scalars (model, temperature, etc.) plus ``tools``
+    # which is stable across a turn's LLM iterations, so this
+    # serialization is small and doesn't repeat for each message.
+    head_json = json.dumps(head)
+    # Splice ``"messages":[...]`` in just before the closing ``}``.
     assert head_json.endswith("}"), "head_json must end with closing brace"
     prefix = head_json[:-1]  # everything except final ``}``
 

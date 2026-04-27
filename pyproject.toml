@@ -2,10 +2,11 @@
 members = ["packages/*"]
 
 [tool.uv.sources]
-# Local path source — dev iteration on core's MP compat layer.
-# Switch back to the published version once the new shims
+# Local path source — dev iteration on core's MP compat layer
 # (Path / WeakValueDictionary / which / is_executable / rmtree /
-# platform_summary / guess_image_mime) ship in a tagged exoclaw release.
+# platform_summary / guess_image_mime) and the new
+# ``exoclaw.http.HTTPClient``. Switch back to a versioned pin once
+# both ship in a tagged exoclaw release.
 exoclaw = { path = "../exoclaw", editable = true }
 exoclaw-conversation = { workspace = true }
 exoclaw-provider-litellm = { workspace = true }
