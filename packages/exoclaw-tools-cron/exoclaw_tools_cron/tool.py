@@ -1,8 +1,8 @@
 """Cron tool for scheduling reminders and tasks."""
 
-from contextvars import ContextVar
 from typing import Any
 
+from exoclaw._compat import TaskLocal as ContextVar
 from exoclaw.agent.tools.protocol import ToolBase, ToolContext
 
 from exoclaw_tools_cron.protocol import CronBackend
@@ -40,11 +40,24 @@ class CronTool(ToolBase):
         return self._in_cron_context.set(active)
 
     def reset_cron_context(self, token: object) -> None:
-        """Restore previous cron context."""
-        from contextvars import Token
+        """Restore previous cron context.
 
-        if isinstance(token, Token):
+        ``token`` is whatever ``set_cron_context`` returned —
+        ``contextvars.Token`` on CPython, ``exoclaw._compat._Token``
+        on MicroPython. Both reject foreign types with
+        ``TypeError``; swallow that so passing garbage is a clean
+        noop on either runtime (the original implementation
+        gated this with an ``isinstance(token, Token)`` check
+        which doesn't work on MP — ``contextvars.Token`` doesn't
+        exist there)."""
+        if token is None:
+            return
+        try:
             self._in_cron_context.reset(token)  # type: ignore[arg-type]
+        except TypeError:
+            # Foreign token type (test passes a string, etc.) —
+            # noop matches the prior behaviour.
+            pass
 
     @property
     def name(self) -> str:

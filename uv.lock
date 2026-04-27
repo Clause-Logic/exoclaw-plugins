@@ -700,12 +700,13 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-firmware"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "packages/exoclaw-firmware" }
 dependencies = [
     { name = "exoclaw", extra = ["http"] },
     { name = "exoclaw-conversation" },
     { name = "exoclaw-provider-openai" },
+    { name = "exoclaw-tools-cron" },
 ]
 
 [package.metadata]
@@ -713,6 +714,7 @@ requires-dist = [
     { name = "exoclaw", extras = ["http"], specifier = ">=0.26.0" },
     { name = "exoclaw-conversation", editable = "packages/exoclaw-conversation" },
     { name = "exoclaw-provider-openai", editable = "packages/exoclaw-provider-openai" },
+    { name = "exoclaw-tools-cron", editable = "packages/exoclaw-tools-cron" },
 ]
 
 [[package]]
@@ -871,7 +873,7 @@ requires-dist = [{ name = "exoclaw", specifier = ">=0.15.2" }]
 
 [[package]]
 name = "exoclaw-tools-cron"
-version = "0.7.0"
+version = "0.8.0"
 source = { editable = "packages/exoclaw-tools-cron" }
 dependencies = [
     { name = "croniter" },
@@ -882,7 +884,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "croniter", specifier = ">=6.0.0,<7.0.0" },
-    { name = "exoclaw", specifier = ">=0.22.0" },
+    { name = "exoclaw", specifier = ">=0.26.0" },
     { name = "structlog", specifier = ">=25.0.0" },
 ]
 

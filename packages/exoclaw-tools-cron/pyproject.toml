@@ -1,12 +1,17 @@
 [project]
 name = "exoclaw-tools-cron"
-version = "0.7.0"
-description = "Cron scheduling tool for exoclaw"
+version = "0.8.0"
+description = "Cron scheduling tool for exoclaw, runs on CPython + MicroPython"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "exoclaw>=0.22.0",
+    # 0.26.0 ships ``exoclaw._compat.Path`` / ``TaskLocal`` / etc.
+    # that the MP-friendly version of this plugin imports.
+    "exoclaw>=0.26.0",
     "structlog>=25.0.0",
+    # ``croniter`` is CPython-only — MP plugins skip ``cron``-style
+    # schedules. ``every`` and ``at`` work on both runtimes without
+    # a parser.
     "croniter>=6.0.0,<7.0.0",
 ]
 
@@ -16,3 +21,8 @@ cron = "exoclaw_tools_cron.skills:cron"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+# Tells the workspace MP CI gate this package runs on MicroPython.
+[tool.exoclaw]
+mp_compat = true
+mp_tests_dir = "tests/micro"

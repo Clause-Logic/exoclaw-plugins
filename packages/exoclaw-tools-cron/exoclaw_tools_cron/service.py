@@ -13,18 +13,51 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
-import uuid
-from datetime import datetime
-from pathlib import Path
-from typing import Any, Callable, Coroutine
+from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
-import structlog
+from exoclaw._compat import Path, get_logger
 from exoclaw.utils import create_isolated_task
 
 from exoclaw_tools_cron.types import CronJob, CronJobState, CronPayload, CronSchedule, CronStore
 
-logger = structlog.get_logger()
+if TYPE_CHECKING:
+    # ``datetime`` is used only by the cron-expression branch; MP
+    # gets it via ``mip install datetime`` (or the firmware sim's
+    # micropython-lib stage). Moved under TYPE_CHECKING so plain
+    # ``every`` / ``at`` schedules don't pull it in.
+    from datetime import datetime  # noqa: F401
+
+logger = get_logger()
+
+
+def _short_id() -> str:
+    """8-char hex id. ``uuid`` isn't on MicroPython and isn't in
+    micropython-lib; ``os.urandom`` is the cross-runtime CSPRNG
+    that produces equivalent randomness."""
+    return os.urandom(4).hex()
+
+
+def _mtime_or_none(path: Path) -> float | None:
+    """Return ``path.stat().st_mtime`` on CPython, ``None`` on
+    MicroPython.
+
+    The mtime check is cache-invalidation for external edits to
+    ``cron.json`` — useful when a sidecar process (test harness,
+    ops tool) modifies the file. On a chip there's only one
+    process touching the file, so skipping the check is safe and
+    avoids needing ``Path.stat`` on the MP shim."""
+    # ``stat`` lives on ``pathlib.Path`` (CPython) but not the
+    # ``exoclaw._compat`` MP ``Path`` shim. ``getattr`` keeps ty
+    # off our back on the union and lets MP fall through cleanly.
+    stat_fn = getattr(path, "stat", None)
+    if stat_fn is None:
+        return None
+    try:
+        return stat_fn().st_mtime
+    except OSError:
+        return None
 
 
 def _now_ms() -> int:
@@ -44,6 +77,7 @@ def _compute_next_run(schedule: CronSchedule, now_ms: int) -> int | None:
 
     if schedule.kind == "cron" and schedule.expr:
         try:
+            from datetime import datetime
             from zoneinfo import ZoneInfo
 
             from croniter import croniter
@@ -55,7 +89,11 @@ def _compute_next_run(schedule: CronSchedule, now_ms: int) -> int | None:
             cron = croniter(schedule.expr, base_dt)
             next_dt = cron.get_next(datetime)
             return int(next_dt.timestamp() * 1000)
-        except Exception:
+        except (ImportError, ValueError):
+            # ``croniter`` / ``zoneinfo`` aren't available on
+            # MicroPython; chip users get ``every`` and ``at``
+            # schedules without bringing in the cron-expression
+            # parser. Server users hit the import path normally.
             return None
 
     return None
@@ -93,8 +131,8 @@ class CronService:
     def _load_store(self) -> CronStore:
         """Load jobs from disk. Reloads automatically if file was modified externally."""
         if self._store and self.store_path.exists():
-            mtime = self.store_path.stat().st_mtime
-            if mtime != self._last_mtime:
+            mtime = _mtime_or_none(self.store_path)
+            if mtime is not None and mtime != self._last_mtime:
                 logger.info("cron_store_reloaded")
                 self._store = None
         if self._store:
@@ -192,8 +230,15 @@ class CronService:
             ],
         }
 
-        self.store_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-        self._last_mtime = self.store_path.stat().st_mtime
+        # MicroPython's ``json.dumps`` doesn't accept the
+        # ``indent=`` or ``ensure_ascii=`` kwargs CPython ships.
+        # Drop both — readable indenting is nice for ops debugging
+        # but isn't required, and the default ``ensure_ascii=True``
+        # is fine for cron job storage.
+        self.store_path.write_text(json.dumps(data), encoding="utf-8")
+        mtime = _mtime_or_none(self.store_path)
+        if mtime is not None:
+            self._last_mtime = mtime
 
     async def start(self) -> None:
         """Start the cron service."""
@@ -341,7 +386,7 @@ class CronService:
         now = _now_ms()
 
         job = CronJob(
-            id=str(uuid.uuid4())[:8],
+            id=_short_id(),
             name=name,
             enabled=True,
             schedule=schedule,

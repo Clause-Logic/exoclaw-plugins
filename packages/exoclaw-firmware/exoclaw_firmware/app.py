@@ -123,6 +123,7 @@ async def run_serial_app(
     reply_prefix: str = "bot> ",
     tools: "list | None" = None,
     extra_channels: "list | None" = None,
+    enable_cron: bool = True,
 ) -> None:
     """Run the full agent app with USB-CDC as a baseline channel.
 
@@ -136,13 +137,22 @@ async def run_serial_app(
     terminal) or the chip resets. Each turn is persisted to the
     session JSONL so consolidation / memory still happen.
 
-    ``tools`` bolts agent-callable tools (cron, message, web
-    search, …) onto the loop. ``extra_channels`` adds non-serial
-    channels (Telegram long-poll, MQTT, etc.) alongside
-    ``SerialChannel`` so a user can talk to the chip from the
-    cloud OR from a USB cable using the same agent state.
+    ``tools`` bolts agent-callable tools (message, web search, …)
+    onto the loop on top of the built-in cron tool. ``extra_channels``
+    adds non-serial channels (Telegram long-poll, MQTT, etc.)
+    alongside ``SerialChannel`` so a user can talk to the chip from
+    the cloud OR from a USB cable using the same agent state.
+
+    ``enable_cron`` (default ``True``) wires up the
+    ``LocalCronBackend`` + ``CronTool`` so the agent can schedule
+    its own jobs. Persisted to ``workspace/cron.json`` and survives
+    reboots. Set to ``False`` for a chat-only chip.
     """
+    from exoclaw.agent.tools.protocol import Tool
     from exoclaw.app import Exoclaw
+    from exoclaw.bus.events import InboundMessage
+    from exoclaw.bus.queue import MessageBus
+    from exoclaw.channels.protocol import Channel
 
     from exoclaw_firmware.channel import SerialChannel
 
@@ -152,8 +162,6 @@ async def run_serial_app(
         base_url=base_url,
         model=model,
     )
-    from exoclaw.channels.protocol import Channel
-
     serial = SerialChannel(chat_id=chat_id, prompt=prompt, reply_prefix=reply_prefix)
     # Avoid ``[serial, *extra]`` — MicroPython 1.27 doesn't support
     # PEP 448 list-unpacking inside list literals. Annotate the list
@@ -162,14 +170,66 @@ async def run_serial_app(
     channels: list[Channel] = [serial]
     if extra_channels:
         channels.extend(extra_channels)
+
+    # Build the bus up-front so the cron backend can publish
+    # inbound messages onto it when jobs fire. Exoclaw normally
+    # builds its own bus; passing one in lets us pre-wire the
+    # cron-fire callback.
+    bus = MessageBus()
+
+    # Optional cron — start the timer task before the agent loop
+    # so jobs that fire during boot (e.g. ``at`` schedules in the
+    # past after a reboot) reach the agent on the first cycle.
+    cron_service = None
+    all_tools: list[Tool] = list(tools or [])
+    if enable_cron:
+        from exoclaw_tools_cron.service import CronService, LocalCronBackend
+        from exoclaw_tools_cron.tool import CronTool
+        from exoclaw_tools_cron.types import CronJob
+
+        async def _on_cron_job(job: CronJob) -> str | None:
+            """Cron-fire callback — publish a synthetic inbound
+            message so the agent processes the job's prompt
+            exactly like a user-typed turn. The reply goes back
+            over whichever channel the job targets (default
+            serial) via the standard bus dispatch path."""
+            target_channel = job.payload.channel or serial.name
+            target_chat = job.payload.to or chat_id
+            await bus.publish_inbound(
+                InboundMessage(
+                    channel=target_channel,
+                    sender_id="cron",
+                    chat_id=target_chat,
+                    content=job.payload.message,
+                )
+            )
+            return None
+
+        cron_service = CronService(
+            store_path=workspace / "cron.json",
+            on_job=_on_cron_job,
+        )
+        cron_backend = LocalCronBackend(service=cron_service)
+        # ``CronTool`` structurally satisfies the ``Tool`` Protocol
+        # (``@runtime_checkable``) but ty can't prove the
+        # subtype — same situation as ``DBOSExecutor`` /
+        # ``Executor`` elsewhere in the workspace.
+        all_tools.append(CronTool(backend=cron_backend))  # type: ignore[invalid-argument-type]
+        await cron_service.start()
+
     app = Exoclaw(
         provider=provider,
         conversation=conversation,
         channels=channels,
-        tools=tools or [],
+        tools=all_tools,
+        bus=bus,
         model=model,
     )
     try:
         await app.run()
     finally:
+        if cron_service is not None:
+            # ``CronService.stop`` is sync — cancels the timer task
+            # in-place, no await needed.
+            cron_service.stop()
         await provider.close()
