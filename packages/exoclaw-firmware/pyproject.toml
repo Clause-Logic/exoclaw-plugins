@@ -1,18 +1,20 @@
 [project]
 name = "exoclaw-firmware"
-version = "0.2.0"
+version = "0.3.0"
 description = "Deployable exoclaw image for MicroPython boards (ESP32-S3 and friends)"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     # Core + HTTP client. ``[http]`` extra pulls in httpx on
     # CPython for tests; on the chip the MP path needs no extra.
-    "exoclaw[http]>=0.26.0",
-    # The two plugins the firmware bundles by default. Extra
-    # plugins can be staged on top of the firmware tree before
-    # flashing.
+    "exoclaw[http]>=0.26.1",
+    # Plugins the firmware bundles by default — chat-conversation
+    # state, OpenAI-compat provider, and cron self-scheduling.
+    # Extra plugins can be staged on top of the firmware tree
+    # before flashing.
     "exoclaw-conversation>=0.19.0",
-    "exoclaw-provider-openai>=0.3.0",
+    "exoclaw-provider-openai>=0.4.0",
+    "exoclaw-tools-cron>=0.8.0",
 ]
 
 [build-system]
