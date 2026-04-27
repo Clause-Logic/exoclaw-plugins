@@ -1,0 +1,136 @@
+# Per-package mise tasks for the firmware. Run from this
+# directory: ``cd packages/exoclaw-firmware && mise run flash``.
+#
+# All tasks shell out to ``mpremote`` for filesystem ops on the
+# attached MicroPython board. Install via ``mise x mpremote@latest``
+# or pin in this repo's tools list.
+
+# ``EXOCLAW_BOARD`` is the board variant under ``boards/``.
+# Each task that touches board-specific files sets it explicitly
+# (defaults to ``esp32_s3`` in the chip-flash tasks; ``unix`` in
+# the simulator). No top-level default — keeping the env var
+# scoped per-task makes the ``mise run sim`` → ``mise run stage``
+# call chain self-evident, with no surprising fall-throughs.
+
+[tasks.stage]
+description = "Build a flash-ready tree under .stage with core + plugins + board files"
+sources = [
+    "exoclaw_firmware/**/*.py",
+    "boards/${EXOCLAW_BOARD}/**/*.py",
+    "../exoclaw-conversation/exoclaw_conversation/**/*.py",
+    "../exoclaw-provider-openai/exoclaw_provider_openai/**/*.py",
+    "../../../exoclaw/exoclaw/**/*.py",
+]
+outputs = [".stage/.stamp"]
+run = """
+set -e
+rm -rf .stage
+mkdir -p .stage
+# Core + the two bundled plugins + this package — copied flat
+# under .stage so MICROPYPATH=.stage on the device resolves
+# them via standard import. ``_cpython.py`` siblings are skipped
+# (CPython-only; MP imports ``_mp.py`` instead).
+cp -r ../../../exoclaw/exoclaw .stage/exoclaw
+cp -r ../exoclaw-conversation/exoclaw_conversation .stage/exoclaw_conversation
+cp -r ../exoclaw-provider-openai/exoclaw_provider_openai .stage/exoclaw_provider_openai
+cp -r exoclaw_firmware .stage/exoclaw_firmware
+# MP-runtime fillers at stage root — flat so plain ``import
+# typing`` / ``import dataclasses`` / ``import datetime`` resolve
+# before the real package tree.
+#
+# Two sources:
+#   1. ``exoclaw/_mp_lib/`` — typing + dataclasses, owned by core
+#      because micropython-lib doesn't ship them.
+#   2. micropython-lib (``$MICROPYTHON_LIB_DIR``) — datetime +
+#      __future__, real upstream impls. The chip path uses
+#      ``require("datetime")`` in the manifest; the simulator
+#      copies the source file directly because there's no
+#      manifest-driven build here yet.
+if [ -z "$MICROPYTHON_LIB_DIR" ]; then
+    echo 'stage: MICROPYTHON_LIB_DIR not set — set it to a checkout of'
+    echo '       https://github.com/micropython/micropython-lib (or the'
+    echo '       ``lib/micropython-lib`` directory inside a MicroPython source clone).'
+    exit 1
+fi
+cp ../../../exoclaw/exoclaw/_mp_lib/*.py .stage/
+cp "$MICROPYTHON_LIB_DIR/python-stdlib/datetime/datetime.py" .stage/
+cp "$MICROPYTHON_LIB_DIR/python-stdlib/__future__/__future__.py" .stage/
+find .stage -name '_cpython.py' -delete
+find .stage -name '__pycache__' -type d -exec rm -rf {} +
+# ``_mp_lib/`` was copied as part of ``exoclaw/`` but the modules
+# inside live at stage root for ``import typing`` to resolve;
+# drop the duplicate inside the package tree.
+rm -rf .stage/exoclaw/_mp_lib
+# Board-specific boot.py / main.py / secrets.py go to flash root.
+cp boards/$EXOCLAW_BOARD/boot.py .stage/boot.py
+cp boards/$EXOCLAW_BOARD/main.py .stage/main.py
+if [ -f boards/$EXOCLAW_BOARD/secrets.py ]; then
+    cp boards/$EXOCLAW_BOARD/secrets.py .stage/secrets.py
+elif [ -f boards/$EXOCLAW_BOARD/secrets.py.example ]; then
+    # Board ships a secrets template, so it expects credentials
+    # in ``secrets.py``. Boards that read creds from env vars
+    # (e.g. ``unix``) don't ship a template and skip this warning.
+    echo "stage: warning — boards/$EXOCLAW_BOARD/secrets.py missing; flash will fail without it"
+fi
+touch .stage/.stamp
+echo 'stage: ready under .stage/'
+"""
+
+[tasks.flash]
+description = "Copy .stage onto the attached MicroPython board"
+env = { EXOCLAW_BOARD = "esp32_s3" }
+run = """
+set -e
+if ! command -v mpremote >/dev/null; then
+    echo 'mpremote not found; try: mise x mpremote@latest -- mpremote ...'
+    exit 1
+fi
+mise run stage
+# ``mpremote cp -r`` recurses; the trailing ``:`` puts files at
+# flash root. Run mpremote from ``.stage`` so paths land cleanly.
+cd .stage
+for entry in *; do
+    mpremote cp -r "$entry" ":$entry"
+done
+echo 'flash: complete; press the reset button or run ``mise run repl`` to see boot output'
+"""
+
+[tasks.repl]
+description = "Drop into a REPL on the attached board"
+run = "mpremote repl"
+
+[tasks.run]
+description = "Run main.py on the attached board (no flash, just exec from host)"
+env = { EXOCLAW_BOARD = "esp32_s3" }
+run = """
+set -e
+mise run stage
+cd .stage
+mpremote run main.py
+"""
+
+[tasks.wipe]
+description = "Erase the attached board's filesystem (DESTRUCTIVE)"
+run = "mpremote exec 'import os, machine; [os.remove(f) for f in os.listdir() if not os.stat(f)[0] & 0o040000]; machine.reset()'"
+
+[tasks.sim]
+description = "Run the firmware locally on the MicroPython unix port (no board needed)"
+# Stages the ``unix`` board variant (env-var-driven secrets) and
+# runs ``main.py`` against the local MP coverage build. Requires
+# ``EXOCLAW_MICROPYTHON_BIN`` (workspace ``mise.local.toml``) and
+# ``OPENAI_API_KEY`` in the environment.
+env = { EXOCLAW_BOARD = "unix" }
+run = """
+set -e
+if [ -z "$EXOCLAW_MICROPYTHON_BIN" ]; then
+    echo 'EXOCLAW_MICROPYTHON_BIN not set — see workspace mise.local.toml.'
+    exit 1
+fi
+if [ -z "$OPENAI_API_KEY" ]; then
+    echo 'OPENAI_API_KEY not set — export it before running ``mise run sim``.'
+    exit 1
+fi
+mise run stage
+cd .stage
+MICROPYPATH=".frozen:$PWD" "$EXOCLAW_MICROPYTHON_BIN" main.py
+"""

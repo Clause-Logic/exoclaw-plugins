@@ -5,3 +5,9 @@ __pycache__/
 dist/
 *.egg-info/
 .coverage
+
+# Output of ``mise run mp-stage`` — assembled MicroPython tree.
+.mp-stage/
+
+# Per-developer mise overrides (e.g. EXOCLAW_MICROPYTHON_BIN).
+mise.local.toml

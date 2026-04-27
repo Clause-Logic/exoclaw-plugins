@@ -1,17 +1,20 @@
 """Session management for conversation history."""
 
 import json
-import weakref
-from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
-import structlog
+from exoclaw._compat import IS_MICROPYTHON, Path, WeakValueDictionary, get_logger
 
 from ..helpers import ensure_dir, safe_filename
 
-logger = structlog.get_logger()
+logger = get_logger()
+
+# Note on ``WeakValueDictionary`` import above: on CPython this is
+# ``weakref.WeakValueDictionary``; on MicroPython it's a plain ``dict``
+# subclass (MP doesn't ship ``weakref``). The original use case is the
+# in-flight session-locks dict — entries are short-lived and bounded
+# by the active-session count, so a small leak under MP is acceptable.
 
 
 def _normalize_history(
@@ -54,7 +57,13 @@ def _normalize_history(
             elif role == "assistant" and m.get("tool_calls"):
                 kept = [tc for tc in m["tool_calls"] if tc.get("id") in valid_ids]
                 if kept:
-                    repaired.append({**m, "tool_calls": kept})
+                    # Avoid ``{**m, ...}`` — MicroPython 1.27
+                    # doesn't support PEP 448 dict-unpacking in
+                    # dict literals. Plain copy + assign works on
+                    # both runtimes.
+                    merged = dict(m)
+                    merged["tool_calls"] = kept
+                    repaired.append(merged)
                 elif m.get("content"):
                     repaired.append({k: v for k, v in m.items() if k != "tool_calls"})
             else:
@@ -71,71 +80,134 @@ def _normalize_history(
     return out
 
 
-@dataclass
-class Session:
-    """
-    A conversation session.
+if not IS_MICROPYTHON:  # pragma: no cover (micropython)
+    from dataclasses import dataclass, field
 
-    Stores messages in JSONL format for easy reading and persistence.
+    @dataclass
+    class Session:
+        """A conversation session.
 
-    Only the tail of the message history (unconsolidated messages) is kept
-    in RAM.  Older messages remain on disk and are never loaded unless
-    explicitly requested (e.g. for consolidation).
+        Stores messages in JSONL format for easy reading and persistence.
 
-    Important: Messages are append-only for LLM cache efficiency.
-    The consolidation process writes summaries to MEMORY.md/HISTORY.md
-    but does NOT modify the messages list or get_history() output.
-    """
+        Only the tail of the message history (unconsolidated messages) is
+        kept in RAM. Older messages remain on disk and are never loaded
+        unless explicitly requested (e.g. for consolidation).
 
-    key: str  # channel:chat_id
-    messages: list[dict[str, Any]] = field(default_factory=list)
-    created_at: datetime = field(default_factory=datetime.now)
-    updated_at: datetime = field(default_factory=datetime.now)
-    metadata: dict[str, Any] = field(default_factory=dict)
-    last_consolidated: int = 0  # Absolute index: messages already consolidated to files
-    _total_messages: int = 0  # Explicit total; 0 means "derive from messages"
-    _messages_offset: int = 0  # Absolute index of first entry in self.messages
-
-    @property
-    def total_messages(self) -> int:
-        """Total messages on disk (including consolidated).
-
-        Falls back to offset + len(messages) when not explicitly set.
+        Important: messages are append-only for LLM cache efficiency.
+        The consolidation process writes summaries to MEMORY.md /
+        HISTORY.md but does NOT modify the messages list or
+        ``get_history()`` output.
         """
-        if self._total_messages > 0:
-            return self._total_messages
-        return self._messages_offset + len(self.messages)
 
-    @total_messages.setter
-    def total_messages(self, value: int) -> None:
-        self._total_messages = value
+        key: str  # channel:chat_id
+        messages: list[dict[str, Any]] = field(default_factory=list)
+        created_at: datetime = field(default_factory=datetime.now)
+        updated_at: datetime = field(default_factory=datetime.now)
+        metadata: dict[str, Any] = field(default_factory=dict)
+        last_consolidated: int = 0  # Absolute index of consolidated messages
+        _total_messages: int = 0  # Explicit total; 0 = derive from messages
+        _messages_offset: int = 0  # Absolute index of first entry in self.messages
 
-    def add_message(self, role: str, content: str, **kwargs: Any) -> None:
-        """Add a message to the session."""
-        new_total = self.total_messages + 1
-        msg = {"role": role, "content": content, "timestamp": datetime.now().isoformat(), **kwargs}
-        self.messages.append(msg)
-        self._total_messages = new_total
-        self.updated_at = datetime.now()
+        @property
+        def total_messages(self) -> int:
+            if self._total_messages > 0:
+                return self._total_messages
+            return self._messages_offset + len(self.messages)
 
-    def get_history(self, max_messages: int | None = 500) -> list[dict[str, Any]]:
-        """Return unconsolidated messages for LLM input, aligned to a user turn.
+        @total_messages.setter
+        def total_messages(self, value: int) -> None:
+            self._total_messages = value
 
-        When loaded from disk, self.messages starts at _messages_offset so
-        we compute the relative skip from last_consolidated. ``max_messages
-        =None`` returns the full unconsolidated tail (no window cap).
-        """
-        relative_consolidated = max(0, self.last_consolidated - self._messages_offset)
-        unconsolidated = self.messages[relative_consolidated:]
-        return _normalize_history(unconsolidated, max_messages=max_messages)
+        def add_message(self, role: str, content: str, **kwargs: Any) -> None:
+            new_total = self.total_messages + 1
+            # Avoid ``{**kwargs}`` in dict literals — MicroPython
+            # 1.27 doesn't support PEP 448 dict-unpacking. Build
+            # the dict and update with kwargs instead.
+            msg: dict[str, Any] = {
+                "role": role,
+                "content": content,
+                "timestamp": datetime.now().isoformat(),
+            }
+            msg.update(kwargs)
+            self.messages.append(msg)
+            self._total_messages = new_total
+            self.updated_at = datetime.now()
 
-    def clear(self) -> None:
-        """Clear all messages and reset session to initial state."""
-        self.messages = []
-        self.last_consolidated = 0
-        self._total_messages = 0
-        self._messages_offset = 0
-        self.updated_at = datetime.now()
+        def get_history(self, max_messages: int | None = 500) -> list[dict[str, Any]]:
+            relative_consolidated = max(0, self.last_consolidated - self._messages_offset)
+            unconsolidated = self.messages[relative_consolidated:]
+            return _normalize_history(unconsolidated, max_messages=max_messages)
+
+        def clear(self) -> None:
+            self.messages = []
+            self.last_consolidated = 0
+            self._total_messages = 0
+            self._messages_offset = 0
+            self.updated_at = datetime.now()
+
+else:  # pragma: no cover (cpython)
+
+    class Session:
+        """MicroPython fallback — plain class with hand-written
+        ``__init__``. Same shape as the CPython ``@dataclass`` branch
+        above; MP strips ``name: type`` annotations at compile time
+        so the runtime decorator can't introspect fields. See
+        ``exoclaw/_compat.py`` for the same pattern in core."""
+
+        def __init__(
+            self,
+            key: str,
+            messages: list[dict[str, Any]] | None = None,
+            created_at: datetime | None = None,
+            updated_at: datetime | None = None,
+            metadata: dict[str, Any] | None = None,
+            last_consolidated: int = 0,
+            _total_messages: int = 0,
+            _messages_offset: int = 0,
+        ) -> None:
+            self.key = key
+            self.messages = messages if messages is not None else []
+            self.created_at = created_at if created_at is not None else datetime.now()
+            self.updated_at = updated_at if updated_at is not None else datetime.now()
+            self.metadata = metadata if metadata is not None else {}
+            self.last_consolidated = last_consolidated
+            self._total_messages = _total_messages
+            self._messages_offset = _messages_offset
+
+        @property
+        def total_messages(self) -> int:
+            if self._total_messages > 0:
+                return self._total_messages
+            return self._messages_offset + len(self.messages)
+
+        @total_messages.setter
+        def total_messages(self, value: int) -> None:
+            self._total_messages = value
+
+        def add_message(self, role: str, content: str, **kwargs: Any) -> None:
+            new_total = self.total_messages + 1
+            msg = {
+                "role": role,
+                "content": content,
+                "timestamp": datetime.now().isoformat(),
+            }
+            for k, v in kwargs.items():
+                msg[k] = v
+            self.messages.append(msg)
+            self._total_messages = new_total
+            self.updated_at = datetime.now()
+
+        def get_history(self, max_messages: int | None = 500) -> list[dict[str, Any]]:
+            relative_consolidated = max(0, self.last_consolidated - self._messages_offset)
+            unconsolidated = self.messages[relative_consolidated:]
+            return _normalize_history(unconsolidated, max_messages=max_messages)
+
+        def clear(self) -> None:
+            self.messages = []
+            self.last_consolidated = 0
+            self._total_messages = 0
+            self._messages_offset = 0
+            self.updated_at = datetime.now()
 
 
 class SessionManager:
@@ -156,7 +228,13 @@ class SessionManager:
         self.sessions_dir = ensure_dir(self.workspace / "sessions")
         # WeakValueDict: sessions stay cached while any caller holds a reference,
         # then get GC'd automatically — no unbounded growth.
-        self._cache: weakref.WeakValueDictionary[str, Session] = weakref.WeakValueDictionary()
+        # ``WeakValueDictionary`` on CPython, plain ``dict`` on MP
+        # (see ``exoclaw._compat`` for the why). CPython entries
+        # GC-evict when no caller holds a reference; on MP the
+        # entries persist for the process lifetime, but the
+        # bound — one per active session — is tiny on a
+        # microcontroller's typical workload.
+        self._cache: WeakValueDictionary[str, Session] = WeakValueDictionary()
         # streaming_history=True: ``_load`` does not populate ``session.messages``.
         # The unconsolidated tail lives only on disk and ``read_history`` reads
         # it on demand. Cuts the per-session RAM floor — the headline win for
@@ -205,7 +283,7 @@ class SessionManager:
             total_messages = 0
             tail_lines: list[str] = []
 
-            with open(path, encoding="utf-8") as f:
+            with open(str(path)) as f:
                 for line in f:
                     line = line.strip()
                     if not line:
@@ -283,7 +361,7 @@ class SessionManager:
 
         messages: list[dict[str, Any]] = []
         idx = 0
-        with open(path, encoding="utf-8") as f:
+        with open(str(path)) as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -293,7 +371,11 @@ class SessionManager:
                         data = json.loads(line)
                         if data.get("_type") == "metadata":
                             continue
-                    except json.JSONDecodeError:
+                    except (ValueError, json.JSONDecodeError):
+                        # MicroPython's ``json.loads`` raises plain
+                        # ``ValueError`` (no ``JSONDecodeError`` is
+                        # exposed); CPython's ``JSONDecodeError`` is
+                        # a ``ValueError`` subclass. Catch the union.
                         pass
                 if idx >= end:
                     break
@@ -327,7 +409,7 @@ class SessionManager:
         else:
             messages = list(session.messages)
 
-        with open(path, "w", encoding="utf-8") as f:
+        with open(str(path), "w") as f:
             metadata_line = {
                 "_type": "metadata",
                 "key": session.key,
@@ -336,9 +418,9 @@ class SessionManager:
                 "metadata": session.metadata,
                 "last_consolidated": session.last_consolidated,
             }
-            f.write(json.dumps(metadata_line, ensure_ascii=False) + "\n")
+            f.write(json.dumps(metadata_line) + "\n")
             for msg in messages:
-                f.write(json.dumps(msg, ensure_ascii=False) + "\n")
+                f.write(json.dumps(msg) + "\n")
 
     def save_append(self, session: Session, new_messages: list[dict[str, Any]]) -> None:
         """Append new messages to the JSONL file.
@@ -351,7 +433,7 @@ class SessionManager:
 
         if not path.exists():
             # New file — write metadata header first
-            with open(path, "w", encoding="utf-8") as f:
+            with open(str(path), "w") as f:
                 meta = {
                     "_type": "metadata",
                     "key": session.key,
@@ -360,14 +442,14 @@ class SessionManager:
                     "metadata": session.metadata,
                     "last_consolidated": session.last_consolidated,
                 }
-                f.write(json.dumps(meta, ensure_ascii=False) + "\n")
+                f.write(json.dumps(meta) + "\n")
                 for msg in new_messages:
-                    f.write(json.dumps(msg, ensure_ascii=False) + "\n")
+                    f.write(json.dumps(msg) + "\n")
         else:
             # Append only — no rewrite
-            with open(path, "a", encoding="utf-8") as f:
+            with open(str(path), "a") as f:
                 for msg in new_messages:
-                    f.write(json.dumps(msg, ensure_ascii=False) + "\n")
+                    f.write(json.dumps(msg) + "\n")
 
     def save_metadata(self, session: Session) -> None:
         """Update only the metadata line (first line) of the JSONL file.
@@ -388,16 +470,16 @@ class SessionManager:
             "last_consolidated": session.last_consolidated,
         }
 
-        with open(path, encoding="utf-8") as f:
+        with open(str(path)) as f:
             lines = f.readlines()
 
-        meta_str = json.dumps(metadata_line, ensure_ascii=False) + "\n"
+        meta_str = json.dumps(metadata_line) + "\n"
         if lines and "_type" in lines[0]:
             lines[0] = meta_str
         else:
             lines.insert(0, meta_str)
 
-        with open(path, "w", encoding="utf-8") as f:
+        with open(str(path), "w") as f:
             f.writelines(lines)
 
     def invalidate(self, key: str) -> None:
@@ -415,7 +497,7 @@ class SessionManager:
 
         for path in self.sessions_dir.glob("*.jsonl"):
             try:
-                with open(path, encoding="utf-8") as f:
+                with open(str(path)) as f:
                     first_line = f.readline().strip()
                     if first_line:
                         data = json.loads(first_line)

@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import structlog
+from exoclaw._compat import get_logger
 
 if TYPE_CHECKING:
     from .protocols import MemoryBackend
     from .session.manager import Session
 
-logger = structlog.get_logger()
+logger = get_logger()
 
 
 class SummarizingConsolidationPolicy:
@@ -65,7 +65,7 @@ class SummarizingConsolidationPolicy:
 
     def _read_history(self) -> str:
         """Read the current HISTORY.md content."""
-        from pathlib import Path
+        from exoclaw._compat import Path
 
         if hasattr(self._memory, "history_file"):
             path = getattr(self._memory, "history_file")

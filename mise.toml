@@ -2,10 +2,14 @@
 uv = "latest"
 
 [tasks.lint]
-description = "Type check with ty and lint with ruff (set PACKAGE=<name>)"
+description = "Type check with ty, lint with ruff, and check formatting (set PACKAGE=<name>)"
 run = [
     "uv run ty check packages/$PACKAGE",
     "uv run ruff check packages/$PACKAGE",
+    # Format check is part of CI's per-package matrix (separate
+    # ``mise run check-format`` step). Including it here so
+    # ``mise run lint`` matches what CI runs.
+    "uv run ruff format --check packages/$PACKAGE",
 ]
 
 [tasks.format]
@@ -19,3 +23,27 @@ run = "uv run ruff format --check ."
 [tasks.test]
 description = "Run tests (set PACKAGE=<name>)"
 run = "uv run pytest packages/$PACKAGE"
+
+# ── MicroPython gate ────────────────────────────────────────────
+#
+# Plugins opt into this gate by setting ``[tool.exoclaw] mp_compat
+# = true`` in their ``pyproject.toml``. ``scripts/mp_test.py``
+# walks the workspace, stages those packages alongside core
+# ``exoclaw`` into ``.mp-stage/``, and drives core's MP test
+# runner against each plugin's ``tests/micro/`` directory.
+
+[tasks.mp-list]
+description = "List MP-compatible packages (read from [tool.exoclaw] mp_compat)"
+run = "uv run python scripts/mp_test.py list"
+
+[tasks.mp-stage]
+description = "Stage core + MP-compat packages into .mp-stage/ (set PACKAGE=<name> for one)"
+run = "uv run python scripts/mp_test.py stage $PACKAGE"
+
+[tasks.test-micro]
+description = "Run MicroPython tests for one package (set PACKAGE=<name>)"
+run = "uv run python scripts/mp_test.py test $PACKAGE"
+
+[tasks.test-micro-all]
+description = "Run MicroPython tests for every MP-compat package"
+run = "uv run python scripts/mp_test.py test-all"

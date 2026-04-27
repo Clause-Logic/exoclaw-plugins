@@ -9,6 +9,7 @@ members = [
     "exoclaw-channel-pipe",
     "exoclaw-conversation",
     "exoclaw-executor-dbos",
+    "exoclaw-firmware",
     "exoclaw-github",
     "exoclaw-loop-detection",
     "exoclaw-nanobot",
@@ -595,14 +596,19 @@ wheels = [
 
 [[package]]
 name = "exoclaw"
-version = "0.24.0"
+version = "0.26.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "structlog" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/01/41/2cbf5e746124663a188f979181714455c7ad4e60b4b46c425064168e666b/exoclaw-0.24.0.tar.gz", hash = "sha256:1d112c6bc0f8d5ff314977050549cdf95e5c691e47886310de9c91c8186781b7", size = 43497, upload-time = "2026-04-26T12:58:00.821Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8f/ca/bf21f37f6216c4b0b1ad2835979e7db4322b9d009f2484bb1c41877da9db/exoclaw-0.26.0.tar.gz", hash = "sha256:a38af91ce703e9733ac370d1da6c63c9cf153e931b7afef246be2d27c03a3425", size = 75404, upload-time = "2026-04-27T14:43:30.629Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/09/b2/6af77064281f2fde335b30389f767f666f826261ca5bd5f134b612aefde1/exoclaw-0.24.0-py3-none-any.whl", hash = "sha256:34d4b9791b3eb03006976d18ac821e1b5b815f9502b8150aeec2cb6ee7c79e41", size = 45599, upload-time = "2026-04-26T12:57:59.749Z" },
+    { url = "https://files.pythonhosted.org/packages/f3/18/42f7454de903b1033df5afd71ceea3c7236051c7c80a903057509b28cd2b/exoclaw-0.26.0-py3-none-any.whl", hash = "sha256:2acdd35b43a22e4d21a28708c00d4a9ea378d398f22b613e0fdf8747e0db3bbd", size = 79037, upload-time = "2026-04-27T14:43:31.595Z" },
+]
+
+[package.optional-dependencies]
+http = [
+    { name = "httpx" },
 ]
 
 [[package]]
@@ -690,6 +696,23 @@ requires-dist = [
     { name = "exoclaw-subagent", editable = "packages/exoclaw-subagent" },
     { name = "structlog", specifier = ">=24.0.0" },
     { name = "uuid-utils", specifier = ">=0.9.0" },
+]
+
+[[package]]
+name = "exoclaw-firmware"
+version = "0.1.0"
+source = { editable = "packages/exoclaw-firmware" }
+dependencies = [
+    { name = "exoclaw", extra = ["http"] },
+    { name = "exoclaw-conversation" },
+    { name = "exoclaw-provider-openai" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "exoclaw", extras = ["http"], specifier = ">=0.26.0" },
+    { name = "exoclaw-conversation", editable = "packages/exoclaw-conversation" },
+    { name = "exoclaw-provider-openai", editable = "packages/exoclaw-provider-openai" },
 ]
 
 [[package]]
@@ -805,19 +828,17 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-provider-openai"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "packages/exoclaw-provider-openai" }
 dependencies = [
-    { name = "exoclaw" },
-    { name = "httpx" },
+    { name = "exoclaw", extra = ["http"] },
     { name = "json-repair" },
     { name = "structlog" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", specifier = ">=0.24.0" },
-    { name = "httpx", specifier = ">=0.27.0" },
+    { name = "exoclaw", extras = ["http"], specifier = ">=0.26.0" },
     { name = "json-repair", specifier = ">=0.1.0" },
     { name = "structlog", specifier = ">=25.0.0" },
 ]

@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import structlog
+from exoclaw._compat import Path, get_logger
 
 from .helpers import ensure_dir
 
-logger = structlog.get_logger()
+logger = get_logger()
 
 if TYPE_CHECKING:
     from exoclaw.providers.protocol import LLMProvider
@@ -72,10 +71,13 @@ class MemoryStore:
         return ""
 
     def write_long_term(self, content: str) -> None:
-        self.memory_file.write_text(content, encoding="utf-8")
+        self.memory_file.write_text(content)
 
     def append_history(self, entry: str) -> None:
-        with open(self.history_file, "a", encoding="utf-8") as f:
+        # ``encoding="utf-8"`` kwarg dropped — MicroPython's ``open``
+        # doesn't accept it. Text mode is always UTF-8 on both
+        # runtimes, so the result is identical.
+        with open(str(self.history_file), "a") as f:
             f.write(entry.rstrip() + "\n\n")
 
     def get_memory_context(self) -> str:
@@ -211,11 +213,11 @@ class MemoryStore:
 
             if entry := args.get("history_entry"):
                 if not isinstance(entry, str):
-                    entry = json.dumps(entry, ensure_ascii=False)
+                    entry = json.dumps(entry)
                 self.append_history(entry)
             if update := args.get("memory_update"):
                 if not isinstance(update, str):
-                    update = json.dumps(update, ensure_ascii=False)
+                    update = json.dumps(update)
                 if update != current_memory:
                     self.write_long_term(update)
 

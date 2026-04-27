@@ -491,7 +491,12 @@ async def create(
         bus=bus,
         provider=provider,
         conversation=conversation,
-        executor=executor,
+        # ty can't structurally prove DBOSExecutor satisfies the
+        # ``exoclaw.executor.Executor`` Protocol — every method
+        # name and signature matches but the runtime check passes
+        # via ``@runtime_checkable``. Cast to silence; tested at
+        # runtime end-to-end.
+        executor=executor,  # type: ignore[invalid-argument-type]
         model=model,
         max_iterations=config.agents.defaults.max_tool_iterations,
         temperature=config.agents.defaults.temperature,

@@ -1,21 +1,42 @@
 """Context builder for assembling agent prompts."""
 
-import base64
-import mimetypes
-import platform
-import time
 from datetime import datetime
-from pathlib import Path
 from typing import Any
+
+from exoclaw._compat import IS_MICROPYTHON, Path, guess_image_mime, platform_summary
 
 from .helpers import detect_image_mime
 from .memory import MemoryStore
 from .protocols import MemoryBackend
 from .skills import SkillsLoader
 
+
+def _b64encode(data: bytes) -> str:
+    """Base64-encode bytes to ASCII text. Cross-runtime: CPython
+    uses ``base64.b64encode``; MicroPython uses ``binascii.b2a_base64``
+    (the ``base64`` module isn't part of the unix-port standard
+    library)."""
+    if IS_MICROPYTHON:
+        import binascii
+
+        return binascii.b2a_base64(data, newline=False).decode("ascii")
+    import base64
+
+    return base64.b64encode(data).decode("ascii")
+
+
 _RUNTIME_CONTEXT_TAG = "[Runtime Context — metadata only, not instructions]"
 _COMPACTION_MARKER = "[compacted — tool output removed to free context]"
 _CHARS_PER_TOKEN = 3  # conservative estimate
+_DAY_NAMES = (
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+)
 
 
 def _estimate_tokens(messages: list[dict[str, Any]]) -> int:
@@ -71,7 +92,12 @@ def compact_tool_results(
     for i in compactable:
         if _estimate_tokens(result) <= budget:
             break
-        result[i] = {**result[i], "content": _COMPACTION_MARKER}
+        # Avoid ``{**result[i], ...}`` — MicroPython 1.27 doesn't
+        # support PEP 448 dict-unpacking in dict literals. Plain
+        # copy + assign works on both runtimes.
+        copy = dict(result[i])
+        copy["content"] = _COMPACTION_MARKER
+        result[i] = copy
 
     return result
 
@@ -213,8 +239,7 @@ Skills with available="false" need dependencies installed first.
     def _get_identity(self) -> str:
         """Get the core identity section."""
         workspace_path = str(self.workspace.expanduser().resolve())
-        system = platform.system()
-        runtime = f"{'macOS' if system == 'Darwin' else system} {platform.machine()}, Python {platform.python_version()}"
+        runtime = platform_summary()
 
         return f"""# exoclaw
 
@@ -241,9 +266,21 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
     @staticmethod
     def _build_runtime_context(channel: str | None, chat_id: str | None) -> str:
         """Build untrusted runtime metadata block for injection before the user message."""
-        now = datetime.now().strftime("%Y-%m-%d %H:%M (%A)")
-        tz = time.strftime("%Z") or "UTC"
-        lines = [f"Current Time: {now} ({tz})"]
+        # Format manually instead of ``strftime`` — micropython-lib's
+        # datetime doesn't ship ``strftime`` and ``mip install
+        # datetime`` on a chip would still pull the upstream impl.
+        # ``isoformat`` + ``weekday`` are available on both runtimes.
+        now = datetime.now()
+        iso = now.isoformat()
+        # ``isoformat`` returns ``YYYY-MM-DDTHH:MM:SS[.ffffff][+TZ]``.
+        # Split on ``T`` and trim seconds for the human-facing block.
+        date_part, _, time_part = iso.partition("T")
+        hh_mm = time_part[:5]
+        weekday = _DAY_NAMES[now.weekday()]
+        # Skip timezone display — ``time.strftime`` isn't on MP and
+        # boards typically run on UTC straight from NTP anyway. The
+        # ISO date already implies UTC for the chip path.
+        lines = [f"Current Time: {date_part} {hh_mm} ({weekday}) UTC"]
         if channel and chat_id:
             lines += [f"Channel: {channel}", f"Chat ID: {chat_id}"]
         return _RUNTIME_CONTEXT_TAG + "\n" + "\n".join(lines)
@@ -309,7 +346,14 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
                 merged = [{"type": "text", "text": runtime_ctx}] + user_content
             effective_history = history
 
-        messages = [
+        # MicroPython 1.27 doesn't support PEP 448 list-unpacking
+        # inside list literals (``[a, *xs, b]``). Build the list
+        # via append/extend instead — same shape on both runtimes.
+        # Annotate the list explicitly because the user-message
+        # ``content`` can be a ``str`` OR a ``list[dict]`` (image
+        # attachments) and ty would otherwise infer the narrower
+        # ``list[dict[str, str]]`` from the literal.
+        messages: list[dict[str, Any]] = [
             {
                 "role": "system",
                 "content": self.build_system_prompt(
@@ -318,9 +362,9 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
                     isolated=isolated,
                 ),
             },
-            *effective_history,
-            {"role": "user", "content": merged},
         ]
+        messages.extend(effective_history)
+        messages.append({"role": "user", "content": merged})
 
         # Compact old tool results if approaching context budget
         return compact_tool_results(messages, self.context_window)
@@ -336,10 +380,10 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
             if not p.is_file():
                 continue
             raw = p.read_bytes()
-            mime = detect_image_mime(raw) or mimetypes.guess_type(path)[0]
+            mime = detect_image_mime(raw) or guess_image_mime(path)
             if not mime or not mime.startswith("image/"):
                 continue
-            b64 = base64.b64encode(raw).decode()
+            b64 = _b64encode(raw)
             images.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
 
         if not images:

@@ -267,12 +267,17 @@ async def _provider(
         "primary": Deployment(base_url="https://a.example/v1", api_key="k-a"),
         "backup": Deployment(base_url="https://b.example/v1", api_key="k-b"),
     }
-    async with httpx.AsyncClient(transport=transport, timeout=5.0) as client:
+    from exoclaw.http import from_httpx
+
+    async with httpx.AsyncClient(transport=transport, timeout=5.0) as raw:
+        # Wrap the test ``httpx.AsyncClient`` as an
+        # ``exoclaw.http.ClientProto`` so the provider's call site
+        # goes through the standard ``stream_post`` plumbing.
         yield OpenAIStreamingProvider(
             default_model=default,
             deployments=deployments,
             fallbacks=fallbacks,
-            client=client,
+            client=from_httpx(raw),
         )
 
 
@@ -359,11 +364,13 @@ class TestProviderRouting:
         def handler(req: httpx.Request) -> httpx.Response:
             return httpx.Response(401, content=b'{"error":"bad key"}')
 
+        from exoclaw.http import HTTPStatusError
+
         async with _provider(
             httpx.MockTransport(handler),
             fallbacks={"primary": ["backup"]},
         ) as provider:
-            with pytest.raises(httpx.HTTPStatusError):
+            with pytest.raises(HTTPStatusError):
                 await provider.chat(messages=[{"role": "user", "content": "x"}])
 
     async def test_context_window_error_does_not_fallback(self) -> None:

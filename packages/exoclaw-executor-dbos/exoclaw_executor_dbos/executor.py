@@ -126,7 +126,12 @@ def _build_lazy_prior_source(
 
 
 def _response_to_dict(resp: LLMResponse) -> dict[str, Any]:
-    return dataclasses.asdict(resp)
+    # ``LLMResponse`` is a dual @dataclass / plain class (CPython
+    # gets the decorator, MP gets a hand-written ``__init__``).
+    # ty sees the union and can't narrow ``asdict`` calls; the
+    # CPython runtime path is correct because the decorator
+    # branch is what actually executes here.
+    return dataclasses.asdict(resp)  # type: ignore[invalid-argument-type]
 
 
 def _dict_to_response(d: dict[str, Any]) -> LLMResponse:
@@ -497,7 +502,9 @@ class DBOSExecutor:
         tool_call_id: str | None = None,
     ) -> str:
         _registry_var.set(registry)
-        ctx_data = dataclasses.asdict(ctx) if ctx else None
+        # See ``_response_to_dict`` — same dual-class issue with
+        # ``ToolContext`` confusing ty's ``asdict`` narrowing.
+        ctx_data = dataclasses.asdict(ctx) if ctx else None  # type: ignore[invalid-argument-type]
 
         # Bind a fresh intent buffer for this step. Tools running inside
         # the step append child-workflow start requests via
@@ -604,7 +611,7 @@ class DBOSExecutor:
         preview = b"".join(preview_chunks).decode("utf-8", errors="ignore")
         if bytes_written > len(preview.encode("utf-8")):
             preview = f"{preview}…\n[streamed {bytes_written} bytes to {path.name}]"
-        return ToolResult(content=preview, content_file=path)
+        return ToolResult(content=preview, content_file=str(path))
 
     async def _dispatch_intents(self, intents: list[StartChildWorkflow]) -> None:
         """Start child workflows for queued intents from workflow context.
