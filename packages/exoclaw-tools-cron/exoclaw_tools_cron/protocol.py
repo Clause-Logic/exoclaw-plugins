@@ -8,7 +8,7 @@ plugin feature set without reimplementing the tool.
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 from exoclaw_tools_cron.types import CronJob, CronSchedule
 
@@ -30,6 +30,7 @@ class CronBackend(Protocol):
         skills: list[str] | None = None,
         stateless: bool = False,
         model: str | None = None,
+        wake_mode: Literal["now", "next-heartbeat"] = "now",
     ) -> CronJob: ...
 
     async def list_jobs(self, *, include_disabled: bool = False) -> list[CronJob]: ...
@@ -48,6 +49,7 @@ class CronBackend(Protocol):
         skills: list[str] | None = None,
         stateless: bool | None = None,
         model: str | None = None,
+        wake_mode: Literal["now", "next-heartbeat"] | None = None,
     ) -> CronJob | None: ...
 
     async def remove(self, job_id: str) -> bool: ...

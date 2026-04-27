@@ -37,7 +37,10 @@ async def _main() -> None:
     # via ``HEARTBEAT_INTERVAL_MS`` in ``secrets.py``; set to 0
     # to disable coalescing (every cron fire wakes the chip).
     hb_raw = getattr(secrets, "HEARTBEAT_INTERVAL_MS", 5 * 60 * 1000)
-    heartbeat_interval_ms = hb_raw if isinstance(hb_raw, int) and hb_raw > 0 else None
+    # ``isinstance(x, int)`` would accept ``True`` / ``False`` (bool
+    # is an int subclass) — a stray ``HEARTBEAT_INTERVAL_MS = True``
+    # in ``secrets.py`` shouldn't silently arm a 1ms heartbeat.
+    heartbeat_interval_ms = hb_raw if type(hb_raw) is int and hb_raw > 0 else None
 
     print("main: workspace={} model={}".format(workspace, model))
     if heartbeat_interval_ms:
