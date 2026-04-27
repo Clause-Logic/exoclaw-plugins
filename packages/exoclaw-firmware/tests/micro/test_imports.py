@@ -13,10 +13,12 @@ path runs on hardware via ``mise run flash`` (see
 
 
 def test_top_level_imports():
-    from exoclaw_firmware import build_agent, run_demo
+    from exoclaw_firmware import SerialChannel, build_agent, run_demo, run_serial_app
 
     assert callable(build_agent)
     assert callable(run_demo)
+    assert callable(run_serial_app)
+    assert callable(SerialChannel)
 
 
 def test_app_module_imports():
@@ -27,3 +29,13 @@ def test_app_module_imports():
     # cleanly.
     assert callable(app.build_agent)
     assert callable(app.run_demo)
+
+
+def test_serial_channel_protocol_shape():
+    from exoclaw_firmware import SerialChannel
+
+    ch = SerialChannel()
+    assert ch.name == "serial"
+    # Channel protocol surface — start/stop/send must all exist.
+    for method in ("start", "stop", "send"):
+        assert callable(getattr(ch, method))

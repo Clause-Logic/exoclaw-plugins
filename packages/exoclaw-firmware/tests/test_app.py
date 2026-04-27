@@ -10,13 +10,25 @@ and exercising it requires a real LLM endpoint."""
 from __future__ import annotations
 
 from exoclaw._compat import Path
-from exoclaw_firmware import build_agent, run_demo
+from exoclaw_firmware import SerialChannel, build_agent, run_demo, run_serial_app
 
 
 def test_public_surface_exported() -> None:
-    """Both entry points are importable from the package root."""
+    """All entry points are importable from the package root."""
     assert callable(build_agent)
     assert callable(run_demo)
+    assert callable(run_serial_app)
+    assert callable(SerialChannel)
+
+
+def test_serial_channel_satisfies_channel_protocol() -> None:
+    """``SerialChannel`` implements ``Channel`` (``start``, ``stop``,
+    ``send``, ``name`` attribute) so the channel manager can
+    dispatch to it like any other channel."""
+    ch = SerialChannel()
+    assert ch.name == "serial"
+    for method in ("start", "stop", "send"):
+        assert callable(getattr(ch, method))
 
 
 def test_build_agent_constructs_pair(tmp_path: Path) -> None:

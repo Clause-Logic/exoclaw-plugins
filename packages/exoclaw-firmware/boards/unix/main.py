@@ -16,7 +16,7 @@ import asyncio
 import os
 
 from exoclaw._compat import Path
-from exoclaw_firmware import run_serial_chat
+from exoclaw_firmware import run_serial_app
 
 api_key = os.getenv("OPENAI_API_KEY")
 if not api_key:
@@ -33,7 +33,7 @@ model = os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
 async def _main() -> None:
     print("main: workspace={} model={}".format(workspace, model))
     print("main: ready — type a message and press enter (Ctrl-C to exit)")
-    await run_serial_chat(
+    await run_serial_app(
         workspace=workspace,
         api_key=api_key,
         base_url=base_url,

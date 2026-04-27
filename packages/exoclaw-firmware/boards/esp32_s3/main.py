@@ -14,7 +14,7 @@ top of ``build_agent``.
 import asyncio
 
 from exoclaw._compat import Path
-from exoclaw_firmware import run_serial_chat
+from exoclaw_firmware import run_serial_app
 
 try:
     import secrets  # type: ignore[import-not-found]
@@ -33,7 +33,7 @@ async def _main() -> None:
 
     print("main: workspace={} model={}".format(workspace, model))
     print("main: ready — type a message and press enter (Ctrl-C to exit)")
-    await run_serial_chat(
+    await run_serial_app(
         workspace=workspace,
         api_key=api_key,
         base_url=base_url,
