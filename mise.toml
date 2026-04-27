@@ -2,10 +2,14 @@
 uv = "latest"
 
 [tasks.lint]
-description = "Type check with ty and lint with ruff (set PACKAGE=<name>)"
+description = "Type check with ty, lint with ruff, and check formatting (set PACKAGE=<name>)"
 run = [
     "uv run ty check packages/$PACKAGE",
     "uv run ruff check packages/$PACKAGE",
+    # Format check is part of CI's per-package matrix (separate
+    # ``mise run check-format`` step). Including it here so
+    # ``mise run lint`` matches what CI runs.
+    "uv run ruff format --check packages/$PACKAGE",
 ]
 
 [tasks.format]
