@@ -15,7 +15,7 @@ import asyncio
 import json
 import os
 import time
-from typing import TYPE_CHECKING, Any, Callable, Coroutine
+from typing import TYPE_CHECKING, Any, Callable, Coroutine, Literal
 
 from exoclaw._compat import Path, get_logger
 from exoclaw.utils import create_isolated_task
@@ -114,18 +114,47 @@ def _validate_schedule_for_add(schedule: CronSchedule) -> None:
 
 
 class CronService:
-    """Service for managing and executing scheduled jobs."""
+    """Service for managing and executing scheduled jobs.
+
+    ``heartbeat_interval_ms``: when non-None, the service runs an
+    internal periodic tick that flushes any jobs queued by
+    ``wake_mode="next-heartbeat"`` (see ``CronJob.wake_mode``).
+    Without a heartbeat interval, deferred jobs accumulate
+    indefinitely until something else calls ``flush_deferred()``
+    (e.g. an external timer, a manual flush from the agent, a
+    wake-from-deep-sleep handler, etc.).
+
+    The heartbeat is intentionally a property of the cron service
+    rather than a separate plugin: in openclaw's design heartbeat
+    is the clock that flushes coalesced firings, not a parallel
+    file-poll service. Cron is the source of truth for *what* runs;
+    heartbeat is *how aggressively* deferred work wakes the agent.
+    """
 
     def __init__(
         self,
         store_path: Path,
         on_job: Callable[[CronJob], Coroutine[Any, Any, str | None]] | None = None,
+        heartbeat_interval_ms: int | None = None,
     ):
         self.store_path = store_path
         self.on_job = on_job
+        self.heartbeat_interval_ms = heartbeat_interval_ms
         self._store: CronStore | None = None
         self._last_mtime: float = 0.0
         self._timer_task: asyncio.Task[None] | None = None
+        self._heartbeat_task: asyncio.Task[None] | None = None
+        # Jobs whose scheduled time arrived but that opted into
+        # heartbeat coalescing — held here until ``flush_deferred``.
+        self._deferred: list[CronJob] = []
+        # Serialises ``_on_timer`` and ``flush_deferred``. Both can
+        # await user-provided ``on_job`` callbacks, and the only
+        # thing keeping store mutations atomic between those awaits
+        # is this lock. Without it a heartbeat tick during a
+        # ``_on_timer`` await window could load + save the store
+        # concurrently and lose the schedule advances ``_on_timer``
+        # made before yielding.
+        self._lock = asyncio.Lock()
         self._running = False
 
     def _load_store(self) -> CronStore:
@@ -174,6 +203,17 @@ class CronService:
                             created_at_ms=j.get("createdAtMs", 0),
                             updated_at_ms=j.get("updatedAtMs", 0),
                             delete_after_run=j.get("deleteAfterRun", False),
+                            # Coerce unknown wakeMode values back to
+                            # "now" so a manual JSON edit / a writer
+                            # from a future format version doesn't
+                            # silently route a job through the
+                            # ``next-heartbeat`` queue when the user
+                            # didn't ask for it.
+                            wake_mode=(
+                                j["wakeMode"]
+                                if j.get("wakeMode") in ("now", "next-heartbeat")
+                                else "now"
+                            ),
                         )
                     )
                 self._store = CronStore(jobs=jobs)
@@ -225,6 +265,7 @@ class CronService:
                     "createdAtMs": j.created_at_ms,
                     "updatedAtMs": j.updated_at_ms,
                     "deleteAfterRun": j.delete_after_run,
+                    "wakeMode": j.wake_mode,
                 }
                 for j in self._store.jobs
             ],
@@ -247,7 +288,21 @@ class CronService:
         self._recompute_next_runs()
         self._save_store()
         self._arm_timer()
-        logger.info("cron_started", **{"job.count": len(self._store.jobs if self._store else [])})
+        # Only spawn the heartbeat loop for a real positive
+        # interval. ``None`` / ``0`` / negative all mean "no
+        # coalescing"; spawning a task that immediately returns
+        # would just leave a stale ``_heartbeat_task`` reference
+        # and a misleading log line.
+        active_heartbeat = self.heartbeat_interval_ms is not None and self.heartbeat_interval_ms > 0
+        if active_heartbeat:
+            self._heartbeat_task = create_isolated_task(self._heartbeat_loop())
+        logger.info(
+            "cron_started",
+            **{
+                "job.count": len(self._store.jobs if self._store else []),
+                "heartbeat.interval_ms": self.heartbeat_interval_ms if active_heartbeat else None,
+            },
+        )
 
     def stop(self) -> None:
         """Stop the cron service."""
@@ -255,6 +310,32 @@ class CronService:
         if self._timer_task:
             self._timer_task.cancel()
             self._timer_task = None
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
+            self._heartbeat_task = None
+
+    async def _heartbeat_loop(self) -> None:
+        """Periodic tick that flushes ``next-heartbeat`` deferred jobs.
+
+        Runs only when ``heartbeat_interval_ms`` is set on the
+        service. The chip use case wants this; servers with always-on
+        agents can leave it ``None`` and never coalesce."""
+        interval_s = (self.heartbeat_interval_ms or 0) / 1000
+        if interval_s <= 0:
+            return
+        while self._running:
+            try:
+                await asyncio.sleep(interval_s)
+            except asyncio.CancelledError:
+                break
+            if not self._running:
+                break
+            try:
+                fired = await self.flush_deferred()
+                if fired > 0:
+                    logger.info("cron_heartbeat_flush", **{"deferred.fired": fired})
+            except Exception as e:
+                logger.error("cron_heartbeat_flush_failed", error=e)
 
     def _recompute_next_runs(self) -> None:
         """Recompute next run times for all enabled jobs."""
@@ -302,23 +383,112 @@ class CronService:
         self._timer_task = create_isolated_task(tick())
 
     async def _on_timer(self) -> None:
-        """Handle timer tick - run due jobs."""
-        self._load_store()
-        if not self._store:
-            return
+        """Handle timer tick - run due jobs.
 
+        Jobs with ``wake_mode="next-heartbeat"`` are queued onto
+        ``self._deferred`` and their schedule advanced as if they
+        had run, but the ``on_job`` callback is held back until
+        ``flush_deferred()`` is called (typically from the
+        heartbeat tick). Jobs with ``wake_mode="now"`` (default)
+        fire the callback immediately as before.
+
+        Held under ``self._lock`` so a concurrent heartbeat tick
+        calling ``flush_deferred`` can't load + save the store
+        in between this method's awaits and lose schedule
+        advances.
+        """
+        async with self._lock:
+            self._load_store()
+            if not self._store:
+                return
+
+            now = _now_ms()
+            due_jobs = [
+                j
+                for j in self._store.jobs
+                if j.enabled and j.state.next_run_at_ms and now >= j.state.next_run_at_ms
+            ]
+
+            for job in due_jobs:
+                if job.wake_mode == "next-heartbeat":
+                    self._defer_job(job)
+                else:
+                    await self._execute_job(job)
+
+            self._save_store()
+            self._arm_timer()
+
+    def _defer_job(self, job: CronJob) -> None:
+        """Queue a job onto the heartbeat-flush list and advance its
+        schedule as if it had run.
+
+        The state-advance has to happen here (not in
+        ``flush_deferred``) so the next ``_on_timer`` doesn't see
+        the job as still-due and re-queue it on every tick. The
+        callback fires later from ``flush_deferred``."""
+        self._deferred.append(job)
         now = _now_ms()
-        due_jobs = [
-            j
-            for j in self._store.jobs
-            if j.enabled and j.state.next_run_at_ms and now >= j.state.next_run_at_ms
-        ]
+        job.state.last_run_at_ms = now
+        job.updated_at_ms = now
+        if job.schedule.kind == "at":
+            if job.delete_after_run:
+                # One-shot ``at`` jobs are removed at flush time
+                # to keep the deferred reference valid; for now
+                # disable so the timer doesn't re-fire.
+                job.enabled = False
+            else:
+                job.enabled = False
+            job.state.next_run_at_ms = None
+        else:
+            job.state.next_run_at_ms = _compute_next_run(job.schedule, now)
 
-        for job in due_jobs:
-            await self._execute_job(job)
+    async def flush_deferred(self) -> int:
+        """Fire ``on_job`` for every job queued by ``next-heartbeat``.
 
-        self._save_store()
-        self._arm_timer()
+        Returns the number of jobs fired. Safe to call when the
+        deferred list is empty (no-op, returns 0). Idempotent —
+        clears the queue before invoking callbacks so re-entry from
+        within ``on_job`` won't see the same jobs twice.
+
+        Held under ``self._lock`` so a concurrent ``_on_timer``
+        tick can't interleave with our store mutations and lose
+        the one-shot ``at`` + ``delete_after_run`` cleanup below.
+        """
+        async with self._lock:
+            if not self._deferred:
+                return 0
+            # Make sure ``_store`` is loaded before we mutate +
+            # save it. Without this, the first ``flush_deferred``
+            # ever (e.g. from a heartbeat tick that ran before any
+            # ``_on_timer``) would call ``_save_store`` against
+            # ``_store=None`` — a silent no-op that strands the
+            # one-shot ``at`` cleanup below.
+            self._load_store()
+            batch = self._deferred
+            self._deferred = []
+            for job in batch:
+                start_ms = _now_ms()
+                try:
+                    if self.on_job:
+                        await self.on_job(job)
+                    job.state.last_status = "ok"
+                    job.state.last_error = None
+                    logger.info(
+                        "cron_job_executed",
+                        **{"job.name": job.name, "job.id": job.id, "wake_mode": job.wake_mode},
+                    )
+                except Exception as e:
+                    job.state.last_status = "error"
+                    job.state.last_error = str(e)
+                    logger.error("cron_job_failed", **{"job.name": job.name}, error=e)
+                job.state.last_run_at_ms = start_ms
+                job.updated_at_ms = _now_ms()
+                # Drop one-shot ``at`` + ``delete_after_run`` jobs now
+                # that they've actually fired.
+                if job.schedule.kind == "at" and job.delete_after_run and self._store is not None:
+                    self._store.jobs = [j for j in self._store.jobs if j.id != job.id]
+            self._save_store()
+            return len(batch)
 
     async def _execute_job(self, job: CronJob) -> None:
         """Execute a single job."""
@@ -379,8 +549,11 @@ class CronService:
         skills: list[str] | None = None,
         stateless: bool = False,
         model: str | None = None,
+        wake_mode: Literal["now", "next-heartbeat"] = "now",
     ) -> CronJob:
-        """Add a new job."""
+        """Add a new job. ``wake_mode`` controls whether the firing
+        wakes the agent immediately (``"now"``) or coalesces into
+        the next heartbeat tick (``"next-heartbeat"``)."""
         store = self._load_store()
         _validate_schedule_for_add(schedule)
         now = _now_ms()
@@ -404,13 +577,17 @@ class CronService:
             created_at_ms=now,
             updated_at_ms=now,
             delete_after_run=delete_after_run,
+            wake_mode=wake_mode,
         )
 
         store.jobs.append(job)
         self._save_store()
         self._arm_timer()
 
-        logger.info("cron_job_added", **{"job.name": name, "job.id": job.id})
+        logger.info(
+            "cron_job_added",
+            **{"job.name": name, "job.id": job.id, "wake_mode": wake_mode},
+        )
         return job
 
     def remove_job(self, job_id: str) -> bool:
@@ -438,6 +615,7 @@ class CronService:
         stateless: bool | None = None,
         model: str | None = None,
         schedule: CronSchedule | None = None,
+        wake_mode: Literal["now", "next-heartbeat"] | None = None,
     ) -> CronJob | None:
         """Update fields on an existing job."""
         store = self._load_store()
@@ -462,6 +640,8 @@ class CronService:
                     _validate_schedule_for_add(schedule)
                     job.schedule = schedule
                     job.state.next_run_at_ms = _compute_next_run(schedule, _now_ms())
+                if wake_mode is not None:
+                    job.wake_mode = wake_mode
                 job.updated_at_ms = _now_ms()
                 self._save_store()
                 self._arm_timer()
@@ -534,6 +714,7 @@ class LocalCronBackend:
         skills: list[str] | None = None,
         stateless: bool = False,
         model: str | None = None,
+        wake_mode: Literal["now", "next-heartbeat"] = "now",
     ) -> CronJob:
         return self._svc.add_job(
             name=name,
@@ -546,6 +727,7 @@ class LocalCronBackend:
             skills=skills,
             stateless=stateless,
             model=model,
+            wake_mode=wake_mode,
         )
 
     async def list_jobs(self, *, include_disabled: bool = False) -> list[CronJob]:
@@ -566,6 +748,7 @@ class LocalCronBackend:
         skills: list[str] | None = None,
         stateless: bool | None = None,
         model: str | None = None,
+        wake_mode: Literal["now", "next-heartbeat"] | None = None,
     ) -> CronJob | None:
         return self._svc.update_job(
             job_id,
@@ -577,6 +760,7 @@ class LocalCronBackend:
             skills=skills,
             stateless=stateless,
             model=model,
+            wake_mode=wake_mode,
         )
 
     async def remove(self, job_id: str) -> bool:
@@ -584,3 +768,11 @@ class LocalCronBackend:
 
     async def enable(self, job_id: str, enabled: bool = True) -> CronJob | None:
         return self._svc.enable_job(job_id, enabled=enabled)
+
+    async def flush_deferred(self) -> int:
+        """Fire all jobs queued via ``wake_mode="next-heartbeat"``.
+
+        Forwarded to ``CronService.flush_deferred`` for callers
+        that don't have direct access to the service (e.g. host
+        firmware wiring an external timer to the cron backend)."""
+        return await self._svc.flush_deferred()

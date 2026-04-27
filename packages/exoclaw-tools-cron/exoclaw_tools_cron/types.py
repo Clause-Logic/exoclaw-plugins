@@ -87,7 +87,19 @@ class CronJobState:
 
 
 class CronJob:
-    """A scheduled job."""
+    """A scheduled job.
+
+    ``wake_mode`` controls how a due job is delivered:
+      - ``"now"`` (default) — fire immediately at the scheduled time.
+        Each firing wakes the agent / chip independently.
+      - ``"next-heartbeat"`` — defer the firing until the next
+        heartbeat tick. The cron service queues the job, advances
+        its schedule as if it had run, but holds back the
+        ``on_job`` callback until ``flush_deferred()`` is called.
+        Heartbeat ticks coalesce all such deferred jobs into one
+        wake event — saves battery on a deep-sleep chip and folds
+        non-urgent notifications into a single bundle for the user.
+    """
 
     def __init__(
         self,
@@ -100,6 +112,7 @@ class CronJob:
         created_at_ms: int = 0,
         updated_at_ms: int = 0,
         delete_after_run: bool = False,
+        wake_mode: Literal["now", "next-heartbeat"] = "now",
     ) -> None:
         self.id = id
         self.name = name
@@ -110,6 +123,7 @@ class CronJob:
         self.created_at_ms = created_at_ms
         self.updated_at_ms = updated_at_ms
         self.delete_after_run = delete_after_run
+        self.wake_mode = wake_mode
 
 
 class CronStore:
