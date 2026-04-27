@@ -807,4 +807,343 @@ class TestCronBackendProtocol:
         assert disabled is not None
         assert disabled.enabled is False
         assert await backend.list_jobs() == []
+
+
+# ---------------------------------------------------------------------------
+# wake_mode + flush_deferred (heartbeat coalescing)
+# ---------------------------------------------------------------------------
+
+
+class TestWakeModePersistence:
+    def test_default_wake_mode_is_now(self, service: CronService) -> None:
+        job = service.add_job(
+            name="default",
+            schedule=CronSchedule(kind="every", every_ms=1000),
+            message="hi",
+        )
+        assert job.wake_mode == "now"
+
+    def test_wake_mode_round_trips_through_disk(
+        self, service: CronService, store_path: Path
+    ) -> None:
+        service.add_job(
+            name="batched",
+            schedule=CronSchedule(kind="every", every_ms=5000),
+            message="hi",
+            wake_mode="next-heartbeat",
+        )
+        # Re-read from disk via a fresh service.
+        fresh = CronService(store_path=store_path)
+        store = fresh._load_store()
+        assert len(store.jobs) == 1
+        assert store.jobs[0].wake_mode == "next-heartbeat"
+
+    def test_wake_mode_missing_in_legacy_json_defaults_now(self, store_path: Path) -> None:
+        """A pre-0.9 cron.json without ``wakeMode`` keys should
+        load every job as ``wake_mode="now"`` so existing chips
+        upgrade transparently."""
+        legacy = {
+            "version": 1,
+            "jobs": [
+                {
+                    "id": "old1",
+                    "name": "legacy",
+                    "enabled": True,
+                    "schedule": {"kind": "every", "everyMs": 1000},
+                    "payload": {"kind": "agent_turn", "message": "hi", "deliver": False},
+                    "state": {"nextRunAtMs": None},
+                    "createdAtMs": 0,
+                    "updatedAtMs": 0,
+                    "deleteAfterRun": False,
+                    # Note: no "wakeMode" key.
+                }
+            ],
+        }
+        store_path.write_text(json.dumps(legacy), encoding="utf-8")
+        svc = CronService(store_path=store_path)
+        store = svc._load_store()
+        assert store.jobs[0].wake_mode == "now"
+
+
+class TestFlushDeferred:
+    @pytest.mark.asyncio
+    async def test_flush_empty_returns_zero(self, service: CronService) -> None:
+        assert await service.flush_deferred() == 0
+
+    @pytest.mark.asyncio
+    async def test_due_now_job_fires_immediately(self, store_path: Path) -> None:
+        """``wake_mode="now"`` is unchanged behaviour — fired
+        from ``_on_timer``, never queued."""
+        fired: list[str] = []
+
+        async def on_job(job: CronJob) -> str | None:
+            fired.append(job.id)
+            return None
+
+        svc = CronService(store_path=store_path, on_job=on_job)
+        # Insert a job already past-due so _on_timer picks it up.
+        store = svc._load_store()
+        now = _now_ms()
+        store.jobs.append(
+            CronJob(
+                id="j1",
+                name="now-job",
+                schedule=CronSchedule(kind="every", every_ms=1000),
+                state=CronJobState(next_run_at_ms=now - 100),
+                wake_mode="now",
+            )
+        )
+        await svc._on_timer()
+        assert fired == ["j1"]
+        assert svc._deferred == []
+
+    @pytest.mark.asyncio
+    async def test_due_next_heartbeat_job_is_deferred_not_fired(self, store_path: Path) -> None:
+        """``wake_mode="next-heartbeat"`` queues the job onto the
+        deferred list; ``on_job`` doesn't fire from ``_on_timer``."""
+        fired: list[str] = []
+
+        async def on_job(job: CronJob) -> str | None:
+            fired.append(job.id)
+            return None
+
+        svc = CronService(store_path=store_path, on_job=on_job)
+        store = svc._load_store()
+        now = _now_ms()
+        store.jobs.append(
+            CronJob(
+                id="j2",
+                name="batched-job",
+                schedule=CronSchedule(kind="every", every_ms=1000),
+                state=CronJobState(next_run_at_ms=now - 100),
+                wake_mode="next-heartbeat",
+            )
+        )
+        await svc._on_timer()
+        assert fired == []
+        assert len(svc._deferred) == 1
+        assert svc._deferred[0].id == "j2"
+
+    @pytest.mark.asyncio
+    async def test_flush_deferred_fires_queued_jobs(self, store_path: Path) -> None:
+        fired: list[str] = []
+
+        async def on_job(job: CronJob) -> str | None:
+            fired.append(job.id)
+            return None
+
+        svc = CronService(store_path=store_path, on_job=on_job)
+        store = svc._load_store()
+        now = _now_ms()
+        for jid in ("a", "b", "c"):
+            store.jobs.append(
+                CronJob(
+                    id=jid,
+                    name=jid,
+                    schedule=CronSchedule(kind="every", every_ms=1000),
+                    state=CronJobState(next_run_at_ms=now - 100),
+                    wake_mode="next-heartbeat",
+                )
+            )
+        await svc._on_timer()
+        assert fired == []
+        assert len(svc._deferred) == 3
+
+        count = await svc.flush_deferred()
+        assert count == 3
+        assert fired == ["a", "b", "c"]
+        assert svc._deferred == []
+
+    @pytest.mark.asyncio
+    async def test_deferred_advances_schedule(self, store_path: Path) -> None:
+        """A deferred job's ``next_run_at_ms`` must advance even
+        though the callback didn't fire — otherwise ``_on_timer``
+        would re-queue it on every tick."""
+        svc = CronService(store_path=store_path, on_job=None)
+        store = svc._load_store()
+        now = _now_ms()
+        original_next = now - 100
+        store.jobs.append(
+            CronJob(
+                id="reschedule",
+                name="reschedule",
+                schedule=CronSchedule(kind="every", every_ms=10_000),
+                state=CronJobState(next_run_at_ms=original_next),
+                wake_mode="next-heartbeat",
+            )
+        )
+        await svc._on_timer()
+        new_next = svc._store.jobs[0].state.next_run_at_ms  # type: ignore[union-attr]
+        assert new_next is not None
+        assert new_next > original_next
+
+    @pytest.mark.asyncio
+    async def test_flush_deferred_clears_before_callback(self, store_path: Path) -> None:
+        """If ``on_job`` re-enters the service somehow, it must
+        not see the same deferred jobs again."""
+        seen_after_first_call: list[CronJob] = []
+
+        async def on_job(job: CronJob) -> str | None:
+            # Snapshot deferred queue from inside the callback.
+            seen_after_first_call.append(job)
+            return None
+
+        svc = CronService(store_path=store_path, on_job=on_job)
+        svc._deferred = [
+            CronJob(
+                id="x",
+                name="x",
+                schedule=CronSchedule(kind="every", every_ms=1000),
+                state=CronJobState(),
+                wake_mode="next-heartbeat",
+            )
+        ]
+        await svc.flush_deferred()
+        # Deferred list cleared synchronously before any callback ran.
+        assert svc._deferred == []
+        assert len(seen_after_first_call) == 1
+
+    @pytest.mark.asyncio
+    async def test_flush_deferred_at_one_shot_with_delete_after_run_drops_job(
+        self, store_path: Path
+    ) -> None:
+        """``at`` + ``delete_after_run`` jobs are removed from the
+        store at flush time so they don't linger as disabled
+        records forever."""
+
+        async def on_job(job: CronJob) -> str | None:
+            return None
+
+        svc = CronService(store_path=store_path, on_job=on_job)
+        store = svc._load_store()
+        now = _now_ms()
+        store.jobs.append(
+            CronJob(
+                id="oneshot",
+                name="oneshot",
+                schedule=CronSchedule(kind="at", at_ms=now - 100),
+                state=CronJobState(next_run_at_ms=now - 100),
+                wake_mode="next-heartbeat",
+                delete_after_run=True,
+            )
+        )
+        await svc._on_timer()
+        assert len(svc._deferred) == 1
+        await svc.flush_deferred()
+        # Job removed from store; ``at`` + ``delete_after_run`` is one-shot.
+        assert svc._store.jobs == []  # type: ignore[union-attr]
+
+
+class TestHeartbeatTick:
+    @pytest.mark.asyncio
+    async def test_heartbeat_loop_flushes_deferred(self, store_path: Path) -> None:
+        """The internal heartbeat loop, when configured, should
+        call ``flush_deferred`` on its own cadence."""
+        fired: list[str] = []
+
+        async def on_job(job: CronJob) -> str | None:
+            fired.append(job.id)
+            return None
+
+        # 50ms heartbeat — short enough for the test to observe.
+        svc = CronService(
+            store_path=store_path,
+            on_job=on_job,
+            heartbeat_interval_ms=50,
+        )
+        # Pre-populate deferred queue and start the service.
+        svc._deferred = [
+            CronJob(
+                id="hb1",
+                name="hb1",
+                schedule=CronSchedule(kind="every", every_ms=1000),
+                state=CronJobState(),
+                wake_mode="next-heartbeat",
+            )
+        ]
+        await svc.start()
+        try:
+            # Wait long enough for one heartbeat tick.
+            await asyncio.sleep(0.15)
+        finally:
+            svc.stop()
+            # Allow cancellation to settle.
+            await asyncio.sleep(0)
+        assert "hb1" in fired
+
+    @pytest.mark.asyncio
+    async def test_no_heartbeat_interval_means_no_internal_flushing(self, store_path: Path) -> None:
+        """Without ``heartbeat_interval_ms``, deferred jobs sit
+        forever until something else flushes — server use case."""
+        fired: list[str] = []
+
+        async def on_job(job: CronJob) -> str | None:
+            fired.append(job.id)
+            return None
+
+        svc = CronService(store_path=store_path, on_job=on_job)  # no heartbeat
+        svc._deferred = [
+            CronJob(
+                id="never",
+                name="never",
+                schedule=CronSchedule(kind="every", every_ms=1000),
+                state=CronJobState(),
+                wake_mode="next-heartbeat",
+            )
+        ]
+        await svc.start()
+        try:
+            await asyncio.sleep(0.1)
+        finally:
+            svc.stop()
+            await asyncio.sleep(0)
+        assert fired == []
+        assert len(svc._deferred) == 1
+
+
+class TestCronToolWakeMode:
+    @pytest.mark.asyncio
+    async def test_tool_passes_wake_mode_to_backend(
+        self, backend: LocalCronBackend, service: CronService
+    ) -> None:
+        tool = CronTool(backend=backend)
+        tool.set_context(channel="serial", chat_id="default")
+        result = await tool.execute(
+            action="add",
+            message="batched daily summary",
+            every_seconds=86400,
+            wake_mode="next-heartbeat",
+        )
+        assert "Created job" in result
+        jobs = service.list_jobs()
+        assert len(jobs) == 1
+        assert jobs[0].wake_mode == "next-heartbeat"
+
+    @pytest.mark.asyncio
+    async def test_tool_rejects_unknown_wake_mode(self, backend: LocalCronBackend) -> None:
+        tool = CronTool(backend=backend)
+        tool.set_context(channel="serial", chat_id="default")
+        result = await tool.execute(
+            action="add",
+            message="hi",
+            every_seconds=60,
+            wake_mode="urgent",  # not valid
+        )
+        assert result.startswith("Error")
+        assert "wake_mode" in result
+
+    @pytest.mark.asyncio
+    async def test_tool_default_is_now_for_backwards_compat(
+        self, backend: LocalCronBackend, service: CronService
+    ) -> None:
+        tool = CronTool(backend=backend)
+        tool.set_context(channel="serial", chat_id="default")
+        await tool.execute(
+            action="add",
+            message="urgent",
+            every_seconds=60,
+        )
+        jobs = service.list_jobs()
+        assert len(jobs) == 1
+        assert jobs[0].wake_mode == "now"
         assert len(await backend.list_jobs(include_disabled=True)) == 1

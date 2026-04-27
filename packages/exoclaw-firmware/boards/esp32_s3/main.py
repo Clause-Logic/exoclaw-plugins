@@ -30,14 +30,25 @@ async def _main() -> None:
     api_key = secrets.OPENAI_API_KEY
     base_url = getattr(secrets, "OPENAI_BASE_URL", "https://api.openai.com/v1")
     model = getattr(secrets, "OPENAI_MODEL", "gpt-4o-mini")
+    # Heartbeat ticker for ``wake_mode="next-heartbeat"`` cron
+    # jobs. Default 5 min — short enough that a "remind me about
+    # X later" still feels reactive, long enough to coalesce
+    # several background reminders into one wake event. Override
+    # via ``HEARTBEAT_INTERVAL_MS`` in ``secrets.py``; set to 0
+    # to disable coalescing (every cron fire wakes the chip).
+    hb_raw = getattr(secrets, "HEARTBEAT_INTERVAL_MS", 5 * 60 * 1000)
+    heartbeat_interval_ms = hb_raw if isinstance(hb_raw, int) and hb_raw > 0 else None
 
     print("main: workspace={} model={}".format(workspace, model))
+    if heartbeat_interval_ms:
+        print("main: heartbeat every {}ms".format(heartbeat_interval_ms))
     print("main: ready — type a message and press enter (Ctrl-C to exit)")
     await run_serial_app(
         workspace=workspace,
         api_key=api_key,
         base_url=base_url,
         model=model,
+        heartbeat_interval_ms=heartbeat_interval_ms,
     )
 
 

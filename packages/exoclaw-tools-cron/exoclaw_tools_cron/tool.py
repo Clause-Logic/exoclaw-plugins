@@ -116,6 +116,20 @@ class CronTool(ToolBase):
                     "type": "string",
                     "description": "Override the agent's default model for this job's turn (e.g. 'openrouter/google/gemma-4-26b-a4b-it'). Defaults to the agent's main model.",
                 },
+                "wake_mode": {
+                    "type": "string",
+                    "enum": ["now", "next-heartbeat"],
+                    "description": (
+                        "When the firing should wake the agent. 'now' (default) "
+                        "fires immediately at the scheduled time — use for time-critical "
+                        "things (alarms, incoming-message reactions, deadlines). "
+                        "'next-heartbeat' coalesces the firing into the next "
+                        "heartbeat tick — use for things that can ride along "
+                        "(daily summaries, periodic feed checks, 'remind me about X' "
+                        "notes the agent leaves for itself). Quiet by default, "
+                        "urgent when it has to be."
+                    ),
+                },
             },
             "required": ["action"],
         }
@@ -144,13 +158,14 @@ class CronTool(ToolBase):
         skills: list[str] | None = None,
         stateless: bool | None = None,
         model: str | None = None,
+        wake_mode: str | None = None,
         **kwargs: Any,
     ) -> str:
         if action == "add":
             if self._in_cron_context.get():
                 return "Error: cannot schedule new jobs from within a cron job execution"
             return await self._add_job(
-                message, every_seconds, cron_expr, tz, at, skills, stateless, model
+                message, every_seconds, cron_expr, tz, at, skills, stateless, model, wake_mode
             )
         elif action == "list":
             return await self._list_jobs()
@@ -158,7 +173,7 @@ class CronTool(ToolBase):
             return await self._remove_job(job_id)
         elif action == "update":
             return await self._update_job(
-                job_id, message or None, deliver, to, skills, stateless, model
+                job_id, message or None, deliver, to, skills, stateless, model, wake_mode
             )
         elif action == "enable":
             return await self._enable_job(job_id, enabled=True)
@@ -176,6 +191,7 @@ class CronTool(ToolBase):
         skills: list[str] | None = None,
         stateless: bool | None = None,
         model: str | None = None,
+        wake_mode: str | None = None,
     ) -> str:
         if not message:
             return "Error: message is required for add"
@@ -210,6 +226,17 @@ class CronTool(ToolBase):
         else:
             return "Error: either every_seconds, cron_expr, or at is required"
 
+        # Default to "now" if the model didn't pick a wake_mode or
+        # picked something unknown; reject unknown values explicitly
+        # so a typo surfaces as a tool error rather than silently
+        # falling through to the default.
+        if wake_mode is None:
+            wm: str = "now"
+        elif wake_mode in ("now", "next-heartbeat"):
+            wm = wake_mode
+        else:
+            return f"Error: unknown wake_mode '{wake_mode}' (expected 'now' or 'next-heartbeat')"
+
         job = await self._backend.add(
             name=message[:30],
             schedule=schedule,
@@ -221,6 +248,7 @@ class CronTool(ToolBase):
             skills=skills,
             stateless=stateless or False,
             model=model,
+            wake_mode=wm,  # type: ignore[arg-type]
         )
         return f"Created job '{job.name}' (id: {job.id})"
 
@@ -240,9 +268,17 @@ class CronTool(ToolBase):
         skills: list[str] | None,
         stateless: bool | None = None,
         model: str | None = None,
+        wake_mode: str | None = None,
     ) -> str:
         if not job_id:
             return "Error: job_id is required for update"
+        wm: str | None = None
+        if wake_mode is not None:
+            if wake_mode not in ("now", "next-heartbeat"):
+                return (
+                    f"Error: unknown wake_mode '{wake_mode}' (expected 'now' or 'next-heartbeat')"
+                )
+            wm = wake_mode
         job = await self._backend.update(
             job_id,
             message=message,
@@ -251,6 +287,7 @@ class CronTool(ToolBase):
             skills=skills,
             stateless=stateless,
             model=model,
+            wake_mode=wm,  # type: ignore[arg-type]
         )
         if job:
             return f"Updated job {job_id}"

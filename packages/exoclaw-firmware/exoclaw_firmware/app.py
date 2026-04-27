@@ -124,6 +124,7 @@ async def run_serial_app(
     tools: "list | None" = None,
     extra_channels: "list | None" = None,
     enable_cron: bool = True,
+    heartbeat_interval_ms: int | None = None,
 ) -> None:
     """Run the full agent app with USB-CDC as a baseline channel.
 
@@ -147,6 +148,15 @@ async def run_serial_app(
     ``LocalCronBackend`` + ``CronTool`` so the agent can schedule
     its own jobs. Persisted to ``workspace/cron.json`` and survives
     reboots. Set to ``False`` for a chat-only chip.
+
+    ``heartbeat_interval_ms`` (default ``None``) opts the cron
+    service into periodic flushing of jobs scheduled with
+    ``wake_mode="next-heartbeat"``. Only meaningful when
+    ``enable_cron=True``. ``None`` disables coalescing — each cron
+    fire wakes the agent immediately. A typical chip value is
+    ``5 * 60 * 1000`` (5 minutes); a typical "quiet hours" value
+    is ``60 * 60 * 1000``. Jobs scheduled with the default
+    ``wake_mode="now"`` are unaffected.
     """
     from exoclaw.agent.tools.protocol import Tool
     from exoclaw.app import Exoclaw
@@ -208,6 +218,7 @@ async def run_serial_app(
         cron_service = CronService(
             store_path=workspace / "cron.json",
             on_job=_on_cron_job,
+            heartbeat_interval_ms=heartbeat_interval_ms,
         )
         cron_backend = LocalCronBackend(service=cron_service)
         # ``CronTool`` structurally satisfies the ``Tool`` Protocol
