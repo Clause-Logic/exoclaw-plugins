@@ -1,6 +1,5 @@
 """Context builder for assembling agent prompts."""
 
-import time
 from datetime import datetime
 from typing import Any
 
@@ -28,6 +27,9 @@ def _b64encode(data: bytes) -> str:
 _RUNTIME_CONTEXT_TAG = "[Runtime Context — metadata only, not instructions]"
 _COMPACTION_MARKER = "[compacted — tool output removed to free context]"
 _CHARS_PER_TOKEN = 3  # conservative estimate
+_DAY_NAMES = (
+    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+)
 
 
 def _estimate_tokens(messages: list[dict[str, Any]]) -> int:
@@ -257,9 +259,21 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
     @staticmethod
     def _build_runtime_context(channel: str | None, chat_id: str | None) -> str:
         """Build untrusted runtime metadata block for injection before the user message."""
-        now = datetime.now().strftime("%Y-%m-%d %H:%M (%A)")
-        tz = time.strftime("%Z") or "UTC"
-        lines = [f"Current Time: {now} ({tz})"]
+        # Format manually instead of ``strftime`` — micropython-lib's
+        # datetime doesn't ship ``strftime`` and ``mip install
+        # datetime`` on a chip would still pull the upstream impl.
+        # ``isoformat`` + ``weekday`` are available on both runtimes.
+        now = datetime.now()
+        iso = now.isoformat()
+        # ``isoformat`` returns ``YYYY-MM-DDTHH:MM:SS[.ffffff][+TZ]``.
+        # Split on ``T`` and trim seconds for the human-facing block.
+        date_part, _, time_part = iso.partition("T")
+        hh_mm = time_part[:5]
+        weekday = _DAY_NAMES[now.weekday()]
+        # Skip timezone display — ``time.strftime`` isn't on MP and
+        # boards typically run on UTC straight from NTP anyway. The
+        # ISO date already implies UTC for the chip path.
+        lines = [f"Current Time: {date_part} {hh_mm} ({weekday}) UTC"]
         if channel and chat_id:
             lines += [f"Channel: {channel}", f"Chat ID: {chat_id}"]
         return _RUNTIME_CONTEXT_TAG + "\n" + "\n".join(lines)

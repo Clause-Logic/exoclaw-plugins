@@ -283,7 +283,7 @@ class SessionManager:
             total_messages = 0
             tail_lines: list[str] = []
 
-            with open(path) as f:
+            with open(str(path)) as f:
                 for line in f:
                     line = line.strip()
                     if not line:
@@ -361,7 +361,7 @@ class SessionManager:
 
         messages: list[dict[str, Any]] = []
         idx = 0
-        with open(path) as f:
+        with open(str(path)) as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -405,7 +405,7 @@ class SessionManager:
         else:
             messages = list(session.messages)
 
-        with open(path, "w") as f:
+        with open(str(path), "w") as f:
             metadata_line = {
                 "_type": "metadata",
                 "key": session.key,
@@ -429,7 +429,7 @@ class SessionManager:
 
         if not path.exists():
             # New file — write metadata header first
-            with open(path, "w") as f:
+            with open(str(path), "w") as f:
                 meta = {
                     "_type": "metadata",
                     "key": session.key,
@@ -443,7 +443,7 @@ class SessionManager:
                     f.write(json.dumps(msg) + "\n")
         else:
             # Append only — no rewrite
-            with open(path, "a") as f:
+            with open(str(path), "a") as f:
                 for msg in new_messages:
                     f.write(json.dumps(msg) + "\n")
 
@@ -466,7 +466,7 @@ class SessionManager:
             "last_consolidated": session.last_consolidated,
         }
 
-        with open(path) as f:
+        with open(str(path)) as f:
             lines = f.readlines()
 
         meta_str = json.dumps(metadata_line) + "\n"
@@ -475,7 +475,7 @@ class SessionManager:
         else:
             lines.insert(0, meta_str)
 
-        with open(path, "w") as f:
+        with open(str(path), "w") as f:
             f.writelines(lines)
 
     def invalidate(self, key: str) -> None:
@@ -493,7 +493,7 @@ class SessionManager:
 
         for path in self.sessions_dir.glob("*.jsonl"):
             try:
-                with open(path) as f:
+                with open(str(path)) as f:
                     first_line = f.readline().strip()
                     if first_line:
                         data = json.loads(first_line)

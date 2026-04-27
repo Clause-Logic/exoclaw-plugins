@@ -24,10 +24,16 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import time
 from typing import TYPE_CHECKING, Any
 
-from exoclaw._compat import IS_MICROPYTHON, get_log_contextvars, get_logger
+from exoclaw._compat import (
+    IS_MICROPYTHON,
+    aiter_compat,
+    get_log_contextvars,
+    get_logger,
+    monotonic_diff_ms,
+    monotonic_ms,
+)
 
 if not IS_MICROPYTHON:
     # ``json_repair`` is a CPython-only dep — handles malformed
@@ -288,7 +294,9 @@ class OpenAIStreamingProvider:
         if self._llm_logging:
             self._log_request(model, messages, tools)
 
-        t0 = time.monotonic()
+        # ``monotonic_ms`` is the cross-runtime monotonic clock —
+        # ``time.monotonic()`` doesn't ship on MicroPython.
+        t0 = monotonic_ms()
         try:
             async with self._client.stream_post(
                 url,
@@ -324,7 +332,7 @@ class OpenAIStreamingProvider:
         # earlier in this function and re-raised as ``_RetryableError``
         # before ever reaching ``raise_for_status``.
 
-        elapsed = time.monotonic() - t0
+        elapsed = monotonic_diff_ms(monotonic_ms(), t0) / 1000.0
         if self._llm_logging:
             self._log_response(model, response, elapsed)
         return response
@@ -399,10 +407,10 @@ class OpenAIStreamingProvider:
         # Re-enter the normal loop with the first line pre-fetched.
         async def _lines_with_first() -> AsyncIterator[str]:
             yield first_line
-            async for rest in line_iter:
+            async for rest in aiter_compat(line_iter):
                 yield rest
 
-        async for line in _lines_with_first():
+        async for line in aiter_compat(_lines_with_first()):
             if not line:
                 continue
             # SSE lines are "data: <json>" (plus occasional "event:" / comments).
@@ -675,7 +683,10 @@ async def _stream_body(
     for i, msg in enumerate(messages):
         if i > 0:
             yield b","
-        async for chunk in _emit_message(msg):
+        # ``_emit_message`` is ``async def`` + ``yield`` which on
+        # CPython produces an async generator and on MicroPython
+        # 1.27 a plain generator. ``aiter_compat`` adapts either.
+        async for chunk in aiter_compat(_emit_message(msg)):
             yield chunk
 
     yield b"]}"

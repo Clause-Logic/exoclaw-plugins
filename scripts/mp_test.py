@@ -85,10 +85,15 @@ def _stage(packages: list[str]) -> Path:
 
     def _ignore_cpython_only(_dir: str, names: list[str]) -> list[str]:
         # Strip CPython-only impls (``_cpython.py`` siblings) and
-        # ``__pycache__`` directories at copy time. The MP runner
-        # never imports ``_cpython.py`` — it's only there to
-        # confuse the coverage gate.
-        return [n for n in names if n == "__pycache__" or n == "_cpython.py"]
+        # ``__pycache__`` directories at copy time. ``_mp_lib/``
+        # holds runtime fillers that get flattened to the stage
+        # root below — exclude the in-package copy so plain
+        # ``import typing`` resolves there.
+        return [
+            n
+            for n in names
+            if n in ("__pycache__", "_cpython.py", "_mp_lib")
+        ]
 
     # Core source → ``.mp-stage/exoclaw``.
     shutil.copytree(
@@ -97,7 +102,13 @@ def _stage(packages: list[str]) -> Path:
         ignore=_ignore_cpython_only,
     )
 
-    # MP stubs (typing, dataclasses, datetime, __future__) at stage root.
+    # MP-runtime fillers at stage root — flat so plain ``import
+    # typing`` / ``import dataclasses`` / etc. resolve. Two sources:
+    # ``exoclaw/_mp_lib/`` (production fillers core owns — typing,
+    # dataclasses) and ``tests/_micropython_stubs/`` (test-only —
+    # datetime, __future__).
+    for fill in (core / "exoclaw" / "_mp_lib").glob("*.py"):
+        shutil.copy(fill, STAGE_DIR / fill.name)
     stubs = core / "tests" / "_micropython_stubs"
     for stub in stubs.glob("*.py"):
         shutil.copy(stub, STAGE_DIR / stub.name)
