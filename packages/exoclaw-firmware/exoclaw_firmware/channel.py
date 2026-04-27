@@ -40,10 +40,12 @@ class SerialChannel:
     """USB-CDC channel implementing the exoclaw ``Channel`` protocol.
 
     The reader task polls ``sys.stdin`` for available data via
-    ``select.select`` (works on the unix port, ESP32-S3 USB-CDC,
-    and any MP target with stdin file-descriptor support) and
-    publishes each line as an ``InboundMessage``. The send method
-    writes outbound messages to ``sys.stdout``.
+    ``select.poll`` (the cross-runtime API — CPython has both
+    ``select`` and ``poll``, MicroPython only ships ``poll``).
+    Works on the unix port, ESP32-S3 USB-CDC, and any MP target
+    with stdin file-descriptor support. Each line becomes an
+    ``InboundMessage``; ``send()`` writes outbound messages to
+    ``sys.stdout``.
 
     No prompt-toolkit, no rich, no termios — just stdin/stdout
     so the chip's ~64-256 KiB heap doesn't blow up on imports.
@@ -94,7 +96,16 @@ class SerialChannel:
 
     async def send(self, msg: OutboundMessage) -> None:
         """Write an outbound message to stdout. Called by the
-        channel manager when the agent loop produces a reply."""
+        channel manager when the agent loop produces a reply.
+
+        Filters ``metadata['_progress']`` messages — those are
+        in-flight tool-call status updates the agent emits during
+        a turn. Without the filter the console gets spammy and
+        the prompt repeats during streaming. Same convention
+        ``exoclaw-channel-cli`` and ``exoclaw-channel-pipe`` use.
+        """
+        if msg.metadata and msg.metadata.get("_progress"):
+            return
         content = msg.content or "(no content)"
         sys.stdout.write(self._reply_prefix + content + "\n")
         sys.stdout.write(self._prompt)
@@ -118,6 +129,10 @@ class SerialChannel:
             poller = select.poll()
             poller.register(sys.stdin, select.POLLIN)
         except (OSError, ValueError, AttributeError):
+            # Flip ``_running`` so the channel manager / app sees an
+            # accurate "not listening" state rather than a phantom
+            # active channel that never publishes.
+            self._running = False
             logger.warning("serial_stdin_unselectable")
             return
 

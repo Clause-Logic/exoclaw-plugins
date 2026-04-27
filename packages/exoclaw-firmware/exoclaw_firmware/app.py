@@ -122,12 +122,13 @@ async def run_serial_app(
     prompt: str = "you> ",
     reply_prefix: str = "bot> ",
     tools: "list | None" = None,
+    extra_channels: "list | None" = None,
 ) -> None:
-    """Run the full agent app with USB-CDC as the only channel.
+    """Run the full agent app with USB-CDC as a baseline channel.
 
     Builds the standard exoclaw stack (provider, conversation,
-    bus, agent loop, channel manager) and wires :class:`SerialChannel`
-    in as the one and only channel. Cron firings, heartbeat ticks,
+    bus, agent loop, channel manager) with :class:`SerialChannel`
+    always wired in as a baseline. Cron firings, heartbeat ticks,
     and the ``message`` tool all flow through the same bus and reach
     you over USB-CDC.
 
@@ -135,9 +136,11 @@ async def run_serial_app(
     terminal) or the chip resets. Each turn is persisted to the
     session JSONL so consolidation / memory still happen.
 
-    ``tools`` lets the caller bolt agent-callable tools (cron,
-    message, web search, …) onto the loop. Default is no tools —
-    a chat-only chip.
+    ``tools`` bolts agent-callable tools (cron, message, web
+    search, …) onto the loop. ``extra_channels`` adds non-serial
+    channels (Telegram long-poll, MQTT, etc.) alongside
+    ``SerialChannel`` so a user can talk to the chip from the
+    cloud OR from a USB cable using the same agent state.
     """
     from exoclaw.app import Exoclaw
 
@@ -149,11 +152,20 @@ async def run_serial_app(
         base_url=base_url,
         model=model,
     )
+    from exoclaw.channels.protocol import Channel
+
     serial = SerialChannel(chat_id=chat_id, prompt=prompt, reply_prefix=reply_prefix)
+    # Avoid ``[serial, *extra]`` — MicroPython 1.27 doesn't support
+    # PEP 448 list-unpacking inside list literals. Annotate the list
+    # as ``list[Channel]`` so ty doesn't narrow to
+    # ``list[SerialChannel]`` and reject the extend.
+    channels: list[Channel] = [serial]
+    if extra_channels:
+        channels.extend(extra_channels)
     app = Exoclaw(
         provider=provider,
         conversation=conversation,
-        channels=[serial],
+        channels=channels,
         tools=tools or [],
         model=model,
     )
