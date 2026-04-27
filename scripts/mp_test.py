@@ -89,11 +89,7 @@ def _stage(packages: list[str]) -> Path:
         # holds runtime fillers that get flattened to the stage
         # root below — exclude the in-package copy so plain
         # ``import typing`` resolves there.
-        return [
-            n
-            for n in names
-            if n in ("__pycache__", "_cpython.py", "_mp_lib")
-        ]
+        return [n for n in names if n in ("__pycache__", "_cpython.py", "_mp_lib")]
 
     # Core source → ``.mp-stage/exoclaw``.
     shutil.copytree(
@@ -122,8 +118,7 @@ def _stage(packages: list[str]) -> Path:
         src = pkg_dir / module_name
         if not src.is_dir():
             sys.exit(
-                f"package {pkg_name} marked mp_compat but has no "
-                f"{module_name}/ source directory"
+                f"package {pkg_name} marked mp_compat but has no {module_name}/ source directory"
             )
         shutil.copytree(
             src,
@@ -215,10 +210,7 @@ def _cmd_stage(pkg_name: str | None = None) -> int:
     names = [n for n, _ in pkgs]
     if pkg_name is not None:
         if pkg_name not in names:
-            sys.exit(
-                f"{pkg_name} is not marked mp_compat in pyproject.toml; "
-                f"available: {names}"
-            )
+            sys.exit(f"{pkg_name} is not marked mp_compat in pyproject.toml; available: {names}")
         names = [pkg_name]
     _stage(names)
     print(f"[stage] {STAGE_DIR.relative_to(WORKSPACE)}: core + {names}")
@@ -230,8 +222,7 @@ def _cmd_test(pkg_name: str) -> int:
     by_name = {n: meta for n, meta in pkgs}
     if pkg_name not in by_name:
         sys.exit(
-            f"{pkg_name} is not marked mp_compat in pyproject.toml; "
-            f"available: {sorted(by_name)}"
+            f"{pkg_name} is not marked mp_compat in pyproject.toml; available: {sorted(by_name)}"
         )
     # Stage every MP-compat package, not just the one under test —
     # plugins import each other (firmware → conversation +

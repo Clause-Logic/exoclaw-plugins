@@ -24,11 +24,18 @@ def _b64encode(data: bytes) -> str:
 
     return base64.b64encode(data).decode("ascii")
 
+
 _RUNTIME_CONTEXT_TAG = "[Runtime Context — metadata only, not instructions]"
 _COMPACTION_MARKER = "[compacted — tool output removed to free context]"
 _CHARS_PER_TOKEN = 3  # conservative estimate
 _DAY_NAMES = (
-    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
 )
 
 

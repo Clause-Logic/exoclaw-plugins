@@ -60,9 +60,7 @@ class DefaultConversation:
 
         self._consolidating: set[str] = set()
         self._consolidation_tasks: set[asyncio.Task[Any]] = set()
-        self._consolidation_locks: WeakValueDictionary[str, asyncio.Lock] = (
-            WeakValueDictionary()
-        )
+        self._consolidation_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
         # Turn context set by build_prompt(), read by record() for hook firing.
         self._turn_channel: str | None = None
         self._turn_chat_id: str | None = None
