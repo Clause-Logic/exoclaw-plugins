@@ -830,7 +830,7 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-provider-openai"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "packages/exoclaw-provider-openai" }
 dependencies = [
     { name = "exoclaw", extra = ["http"] },
@@ -840,7 +840,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", extras = ["http"], specifier = ">=0.26.0" },
+    { name = "exoclaw", extras = ["http"], specifier = ">=0.26.1" },
     { name = "json-repair", specifier = ">=0.1.0" },
     { name = "structlog", specifier = ">=25.0.0" },
 ]

@@ -13,7 +13,7 @@ dependencies = [
     # Extra plugins can be staged on top of the firmware tree
     # before flashing.
     "exoclaw-conversation>=0.19.0",
-    "exoclaw-provider-openai>=0.3.0",
+    "exoclaw-provider-openai>=0.4.0",
     "exoclaw-tools-cron>=0.8.0",
 ]
 
