@@ -3,18 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-import weakref
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import structlog
-import structlog.contextvars
+from exoclaw._compat import Path, WeakValueDictionary, bind_log_contextvars, get_logger
 from exoclaw.utils import create_isolated_task
 
 from .protocols import ConsolidationPolicy, HistoryStore, MemoryBackend, PromptBuilder
 from .session.manager import Session
 
-logger = structlog.get_logger()
+logger = get_logger()
 
 if TYPE_CHECKING:
     from exoclaw.bus.protocol import Bus
@@ -63,8 +60,8 @@ class DefaultConversation:
 
         self._consolidating: set[str] = set()
         self._consolidation_tasks: set[asyncio.Task[Any]] = set()
-        self._consolidation_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
-            weakref.WeakValueDictionary()
+        self._consolidation_locks: WeakValueDictionary[str, asyncio.Lock] = (
+            WeakValueDictionary()
         )
         # Turn context set by build_prompt(), read by record() for hook firing.
         self._turn_channel: str | None = None
@@ -131,7 +128,7 @@ class DefaultConversation:
         session = self.history.get_or_create(session_id)
 
         unconsolidated = session.total_messages - session.last_consolidated
-        structlog.contextvars.bind_contextvars(
+        bind_log_contextvars(
             **{
                 "session.total_messages": session.total_messages,
                 "session.last_consolidated": session.last_consolidated,
@@ -220,7 +217,7 @@ class DefaultConversation:
             always_skills = skills_loader.get_always_skills()
             extra_skills = [s for s in (skills or []) if s not in always_skills]
             active_skills = always_skills + extra_skills
-            structlog.contextvars.bind_contextvars(
+            bind_log_contextvars(
                 **{
                     "skill.always": ",".join(always_skills),
                     "skill.active": ",".join(active_skills),

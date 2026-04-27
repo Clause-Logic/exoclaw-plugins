@@ -5,10 +5,9 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
-from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
+
+from exoclaw._compat import IS_MICROPYTHON, Path, is_executable, which
 
 # Default builtin skills directory — none bundled in this package
 BUILTIN_SKILLS_DIR: Path | None = None
@@ -38,36 +37,72 @@ LOAD_SKILL_TOOL_DEF: dict[str, Any] = {
 }
 
 
-@dataclass
-class LoadSkillResult:
-    """Result of activating a skill via :meth:`SkillsLoader.activate_skill`."""
+if not IS_MICROPYTHON:  # pragma: no cover (micropython)
+    from dataclasses import dataclass, field
 
-    content: str
-    tool_names: list[str] = field(default_factory=list)
+    @dataclass
+    class LoadSkillResult:
+        """Result of activating a skill via :meth:`SkillsLoader.activate_skill`."""
 
+        content: str
+        tool_names: list[str] = field(default_factory=list)
 
-@dataclass
-class AgentHook:
-    """An agent hook defined by a markdown file in a skill's hooks directory.
+    @dataclass
+    class AgentHook:
+        """An agent hook defined by a markdown file in a skill's hooks directory.
 
-    Agent hooks are ``.md`` files at ``skills/{name}/hooks/exoclaw/{hook_name}.md``.
-    The markdown content is the prompt for a fire-and-forget agent turn that
-    reacts to the lifecycle event.  Frontmatter controls which tools/skills
-    the hook turn has access to.
+        Agent hooks are ``.md`` files at ``skills/{name}/hooks/exoclaw/{hook_name}.md``.
+        The markdown content is the prompt for a fire-and-forget agent turn that
+        reacts to the lifecycle event.  Frontmatter controls which tools/skills
+        the hook turn has access to.
 
-    Attributes:
-        skill_name: The skill that owns this hook.
-        hook_name: The lifecycle event (e.g. ``agent_end``).
-        prompt: The markdown body (frontmatter stripped) — used as the agent prompt.
-        tools: Tool names from frontmatter ``tools:`` field, or empty to inherit.
-        skills: Skill names from frontmatter ``skills:`` field, or empty to inherit.
-    """
+        Attributes:
+            skill_name: The skill that owns this hook.
+            hook_name: The lifecycle event (e.g. ``agent_end``).
+            prompt: The markdown body (frontmatter stripped) — used as the agent prompt.
+            tools: Tool names from frontmatter ``tools:`` field, or empty to inherit.
+            skills: Skill names from frontmatter ``skills:`` field, or empty to inherit.
+        """
 
-    skill_name: str
-    hook_name: str
-    prompt: str
-    tools: list[str] = field(default_factory=list)
-    skills: list[str] = field(default_factory=list)
+        skill_name: str
+        hook_name: str
+        prompt: str
+        tools: list[str] = field(default_factory=list)
+        skills: list[str] = field(default_factory=list)
+
+else:  # pragma: no cover (cpython)
+
+    class LoadSkillResult:
+        """MicroPython fallback — plain class with hand-written
+        ``__init__``. Same shape as the CPython ``@dataclass`` branch
+        above."""
+
+        def __init__(
+            self,
+            content: str,
+            tool_names: list[str] | None = None,
+        ) -> None:
+            self.content = content
+            self.tool_names = tool_names if tool_names is not None else []
+
+    class AgentHook:
+        """MicroPython fallback — plain class with hand-written
+        ``__init__``. Same shape as the CPython ``@dataclass`` branch
+        above."""
+
+        def __init__(
+            self,
+            skill_name: str,
+            hook_name: str,
+            prompt: str,
+            tools: list[str] | None = None,
+            skills: list[str] | None = None,
+        ) -> None:
+            self.skill_name = skill_name
+            self.hook_name = hook_name
+            self.prompt = prompt
+            self.tools = tools if tools is not None else []
+            self.skills = skills if skills is not None else []
 
 
 class SkillsLoader:
@@ -309,7 +344,7 @@ class SkillsLoader:
         missing = []
         requires = skill_meta.get("requires", {})
         for b in requires.get("bins", []):
-            if not shutil.which(b):
+            if not which(b):
                 missing.append(f"CLI: {b}")
         for env in requires.get("env", []):
             if not os.environ.get(env):
@@ -346,7 +381,7 @@ class SkillsLoader:
         """Check if skill requirements are met (bins, env vars)."""
         requires = skill_meta.get("requires", {})
         for b in requires.get("bins", []):
-            if not shutil.which(b):
+            if not which(b):
                 return False
         for env in requires.get("env", []):
             if not os.environ.get(env):
@@ -389,7 +424,7 @@ class SkillsLoader:
                 skill_dir / "hooks" / "exoclaw" / hook_name,
                 skill_dir / "hooks" / "nanobot" / hook_name,
             ):
-                if hook_file.exists() and os.access(hook_file, os.X_OK):
+                if hook_file.exists() and is_executable(hook_file):
                     results.append(hook_file)
                     break
         return results

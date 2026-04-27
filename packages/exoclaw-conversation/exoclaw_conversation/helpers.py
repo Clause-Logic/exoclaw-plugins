@@ -1,7 +1,8 @@
 """Utility helpers for exoclaw-conversation."""
 
 import re
-from pathlib import Path
+
+from exoclaw._compat import Path
 
 
 def ensure_dir(path: Path) -> Path:

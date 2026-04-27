@@ -1,12 +1,11 @@
 """Context builder for assembling agent prompts."""
 
 import base64
-import mimetypes
-import platform
 import time
 from datetime import datetime
-from pathlib import Path
 from typing import Any
+
+from exoclaw._compat import Path, guess_image_mime, platform_summary
 
 from .helpers import detect_image_mime
 from .memory import MemoryStore
@@ -213,8 +212,7 @@ Skills with available="false" need dependencies installed first.
     def _get_identity(self) -> str:
         """Get the core identity section."""
         workspace_path = str(self.workspace.expanduser().resolve())
-        system = platform.system()
-        runtime = f"{'macOS' if system == 'Darwin' else system} {platform.machine()}, Python {platform.python_version()}"
+        runtime = platform_summary()
 
         return f"""# exoclaw
 
@@ -336,7 +334,7 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
             if not p.is_file():
                 continue
             raw = p.read_bytes()
-            mime = detect_image_mime(raw) or mimetypes.guess_type(path)[0]
+            mime = detect_image_mime(raw) or guess_image_mime(path)
             if not mime or not mime.startswith("image/"):
                 continue
             b64 = base64.b64encode(raw).decode()
