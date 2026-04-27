@@ -112,60 +112,64 @@ async def run_demo(
         await provider.close()
 
 
-async def run_serial_chat(
+async def run_serial_app(
     *,
     workspace: Path,
     api_key: str,
     base_url: str = "https://api.openai.com/v1",
     model: str = "gpt-4o-mini",
-    session_id: str = "firmware:serial",
-    prompt_prefix: str = "you> ",
+    chat_id: str = "serial:default",
+    prompt: str = "you> ",
     reply_prefix: str = "bot> ",
+    tools: "list | None" = None,
+    extra_channels: "list | None" = None,
 ) -> None:
-    """Interactive chat loop over USB serial.
+    """Run the full agent app with USB-CDC as a baseline channel.
 
-    The chip's USB-CDC port maps directly to ``input()`` / ``print()``
-    in MicroPython, so plugging the board into a host and opening a
-    serial terminal (``mpremote repl``, ``screen``, ``minicom``) is
-    enough to talk to the agent. No network channel, no API
-    plumbing — just stdin/stdout.
+    Builds the standard exoclaw stack (provider, conversation,
+    bus, agent loop, channel manager) with :class:`SerialChannel`
+    always wired in as a baseline. Cron firings, heartbeat ticks,
+    and the ``message`` tool all flow through the same bus and reach
+    you over USB-CDC.
 
-    Loop until the user sends EOF (Ctrl-D in most terminals) or
-    interrupts (Ctrl-C). Each turn is persisted to the session
-    JSONL so consolidation / memory still happen.
+    Loop runs until ``KeyboardInterrupt`` (Ctrl-C in the host
+    terminal) or the chip resets. Each turn is persisted to the
+    session JSONL so consolidation / memory still happen.
+
+    ``tools`` bolts agent-callable tools (cron, message, web
+    search, …) onto the loop. ``extra_channels`` adds non-serial
+    channels (Telegram long-poll, MQTT, etc.) alongside
+    ``SerialChannel`` so a user can talk to the chip from the
+    cloud OR from a USB cable using the same agent state.
     """
+    from exoclaw.app import Exoclaw
+
+    from exoclaw_firmware.channel import SerialChannel
+
     provider, conversation = build_agent(
         workspace=workspace,
         api_key=api_key,
         base_url=base_url,
         model=model,
     )
+    from exoclaw.channels.protocol import Channel
+
+    serial = SerialChannel(chat_id=chat_id, prompt=prompt, reply_prefix=reply_prefix)
+    # Avoid ``[serial, *extra]`` — MicroPython 1.27 doesn't support
+    # PEP 448 list-unpacking inside list literals. Annotate the list
+    # as ``list[Channel]`` so ty doesn't narrow to
+    # ``list[SerialChannel]`` and reject the extend.
+    channels: list[Channel] = [serial]
+    if extra_channels:
+        channels.extend(extra_channels)
+    app = Exoclaw(
+        provider=provider,
+        conversation=conversation,
+        channels=channels,
+        tools=tools or [],
+        model=model,
+    )
     try:
-        while True:
-            try:
-                line = input(prompt_prefix)
-            except (EOFError, KeyboardInterrupt):
-                # Clean exit on Ctrl-D / Ctrl-C — the host
-                # terminal stays usable for ``mpremote repl``
-                # afterwards.
-                print()
-                break
-            line = line.strip()
-            if not line:
-                continue
-            messages = await conversation.build_prompt(
-                session_id=session_id,
-                message=line,
-            )
-            response = await provider.chat(messages=messages, model=model)
-            text = response.content or "(no content — model returned tool calls)"
-            print(reply_prefix + text)
-            await conversation.record(
-                session_id,
-                [
-                    {"role": "user", "content": line},
-                    {"role": "assistant", "content": response.content or ""},
-                ],
-            )
+        await app.run()
     finally:
         await provider.close()

@@ -13,15 +13,20 @@ Public entry points:
 - :func:`exoclaw_firmware.app.run_demo` — single-turn smoke test
   against a hardcoded prompt. Use right after first flash to
   prove the stack works.
-- :func:`exoclaw_firmware.app.run_serial_chat` — interactive chat
-  over USB-CDC serial. The minimum-viable channel: plug the board
-  into a host, open ``mpremote repl`` (or any serial terminal),
-  type messages. No network channel, no API tokens beyond OpenAI.
+- :func:`exoclaw_firmware.app.run_serial_app` — full agent app
+  with USB-CDC as the channel. Cron firings, heartbeat ticks, and
+  the ``message`` tool all reach you over the same stdin/stdout
+  the user types into. Drop tools and additional channels in via
+  the function's kwargs.
+- :class:`exoclaw_firmware.channel.SerialChannel` — the
+  ``Channel`` implementation. First-party, baked-in: every chip
+  has USB-CDC and needs *some* way for a human to talk to it.
 
 Higher-bandwidth channels (HTTP webhook, MQTT subscriber,
-WebSocket, BLE) are choose-your-own on top of ``build_agent``.
+WebSocket, BLE) are choose-your-own and live as separate plugins.
 """
 
-from exoclaw_firmware.app import build_agent, run_demo, run_serial_chat
+from exoclaw_firmware.app import build_agent, run_demo, run_serial_app
+from exoclaw_firmware.channel import SerialChannel
 
-__all__ = ["build_agent", "run_demo", "run_serial_chat"]
+__all__ = ["SerialChannel", "build_agent", "run_demo", "run_serial_app"]
