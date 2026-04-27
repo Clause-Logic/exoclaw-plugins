@@ -59,22 +59,38 @@ Files matching `_cpython.py` are stripped at stage time — they
 hold CPython-only implementations that the MP runtime never
 imports. Same trick the core MP coverage runner uses.
 
-## Beyond the demo
+## Channels
 
-`main.py` runs a single hardcoded prompt and exits. Real use needs
-a channel layer:
+The default channel after flash is **USB-CDC serial**. Plug the
+board into a host, open `mpremote repl` (or `screen
+/dev/cu.usbmodem* 115200`), hit reset, and you'll see:
 
-- **HTTP webhook** — `asyncio.start_server` listening on port 80
-  with a JSON `{message: ...}` POST handler that drives the agent.
-- **MQTT subscriber** — `umqtt.simple` for incoming messages,
-  publish replies on a paired topic.
-- **Polling queue** — periodic `exoclaw.http.HTTPClient.stream_post`
-  to a server-side queue endpoint that returns the next message.
-- **Serial REPL** — debug-only; reads `input()` and prints replies.
+```
+boot: WiFi up: ('192.168.…', …)
+boot: clock synced via NTP
+main: ready — type a message and press enter (Ctrl-C to exit)
+you>
+```
 
-Each of these is straightforward to layer on top of
-`exoclaw_firmware.app.build_agent`, which gives you a
-`(provider, conversation)` pair ready to drive turns.
+Type, press enter, get a response. No chat-platform tokens, no
+webhook URLs — just stdin/stdout over USB.
+
+For network-side channels, swap the `run_serial_chat` call in
+`main.py` for your own loop on top of `build_agent` (which returns
+a `(provider, conversation)` pair). Common patterns:
+
+- **HTTP long-poll** (Telegram-style) — easiest cloud channel; one
+  outbound request per poll cycle.
+- **MQTT subscriber** (`umqtt.simple`) — IoT-native, integrates
+  with Home Assistant / AWS IoT / HiveMQ.
+- **HTTP webhook server** (`asyncio.start_server`) — local-network
+  only unless you tunnel.
+- **WebSocket** — single long-lived connection, lower latency than
+  long-poll, needs a WS client.
+- **BLE GATT** — phone companion app pattern, range ~10m.
+
+Pick what fits the deployment. The serial loop stays useful as a
+debug channel even after you wire a cloud channel.
 
 ## mise tasks
 

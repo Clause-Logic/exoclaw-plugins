@@ -115,3 +115,62 @@ async def run_demo(
         return response.content
     finally:
         await provider.close()
+
+
+async def run_serial_chat(
+    *,
+    workspace: Path,
+    api_key: str,
+    base_url: str = "https://api.openai.com/v1",
+    model: str = "gpt-4o-mini",
+    session_id: str = "firmware:serial",
+    prompt_prefix: str = "you> ",
+    reply_prefix: str = "bot> ",
+) -> None:
+    """Interactive chat loop over USB serial.
+
+    The chip's USB-CDC port maps directly to ``input()`` / ``print()``
+    in MicroPython, so plugging the board into a host and opening a
+    serial terminal (``mpremote repl``, ``screen``, ``minicom``) is
+    enough to talk to the agent. No network channel, no API
+    plumbing — just stdin/stdout.
+
+    Loop until the user sends EOF (Ctrl-D in most terminals) or
+    interrupts (Ctrl-C). Each turn is persisted to the session
+    JSONL so consolidation / memory still happen.
+    """
+    provider, conversation = build_agent(
+        workspace=workspace,
+        api_key=api_key,
+        base_url=base_url,
+        model=model,
+    )
+    try:
+        while True:
+            try:
+                line = input(prompt_prefix)
+            except (EOFError, KeyboardInterrupt):
+                # Clean exit on Ctrl-D / Ctrl-C — the host
+                # terminal stays usable for ``mpremote repl``
+                # afterwards.
+                print()
+                break
+            line = line.strip()
+            if not line:
+                continue
+            messages = await conversation.build_prompt(
+                session_id=session_id,
+                message=line,
+            )
+            response = await provider.chat(messages=messages, model=model)
+            text = response.content or "(no content — model returned tool calls)"
+            print(reply_prefix + text)
+            await conversation.record(
+                session_id,
+                [
+                    {"role": "user", "content": line},
+                    {"role": "assistant", "content": response.content or ""},
+                ],
+            )
+    finally:
+        await provider.close()

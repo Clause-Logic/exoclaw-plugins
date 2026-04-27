@@ -6,17 +6,22 @@ set (``exoclaw-conversation``, ``exoclaw-provider-openai``), plus
 board-specific boot wrappers under ``boards/`` that handle WiFi /
 SD-card / clock setup.
 
-Public entry point: :func:`exoclaw_firmware.app.run_demo` — builds
-a minimal agent (OpenAI provider + file-backed conversation) and
-runs a single turn against a hardcoded prompt. Used to verify the
-whole stack works on hardware before wiring a real channel.
+Public entry points:
 
-The agent loop / channel layer is intentionally not in this v0 —
-choose-your-own-adventure: HTTP webhook, MQTT subscriber, polling
-queue, or serial REPL. Each runs on top of the provider +
-conversation pair this package builds.
+- :func:`exoclaw_firmware.app.build_agent` — returns
+  ``(provider, conversation)`` for callers wiring their own loop.
+- :func:`exoclaw_firmware.app.run_demo` — single-turn smoke test
+  against a hardcoded prompt. Use right after first flash to
+  prove the stack works.
+- :func:`exoclaw_firmware.app.run_serial_chat` — interactive chat
+  over USB-CDC serial. The minimum-viable channel: plug the board
+  into a host, open ``mpremote repl`` (or any serial terminal),
+  type messages. No network channel, no API tokens beyond OpenAI.
+
+Higher-bandwidth channels (HTTP webhook, MQTT subscriber,
+WebSocket, BLE) are choose-your-own on top of ``build_agent``.
 """
 
-from exoclaw_firmware.app import build_agent, run_demo
+from exoclaw_firmware.app import build_agent, run_demo, run_serial_chat
 
-__all__ = ["build_agent", "run_demo"]
+__all__ = ["build_agent", "run_demo", "run_serial_chat"]

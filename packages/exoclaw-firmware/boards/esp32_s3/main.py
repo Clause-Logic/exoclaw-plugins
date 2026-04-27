@@ -1,15 +1,20 @@
 """ESP32-S3 main entry point — runs after ``boot.py``.
 
-Loads the agent stack via ``exoclaw_firmware.app`` and drives one
-demo turn against OpenAI. Replace the demo call with a real
-channel loop (HTTP webhook, MQTT subscriber, polling queue) once
-the smoke test passes.
+Drives an interactive chat over USB-CDC serial. Plug the board
+into a host, open ``mpremote repl`` (or any serial terminal at
+115200 baud), type messages, get responses. The simplest possible
+channel — no chat-platform tokens, no webhook URLs.
+
+Swap the call to ``run_serial_chat`` for ``run_demo`` if you want
+the single-turn smoke test instead, or for your own channel loop
+once you build one (Telegram long-poll, MQTT subscriber, etc.) on
+top of ``build_agent``.
 """
 
 import asyncio
 
 from exoclaw._compat import Path
-from exoclaw_firmware import run_demo
+from exoclaw_firmware import run_serial_chat
 
 try:
     import secrets  # type: ignore[import-not-found]
@@ -27,14 +32,13 @@ async def _main() -> None:
     model = getattr(secrets, "OPENAI_MODEL", "gpt-4o-mini")
 
     print("main: workspace={} model={}".format(workspace, model))
-    response = await run_demo(
+    print("main: ready — type a message and press enter (Ctrl-C to exit)")
+    await run_serial_chat(
         workspace=workspace,
         api_key=api_key,
         base_url=base_url,
         model=model,
     )
-    print("main: assistant response:")
-    print(response or "(no content — model returned tool calls)")
 
 
 asyncio.run(_main())

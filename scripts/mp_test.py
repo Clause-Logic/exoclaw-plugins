@@ -222,7 +222,11 @@ def _cmd_test(pkg_name: str) -> int:
             f"{pkg_name} is not marked mp_compat in pyproject.toml; "
             f"available: {sorted(by_name)}"
         )
-    _stage([pkg_name])
+    # Stage every MP-compat package, not just the one under test —
+    # plugins import each other (firmware → conversation +
+    # provider-openai) and a single-package stage breaks those
+    # imports under MP.
+    _stage([n for n, _ in pkgs])
     return _run_micro(pkg_name, by_name[pkg_name])
 
 
