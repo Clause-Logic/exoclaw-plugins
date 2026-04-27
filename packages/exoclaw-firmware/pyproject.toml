@@ -7,7 +7,7 @@ requires-python = ">=3.11"
 dependencies = [
     # Core + HTTP client. ``[http]`` extra pulls in httpx on
     # CPython for tests; on the chip the MP path needs no extra.
-    "exoclaw[http]>=0.26.0",
+    "exoclaw[http]>=0.26.1",
     # Plugins the firmware bundles by default — chat-conversation
     # state, OpenAI-compat provider, and cron self-scheduling.
     # Extra plugins can be staged on top of the firmware tree

@@ -6,8 +6,11 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     # 0.26.0 ships ``exoclaw._compat.Path`` / ``TaskLocal`` / etc.
-    # that the MP-friendly version of this plugin imports.
-    "exoclaw>=0.26.0",
+    # that the MP-friendly version of this plugin imports. 0.26.1
+    # drops ``asyncio.wait_for`` from the MP HTTP path — without
+    # it, an agent making the second LLM streaming request after a
+    # cron tool call hits a uasyncio pairheap-double-push assert.
+    "exoclaw>=0.26.1",
     "structlog>=25.0.0",
     # ``croniter`` is CPython-only — MP plugins skip ``cron``-style
     # schedules. ``every`` and ``at`` work on both runtimes without

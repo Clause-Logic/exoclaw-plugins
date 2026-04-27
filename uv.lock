@@ -596,14 +596,14 @@ wheels = [
 
 [[package]]
 name = "exoclaw"
-version = "0.26.0"
+version = "0.26.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "structlog" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8f/ca/bf21f37f6216c4b0b1ad2835979e7db4322b9d009f2484bb1c41877da9db/exoclaw-0.26.0.tar.gz", hash = "sha256:a38af91ce703e9733ac370d1da6c63c9cf153e931b7afef246be2d27c03a3425", size = 75404, upload-time = "2026-04-27T14:43:30.629Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/17/2c/78ceb2f7d8c34cf4a98c8a808916580d45e3deaa1a0719a5f1831060dbf8/exoclaw-0.26.1.tar.gz", hash = "sha256:b53a8d94e3982938574ddd5379b6bd42536dc39ba511c3219bac892d0b042b31", size = 76063, upload-time = "2026-04-27T22:32:19.305Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f3/18/42f7454de903b1033df5afd71ceea3c7236051c7c80a903057509b28cd2b/exoclaw-0.26.0-py3-none-any.whl", hash = "sha256:2acdd35b43a22e4d21a28708c00d4a9ea378d398f22b613e0fdf8747e0db3bbd", size = 79037, upload-time = "2026-04-27T14:43:31.595Z" },
+    { url = "https://files.pythonhosted.org/packages/d3/51/83fee8a0c58063276256d8341b977a81e48694bbcd8b60932599dd71a0b2/exoclaw-0.26.1-py3-none-any.whl", hash = "sha256:6604d5d5c2b5707b8ae2a86b2624d3253759d70c4732e0586def37259ab78d38", size = 79718, upload-time = "2026-04-27T22:32:18.132Z" },
 ]
 
 [package.optional-dependencies]
@@ -711,7 +711,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", extras = ["http"], specifier = ">=0.26.0" },
+    { name = "exoclaw", extras = ["http"], specifier = ">=0.26.1" },
     { name = "exoclaw-conversation", editable = "packages/exoclaw-conversation" },
     { name = "exoclaw-provider-openai", editable = "packages/exoclaw-provider-openai" },
     { name = "exoclaw-tools-cron", editable = "packages/exoclaw-tools-cron" },
@@ -884,7 +884,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "croniter", specifier = ">=6.0.0,<7.0.0" },
-    { name = "exoclaw", specifier = ">=0.26.0" },
+    { name = "exoclaw", specifier = ">=0.26.1" },
     { name = "structlog", specifier = ">=25.0.0" },
 ]
 
