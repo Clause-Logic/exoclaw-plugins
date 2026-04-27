@@ -9,6 +9,7 @@ members = [
     "exoclaw-channel-pipe",
     "exoclaw-conversation",
     "exoclaw-executor-dbos",
+    "exoclaw-firmware",
     "exoclaw-github",
     "exoclaw-loop-detection",
     "exoclaw-nanobot",
@@ -709,6 +710,23 @@ requires-dist = [
     { name = "exoclaw-subagent", editable = "packages/exoclaw-subagent" },
     { name = "structlog", specifier = ">=24.0.0" },
     { name = "uuid-utils", specifier = ">=0.9.0" },
+]
+
+[[package]]
+name = "exoclaw-firmware"
+version = "0.1.0"
+source = { editable = "packages/exoclaw-firmware" }
+dependencies = [
+    { name = "exoclaw", extra = ["http"] },
+    { name = "exoclaw-conversation" },
+    { name = "exoclaw-provider-openai" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "exoclaw", extras = ["http"], editable = "../exoclaw" },
+    { name = "exoclaw-conversation", editable = "packages/exoclaw-conversation" },
+    { name = "exoclaw-provider-openai", editable = "packages/exoclaw-provider-openai" },
 ]
 
 [[package]]

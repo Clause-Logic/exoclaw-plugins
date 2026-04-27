@@ -1,0 +1,82 @@
+# Per-package mise tasks for the firmware. Run from this
+# directory: ``cd packages/exoclaw-firmware && mise run flash``.
+#
+# All tasks shell out to ``mpremote`` for filesystem ops on the
+# attached MicroPython board. Install via ``mise x mpremote@latest``
+# or pin in this repo's tools list.
+
+[env]
+# Override with ``EXOCLAW_BOARD=esp32_s3 mise run flash`` once we
+# add a second board. Default to ESP32-S3.
+EXOCLAW_BOARD = "esp32_s3"
+
+[tasks.stage]
+description = "Build a flash-ready tree under .stage with core + plugins + board files"
+sources = [
+    "exoclaw_firmware/**/*.py",
+    "boards/${EXOCLAW_BOARD}/**/*.py",
+    "../exoclaw-conversation/exoclaw_conversation/**/*.py",
+    "../exoclaw-provider-openai/exoclaw_provider_openai/**/*.py",
+    "../../../exoclaw/exoclaw/**/*.py",
+]
+outputs = [".stage/.stamp"]
+run = """
+set -e
+rm -rf .stage
+mkdir -p .stage
+# Core + the two bundled plugins + this package — copied flat
+# under .stage so MICROPYPATH=.stage on the device resolves
+# them via standard import. ``_cpython.py`` siblings are skipped
+# (CPython-only; MP imports ``_mp.py`` instead).
+cp -r ../../../exoclaw/exoclaw .stage/exoclaw
+cp -r ../exoclaw-conversation/exoclaw_conversation .stage/exoclaw_conversation
+cp -r ../exoclaw-provider-openai/exoclaw_provider_openai .stage/exoclaw_provider_openai
+cp -r exoclaw_firmware .stage/exoclaw_firmware
+find .stage -name '_cpython.py' -delete
+find .stage -name '__pycache__' -type d -exec rm -rf {} +
+# Board-specific boot.py / main.py / secrets.py go to flash root.
+cp boards/$EXOCLAW_BOARD/boot.py .stage/boot.py
+cp boards/$EXOCLAW_BOARD/main.py .stage/main.py
+if [ -f boards/$EXOCLAW_BOARD/secrets.py ]; then
+    cp boards/$EXOCLAW_BOARD/secrets.py .stage/secrets.py
+else
+    echo 'stage: warning — boards/$EXOCLAW_BOARD/secrets.py missing; flash will fail without it'
+fi
+touch .stage/.stamp
+echo 'stage: ready under .stage/'
+"""
+
+[tasks.flash]
+description = "Copy .stage onto the attached MicroPython board"
+depends = ["stage"]
+run = """
+set -e
+if ! command -v mpremote >/dev/null; then
+    echo 'mpremote not found; try: mise x mpremote@latest -- mpremote ...'
+    exit 1
+fi
+# ``mpremote cp -r`` recurses; the trailing ``:`` puts files at
+# flash root. Run mpremote from ``.stage`` so paths land cleanly.
+cd .stage
+for entry in *; do
+    mpremote cp -r "$entry" ":$entry"
+done
+echo 'flash: complete; press the reset button or run ``mise run repl`` to see boot output'
+"""
+
+[tasks.repl]
+description = "Drop into a REPL on the attached board"
+run = "mpremote repl"
+
+[tasks.run]
+description = "Run main.py on the attached board (no flash, just exec from host)"
+depends = ["stage"]
+run = """
+set -e
+cd .stage
+mpremote run main.py
+"""
+
+[tasks.wipe]
+description = "Erase the attached board's filesystem (DESTRUCTIVE)"
+run = "mpremote exec 'import os, machine; [os.remove(f) for f in os.listdir() if not os.stat(f)[0] & 0o040000]; machine.reset()'"

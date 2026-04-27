@@ -1,0 +1,6 @@
+# Real credentials never get checked in. Each board variant has
+# its own ``secrets.py`` next to ``secrets.py.example``.
+boards/*/secrets.py
+
+# Output of ``mise run stage`` — assembled flash tree.
+.stage/

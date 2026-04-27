@@ -9,6 +9,7 @@ members = ["packages/*"]
 # both ship in a tagged exoclaw release.
 exoclaw = { path = "../exoclaw", editable = true }
 exoclaw-conversation = { workspace = true }
+exoclaw-firmware = { workspace = true }
 exoclaw-provider-litellm = { workspace = true }
 exoclaw-provider-openai = { workspace = true }
 exoclaw-channel-cli = { workspace = true }
