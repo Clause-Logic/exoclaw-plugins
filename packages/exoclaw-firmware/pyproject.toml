@@ -21,3 +21,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["exoclaw_firmware"]
+
+# Tells the workspace MP CI gate this package runs on MicroPython.
+[tool.exoclaw]
+mp_compat = true
+mp_tests_dir = "tests/micro"

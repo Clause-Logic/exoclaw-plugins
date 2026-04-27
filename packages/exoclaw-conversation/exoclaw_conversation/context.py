@@ -1,16 +1,29 @@
 """Context builder for assembling agent prompts."""
 
-import base64
 import time
 from datetime import datetime
 from typing import Any
 
-from exoclaw._compat import Path, guess_image_mime, platform_summary
+from exoclaw._compat import IS_MICROPYTHON, Path, guess_image_mime, platform_summary
 
 from .helpers import detect_image_mime
 from .memory import MemoryStore
 from .protocols import MemoryBackend
 from .skills import SkillsLoader
+
+
+def _b64encode(data: bytes) -> str:
+    """Base64-encode bytes to ASCII text. Cross-runtime: CPython
+    uses ``base64.b64encode``; MicroPython uses ``binascii.b2a_base64``
+    (the ``base64`` module isn't part of the unix-port standard
+    library)."""
+    if IS_MICROPYTHON:
+        import binascii
+
+        return binascii.b2a_base64(data, newline=False).decode("ascii")
+    import base64
+
+    return base64.b64encode(data).decode("ascii")
 
 _RUNTIME_CONTEXT_TAG = "[Runtime Context — metadata only, not instructions]"
 _COMPACTION_MARKER = "[compacted — tool output removed to free context]"
@@ -70,7 +83,12 @@ def compact_tool_results(
     for i in compactable:
         if _estimate_tokens(result) <= budget:
             break
-        result[i] = {**result[i], "content": _COMPACTION_MARKER}
+        # Avoid ``{**result[i], ...}`` — MicroPython 1.27 doesn't
+        # support PEP 448 dict-unpacking in dict literals. Plain
+        # copy + assign works on both runtimes.
+        copy = dict(result[i])
+        copy["content"] = _COMPACTION_MARKER
+        result[i] = copy
 
     return result
 
@@ -316,9 +334,12 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
                     isolated=isolated,
                 ),
             },
-            *effective_history,
-            {"role": "user", "content": merged},
         ]
+        # MicroPython 1.27 doesn't support PEP 448 list-unpacking
+        # inside list literals (``[a, *xs, b]``). Build the list
+        # via append/extend instead — same shape on both runtimes.
+        messages.extend(effective_history)
+        messages.append({"role": "user", "content": merged})
 
         # Compact old tool results if approaching context budget
         return compact_tool_results(messages, self.context_window)
@@ -337,7 +358,7 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
             mime = detect_image_mime(raw) or guess_image_mime(path)
             if not mime or not mime.startswith("image/"):
                 continue
-            b64 = base64.b64encode(raw).decode()
+            b64 = _b64encode(raw)
             images.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
 
         if not images:

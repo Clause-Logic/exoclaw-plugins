@@ -25,12 +25,17 @@ import asyncio
 import json
 import os
 import time
-from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
-import json_repair
-import structlog
-from exoclaw._compat import IS_MICROPYTHON
+from exoclaw._compat import IS_MICROPYTHON, get_log_contextvars, get_logger
+
+if not IS_MICROPYTHON:
+    # ``json_repair`` is a CPython-only dep — handles malformed
+    # tool-call JSON the model produces under load. MicroPython
+    # falls back to plain ``json.loads`` below; on a chip the
+    # extra resiliency isn't worth pulling in a 3rd-party
+    # dependency that isn't packaged for ``mip``.
+    import json_repair
 from exoclaw.http import (
     HTTPClient,
     HTTPConnectError,
@@ -46,9 +51,15 @@ from exoclaw.providers.types import (
 )
 
 if TYPE_CHECKING:
+    # ``collections.abc`` doesn't ship on MicroPython; pulled in
+    # for type-checking only. ``from __future__ import annotations``
+    # stringifies all annotations so the runtime never resolves
+    # these names.
+    from collections.abc import AsyncIterator
+
     from exoclaw.http import ClientProto, ResponseProto
 
-logger = structlog.get_logger()
+logger = get_logger()
 
 # 9-char alnum tool-call id alphabet. OpenAI/Anthropic accept arbitrary
 # strings for ``tool_calls[].id``; some providers (Mistral) reject
@@ -161,8 +172,10 @@ class OpenAIStreamingProvider:
         self._owns_client = client is None
         self._client: ClientProto = client or HTTPClient(timeout=request_timeout)
 
-        self._llm_logging = os.environ.get("LLM_LOGGING", "").lower() == "true"
-        self._llm_log_truncate = int(os.environ.get("LLM_LOG_TRUNCATE", "500"))
+        # ``os.getenv`` is the cross-runtime API — MicroPython
+        # doesn't ship ``os.environ`` but does ship ``getenv``.
+        self._llm_logging = (os.getenv("LLM_LOGGING") or "").lower() == "true"
+        self._llm_log_truncate = int(os.getenv("LLM_LOG_TRUNCATE") or "500")
 
     def get_default_model(self) -> str:
         return self.default_model
@@ -331,7 +344,7 @@ class OpenAIStreamingProvider:
         the same upstream provider across turns)."""
         extra_body: dict[str, Any] = dict(deployment.extra_body)
         if "user" not in extra_body:
-            ctx = structlog.contextvars.get_contextvars()
+            ctx = get_log_contextvars()
             session_key = ctx.get("session.key")
             if session_key:
                 extra_body["user"] = str(session_key)
@@ -447,7 +460,19 @@ class OpenAIStreamingProvider:
             # input; coerce to an empty dict so the tool call still
             # dispatches (the model will get a schema error back,
             # which is more useful than a hard provider-side failure).
-            parsed = json_repair.loads(raw_args) if raw_args else {}
+            # On MicroPython, ``json_repair`` isn't available — fall
+            # back to plain ``json.loads`` and let malformed input
+            # raise. The except clause below catches it and yields
+            # an empty dict.
+            if not raw_args:
+                parsed: object = {}
+            elif IS_MICROPYTHON:
+                try:
+                    parsed = json.loads(raw_args)
+                except (ValueError, json.JSONDecodeError):
+                    parsed = {}
+            else:
+                parsed = json_repair.loads(raw_args)
             args_obj: dict[str, object] = parsed if isinstance(parsed, dict) else {}
             tool_calls.append(
                 ToolCallRequest(

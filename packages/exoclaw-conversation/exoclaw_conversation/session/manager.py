@@ -57,7 +57,13 @@ def _normalize_history(
             elif role == "assistant" and m.get("tool_calls"):
                 kept = [tc for tc in m["tool_calls"] if tc.get("id") in valid_ids]
                 if kept:
-                    repaired.append({**m, "tool_calls": kept})
+                    # Avoid ``{**m, ...}`` — MicroPython 1.27
+                    # doesn't support PEP 448 dict-unpacking in
+                    # dict literals. Plain copy + assign works on
+                    # both runtimes.
+                    merged = dict(m)
+                    merged["tool_calls"] = kept
+                    repaired.append(merged)
                 elif m.get("content"):
                     repaired.append({k: v for k, v in m.items() if k != "tool_calls"})
             else:
@@ -114,12 +120,15 @@ if not IS_MICROPYTHON:  # pragma: no cover (micropython)
 
         def add_message(self, role: str, content: str, **kwargs: Any) -> None:
             new_total = self.total_messages + 1
-            msg = {
+            # Avoid ``{**kwargs}`` in dict literals — MicroPython
+            # 1.27 doesn't support PEP 448 dict-unpacking. Build
+            # the dict and update with kwargs instead.
+            msg: dict[str, Any] = {
                 "role": role,
                 "content": content,
                 "timestamp": datetime.now().isoformat(),
-                **kwargs,
             }
+            msg.update(kwargs)
             self.messages.append(msg)
             self._total_messages = new_total
             self.updated_at = datetime.now()

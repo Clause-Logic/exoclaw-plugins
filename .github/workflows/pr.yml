@@ -9,6 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       packages: ${{ steps.changed.outputs.packages }}
+      mp_packages: ${{ steps.changed.outputs.mp_packages }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -20,7 +21,7 @@ jobs:
           CHANGED=$(git diff origin/main...HEAD --name-only)
 
           # If any global files changed, recheck all packages
-          if echo "$CHANGED" | grep -qE '^(mise\.toml|pyproject\.toml|uv\.lock|\.github/)'; then
+          if echo "$CHANGED" | grep -qE '^(mise\.toml|pyproject\.toml|uv\.lock|\.github/|scripts/)'; then
             PACKAGES=$(ls packages/ | jq -R -s -c 'split("\n") | map(select(length > 0))')
           else
             PACKAGES=$(echo "$CHANGED" | \
@@ -31,6 +32,25 @@ jobs:
           fi
 
           echo "packages=$PACKAGES" >> "$GITHUB_OUTPUT"
+
+          # Intersect with packages whose pyproject opts into the
+          # MicroPython gate via ``[tool.exoclaw] mp_compat = true``.
+          # ``scripts/mp_test.py list`` is the source of truth.
+          MP_ALL=$(python3 -c "
+          import tomllib, json, pathlib
+          out = []
+          for p in sorted(pathlib.Path('packages').iterdir()):
+              cfg = p / 'pyproject.toml'
+              if not cfg.is_file():
+                  continue
+              meta = tomllib.loads(cfg.read_text())
+              if meta.get('tool', {}).get('exoclaw', {}).get('mp_compat'):
+                  out.append(p.name)
+          print(json.dumps(out))
+          ")
+          MP_PACKAGES=$(jq -c -n --argjson c "$PACKAGES" --argjson m "$MP_ALL" \
+            '$c | map(select(. as $x | $m | index($x)))')
+          echo "mp_packages=$MP_PACKAGES" >> "$GITHUB_OUTPUT"
 
   validate:
     needs: detect
@@ -60,13 +80,95 @@ jobs:
         env:
           PACKAGE: ${{ matrix.package }}
 
+  validate-mp:
+    needs: detect
+    if: needs.detect.outputs.mp_packages != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      # ``fail-fast: false`` so one bad package doesn't mask another's
+      # status — useful when MP regressions cluster across packages.
+      fail-fast: false
+      matrix:
+        package: ${{ fromJson(needs.detect.outputs.mp_packages) }}
+    steps:
+      - name: Check out plugins
+        uses: actions/checkout@v4
+        with:
+          path: exoclaw-plugins
+
+      - name: Check out core exoclaw (sibling)
+        uses: actions/checkout@v4
+        with:
+          repository: Clause-Logic/exoclaw
+          # Pin to ``main`` here. Once a tagged release contains the
+          # MP shims + ``exoclaw.http``, switch to ``ref: vX.Y.Z`` so
+          # this job tracks the published API.
+          ref: main
+          path: exoclaw
+
+      - uses: jdx/mise-action@v2
+        with:
+          working_directory: exoclaw-plugins
+
+      - name: Install plugin dependencies
+        working-directory: exoclaw-plugins
+        run: uv sync
+
+      - name: Cache MicroPython build
+        id: micropython-cache
+        uses: actions/cache@v4
+        with:
+          path: micropython-build/ports/unix/build-coverage/micropython
+          # Bump the version suffix when changing build inputs
+          # (manifest patch, MP version pin, build flags).
+          key: micropython-coverage-2026-04-v2-asyncio
+
+      - name: Install build deps
+        if: steps.micropython-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libffi-dev pkg-config
+
+      - name: Clone MicroPython
+        if: steps.micropython-cache.outputs.cache-hit != 'true'
+        run: git clone --depth 1 https://github.com/micropython/micropython micropython-build
+
+      - name: Patch coverage variant manifest to freeze in asyncio
+        if: steps.micropython-cache.outputs.cache-hit != 'true'
+        # Same patch core's pr.yml applies — the unix port's
+        # ``standard`` variant freezes in ``extmod/asyncio`` but
+        # ``coverage`` does not. exoclaw needs ``import asyncio``
+        # working without a runtime ``mip install``.
+        run: |
+          MANIFEST=micropython-build/ports/unix/variants/coverage/manifest.py
+          if ! grep -q 'extmod/asyncio' "$MANIFEST"; then
+              echo 'include("$(MPY_DIR)/extmod/asyncio")' >> "$MANIFEST"
+          fi
+
+      - name: Build coverage variant
+        if: steps.micropython-cache.outputs.cache-hit != 'true'
+        working-directory: micropython-build/ports/unix
+        run: |
+          make submodules
+          make VARIANT=coverage -j$(nproc)
+
+      - name: Run MicroPython tests
+        working-directory: exoclaw-plugins
+        env:
+          PACKAGE: ${{ matrix.package }}
+          EXOCLAW_MICROPYTHON_BIN: ${{ github.workspace }}/micropython-build/ports/unix/build-coverage/micropython
+          EXOCLAW_CORE_DIR: ${{ github.workspace }}/exoclaw
+        run: mise run test-micro
+
   ci:
-    needs: validate
+    needs: [validate, validate-mp]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Check all validations passed
         run: |
-          if [ "${{ needs.validate.result }}" != "success" ] && [ "${{ needs.validate.result }}" != "skipped" ]; then
-            exit 1
-          fi
+          for result in "${{ needs.validate.result }}" "${{ needs.validate-mp.result }}"; do
+            if [ "$result" != "success" ] && [ "$result" != "skipped" ]; then
+              exit 1
+            fi
+          done

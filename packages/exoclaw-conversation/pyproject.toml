@@ -14,3 +14,10 @@ dependencies = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+# Tells the workspace MP CI gate this package runs on MicroPython.
+# CI walks ``packages/*/pyproject.toml`` for ``[tool.exoclaw] mp_compat``
+# and stages each match into the MP test runner.
+[tool.exoclaw]
+mp_compat = true
+mp_tests_dir = "tests/micro"
+
