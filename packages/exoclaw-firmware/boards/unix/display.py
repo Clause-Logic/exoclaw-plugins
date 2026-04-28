@@ -92,6 +92,4 @@ class HostPreviewDisplay:
         cmd = " ".join('"' + a + '"' for a in argv)
         rc = os.system(cmd)
         if rc != 0:
-            raise RuntimeError(
-                "render.py exited rc={} (cmd: {})".format(rc, cmd)
-            )
+            raise RuntimeError("render.py exited rc={} (cmd: {})".format(rc, cmd))

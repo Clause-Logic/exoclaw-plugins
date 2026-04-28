@@ -27,7 +27,8 @@ def _find_host_python() -> str:
     try:
         result = subprocess.run(
             ["uv", "run", "python", "-c", "import sys; print(sys.executable)"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
             cwd=os.path.join(os.path.dirname(__file__), "..", ".."),
         )
         if result.returncode == 0 and result.stdout.strip():
@@ -65,8 +66,10 @@ def main() -> int:
 
     if not os.path.isdir(stage_dir):
         subprocess.run(
-            ["mise", "run", "stage"], cwd=firmware_dir,
-            env={**os.environ, "EXOCLAW_BOARD": "unix"}, check=True,
+            ["mise", "run", "stage"],
+            cwd=firmware_dir,
+            env={**os.environ, "EXOCLAW_BOARD": "unix"},
+            check=True,
         )
 
     host_python = _find_host_python()
@@ -81,9 +84,12 @@ def main() -> int:
     sim_env.pop("PYTHONPATH", None)
 
     sim_proc = subprocess.Popen(
-        [mp_bin, "main.py"], cwd=stage_dir,
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT, bufsize=0,
+        [mp_bin, "main.py"],
+        cwd=stage_dir,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        bufsize=0,
     )
 
     pygame.init()
@@ -135,6 +141,7 @@ def main() -> int:
             status = "thinking"
             try:
                 import json
+
                 obj = json.loads(line)
                 name = obj.get("tool.name", "")
                 if name:
@@ -145,7 +152,7 @@ def main() -> int:
         elif "bot>" in line:
             idx = line.find("bot>")
             if idx >= 0:
-                msg = line[idx + 4:].strip()
+                msg = line[idx + 4 :].strip()
                 if msg:
                     caption = msg
                     caption_time = time.monotonic()

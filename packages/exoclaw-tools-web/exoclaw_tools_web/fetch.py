@@ -304,9 +304,9 @@ class WebFetchTool(ToolBase):
             # this, the join double-nests the path.
             ws_name = str(self._workspace).rstrip("/") + "/"
             if save_to.startswith(ws_name):
-                save_to = save_to[len(ws_name):]
+                save_to = save_to[len(ws_name) :]
             elif save_to.startswith(str(self._workspace).rstrip("/")):
-                save_to = save_to[len(str(self._workspace).rstrip("/")):]
+                save_to = save_to[len(str(self._workspace).rstrip("/")) :]
                 if save_to.startswith("/"):
                     save_to = save_to[1:]
             for seg in save_to.split("/"):

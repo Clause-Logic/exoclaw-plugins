@@ -84,7 +84,7 @@ def _resolve_path(
     if workspace is not None:
         ws_str = str(workspace).rstrip("/")
         if path.startswith(ws_str + "/"):
-            path = path[len(ws_str) + 1:]
+            path = path[len(ws_str) + 1 :]
         elif path == ws_str:
             path = "."
 
