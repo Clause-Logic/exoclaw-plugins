@@ -20,6 +20,7 @@ exoclaw-tools-llm-call = { workspace = true }
 exoclaw-channel-pipe = { workspace = true }
 exoclaw-loop-detection = { workspace = true }
 exoclaw-executor-dbos = { workspace = true }
+exoclaw-screen = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -30,6 +31,14 @@ dev = [
     "mypy>=1.0.0",
     "ruff>=0.9.0",
     "ty>=0.0.0a1",
+    # Host-side renderer deps for ``exoclaw-screen``'s ``[host-preview]``
+    # extra. Pulled into dev (not just the extra) so ty can resolve
+    # the lazy ``from PIL import …`` / ``import qrcode`` lines in
+    # ``renderer/pillow.py`` without a workspace-wide extras flag
+    # at lint time. Chip MP boards never load these — the
+    # renderer module's imports are method-local and gated.
+    "pillow>=10.0.0",
+    "qrcode>=7.4.0",
 ]
 
 [tool.pytest.ini_options]

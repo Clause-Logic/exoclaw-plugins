@@ -31,6 +31,8 @@ sources = [
     "../exoclaw-tools-workspace/exoclaw_tools_workspace/filesystem.py",
     "../exoclaw-tools-workspace/exoclaw_tools_workspace/skills.py",
     "../exoclaw-tools-workspace/exoclaw_tools_workspace/SKILL.md",
+    "../exoclaw-screen/exoclaw_screen/**/*.py",
+    "../exoclaw-screen/exoclaw_screen/SKILL.md",
     "../../../exoclaw/exoclaw/**/*.py",
 ]
 outputs = [".stage/.stamp"]
@@ -59,6 +61,11 @@ cp ../exoclaw-tools-workspace/exoclaw_tools_workspace/__init__.py .stage/exoclaw
 cp ../exoclaw-tools-workspace/exoclaw_tools_workspace/filesystem.py .stage/exoclaw_tools_workspace/
 cp ../exoclaw-tools-workspace/exoclaw_tools_workspace/skills.py .stage/exoclaw_tools_workspace/
 cp ../exoclaw-tools-workspace/exoclaw_tools_workspace/SKILL.md .stage/exoclaw_tools_workspace/
+# Screen — parser, layout, AST, protocol, tool, SKILL.md. The
+# host-side ``renderer/pillow.py`` lazy-imports Pillow, so it's
+# safe to copy onto chip flash even though Pillow isn't installed
+# there; chip boards just won't construct ``PillowRenderer``.
+cp -r ../exoclaw-screen/exoclaw_screen .stage/exoclaw_screen
 cp -r exoclaw_firmware .stage/exoclaw_firmware
 # MP-runtime fillers at stage root — flat so plain ``import
 # typing`` / ``import dataclasses`` / ``import datetime`` resolve
@@ -104,6 +111,15 @@ fi
 # Board-specific boot.py / main.py / secrets.py go to flash root.
 cp boards/$EXOCLAW_BOARD/boot.py .stage/boot.py
 cp boards/$EXOCLAW_BOARD/main.py .stage/main.py
+# Optional sibling modules the board's main.py imports flat
+# (e.g. ``display.py`` for the unix host-preview display). Each
+# one lands at stage root so ``from display import …`` resolves
+# the same on unix-port and chip MP.
+for sib in display.py drivers.py; do
+    if [ -f boards/$EXOCLAW_BOARD/$sib ]; then
+        cp boards/$EXOCLAW_BOARD/$sib .stage/$sib
+    fi
+done
 if [ -f boards/$EXOCLAW_BOARD/secrets.py ]; then
     cp boards/$EXOCLAW_BOARD/secrets.py .stage/secrets.py
 elif [ -f boards/$EXOCLAW_BOARD/secrets.py.example ]; then
@@ -172,5 +188,23 @@ if [ -z "$OPENAI_API_KEY" ]; then
 fi
 mise run stage
 cd .stage
+# ``EXOCLAW_HOST_PYTHON`` is the CPython interpreter the unix
+# board's ``HostPreviewDisplay`` shells out to for Pillow-backed
+# rasterisation. Resolve it via ``uv run`` so we always pick the
+# workspace venv's python (the one ``uv sync --extra host-preview``
+# installed Pillow into) regardless of whether the user has
+# ``VIRTUAL_ENV`` set. Override with ``EXOCLAW_HOST_PYTHON`` in
+# the env if you want a different interpreter.
+if [ -z "$EXOCLAW_HOST_PYTHON" ]; then
+    EXOCLAW_HOST_PYTHON="$(cd ../../.. && uv run python -c 'import sys; print(sys.executable)')"
+fi
+export EXOCLAW_HOST_PYTHON
+# Unset PYTHONPATH so the CPython subprocess invoked by the
+# unix board's ``HostPreviewDisplay`` (via ``os.system``) doesn't
+# inherit ``.stage/typing.py`` (the MP-stub) and shadow CPython's
+# real ``typing`` module. The CPython subprocess uses the venv's
+# editable ``exoclaw_screen`` install, so it doesn't need
+# ``.stage`` on its sys.path.
+unset PYTHONPATH
 MICROPYPATH=".frozen:$PWD" "$EXOCLAW_MICROPYTHON_BIN" main.py
 """
