@@ -421,13 +421,27 @@ class OpenAIStreamingProvider:
         except StopAsyncIteration:
             raise _RetryableError("stream closed before any data") from None
 
-        # Re-enter the normal loop with the first line pre-fetched.
-        async def _lines_with_first() -> AsyncIterator[str]:
-            yield first_line
-            async for rest in aiter_compat(line_iter):
-                yield rest
-
-        async for line in aiter_compat(_lines_with_first()):
+        # Iterate ``line_iter`` directly, injecting the pre-fetched
+        # ``first_line`` on the first turn. We can't go through an
+        # ``async def gen() -> AsyncIterator[str]: yield first_line;
+        # async for rest in line_iter: yield rest`` adapter on MP:
+        # ``async def`` + ``yield`` collapses to a sync generator
+        # there, and a nested ``async for`` inside it silently
+        # truncates iteration after a few yields (we saw the loop
+        # exit cleanly after just the OpenRouter heartbeat line, no
+        # ``data:`` chunk ever processed). ``_LineIter`` (MP) and
+        # httpx (CPython) both implement ``__aiter__``/``__anext__``
+        # natively, so no adapter is needed.
+        _need_first = True
+        while True:
+            if _need_first:
+                line = first_line
+                _need_first = False
+            else:
+                try:
+                    line = await line_iter.__anext__()
+                except StopAsyncIteration:
+                    break
             if not line:
                 continue
             # SSE lines are "data: <json>" (plus occasional "event:" / comments).
@@ -438,9 +452,11 @@ class OpenAIStreamingProvider:
                 break
             try:
                 chunk = json.loads(payload)
-            except (ValueError, json.JSONDecodeError):
-                # MP's ``json.JSONDecodeError`` is ``ValueError``;
-                # CPython's is a subclass. Catch both via the base.
+            except ValueError:
+                # MP's ``json`` has no ``JSONDecodeError`` — referencing
+                # it in the ``except`` tuple raises at lookup time on
+                # MP. CPython's ``JSONDecodeError`` is a ``ValueError``
+                # subclass anyway, so ``ValueError`` covers both.
                 continue
 
             # Usage arrives in its own final chunk when ``stream_options
@@ -494,7 +510,10 @@ class OpenAIStreamingProvider:
             elif IS_MICROPYTHON:
                 try:
                     parsed = json.loads(raw_args)
-                except (ValueError, json.JSONDecodeError):
+                except ValueError:
+                    # See note above: MP's ``json`` doesn't expose
+                    # ``JSONDecodeError``; ``ValueError`` covers both
+                    # runtimes.
                     parsed = {}
             else:
                 parsed = json_repair.loads(raw_args)
