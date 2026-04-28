@@ -1,6 +1,6 @@
 [project]
 name = "exoclaw-firmware"
-version = "0.4.0"
+version = "0.5.0"
 description = "Deployable exoclaw image for MicroPython boards (ESP32-S3 and friends)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -12,8 +12,8 @@ dependencies = [
     # state, OpenAI-compat provider, and cron self-scheduling.
     # Extra plugins can be staged on top of the firmware tree
     # before flashing.
-    "exoclaw-conversation>=0.19.0",
-    "exoclaw-provider-openai>=0.4.0",
+    "exoclaw-conversation>=0.21.0",
+    "exoclaw-provider-openai>=0.4.1",
     "exoclaw-tools-cron>=0.9.0",
 ]
 
@@ -28,3 +28,26 @@ packages = ["exoclaw_firmware"]
 [tool.exoclaw]
 mp_compat = true
 mp_tests_dir = "tests/micro"
+
+# Skills bundled into the firmware image at stage time. Each name
+# is a pip-installed package that publishes one or more skills via
+# the ``exoclaw.skills`` entry point. The ``stage`` task resolves
+# these via ``importlib.metadata`` (host-side) and copies the
+# resulting skill directories into ``.stage/exoclaw_firmware/skills/``
+# so the chip's ``SkillsLoader`` finds them at
+# ``Path(exoclaw_firmware.__file__).parent / "skills"`` — alongside
+# any user/agent-managed skills under ``workspace/skills/``.
+#
+# MicroPython has no ``importlib.metadata`` and no entry-point
+# machinery, so this allow-list is the bridge: the host knows about
+# pip-installed packages; the chip only knows about files. The bridge
+# is explicit by design — adding a new package's skills to the chip
+# image requires editing this list.
+[tool.exoclaw.firmware]
+bundle_skills_from = [
+    # Cron's ``add/list/remove/update/enable`` JSON shape lives in a
+    # SKILL.md the agent loads on demand. Without bundling, the
+    # ``cron`` skill the model would otherwise activate via
+    # ``LoadSkillTool`` simply doesn't exist on the chip.
+    "exoclaw-tools-cron",
+]

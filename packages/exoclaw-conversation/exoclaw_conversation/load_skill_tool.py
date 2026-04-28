@@ -1,4 +1,11 @@
-"""LoadSkillTool — bridges the LOAD_SKILL_TOOL_DEF schema with SkillsLoader.activate_skill."""
+"""LoadSkillTool — bridges the LOAD_SKILL_TOOL_DEF schema with
+``SkillsLoader.activate_skill``.
+
+Lives in ``exoclaw-conversation`` so any consumer (server-side
+nanobot, MicroPython firmware, future deployments) can pull the
+canonical implementation from one place. The previous home was
+``exoclaw-nanobot``; that nanobot copy now re-exports from here.
+"""
 
 from __future__ import annotations
 
@@ -7,13 +14,18 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from exoclaw_conversation.skills import SkillsLoader
 
-from exoclaw_conversation import LOAD_SKILL_TOOL_DEF
+from exoclaw_conversation.skills import LOAD_SKILL_TOOL_DEF
 
 _schema = LOAD_SKILL_TOOL_DEF["function"]
 
 
 class LoadSkillTool:
-    """Tool that lets the agent dynamically activate skills listed in <skills>."""
+    """Tool that lets the agent dynamically activate skills listed in
+    the system prompt's ``<skills>`` block.
+
+    Activating a skill merges its content into context AND merges any
+    tool names the skill declares into the agent's active-tools set,
+    so subsequent LLM calls see those tools available."""
 
     name = _schema["name"]
     description = _schema["description"]

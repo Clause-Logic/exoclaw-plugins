@@ -144,9 +144,16 @@ class ContextBuilder:
         memory: MemoryBackend | None = None,
         context_window: int = 128_000,
         skill_packages: list[str] | None = None,
+        builtin_skills_dir: Path | None = None,
+        allowed_skills: list[str] | None = None,
     ):
         self.workspace = workspace
-        self.skills = SkillsLoader(workspace, skill_packages=skill_packages)
+        self.skills = SkillsLoader(
+            workspace,
+            builtin_skills_dir=builtin_skills_dir,
+            skill_packages=skill_packages,
+            allowed_names=allowed_skills,
+        )
         self.memory: MemoryBackend = memory if memory is not None else MemoryStore(workspace)
         self.context_window = context_window
         self._active_optional_tools: set[str] = set()
