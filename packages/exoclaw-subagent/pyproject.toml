@@ -1,11 +1,16 @@
 [project]
 name = "exoclaw-subagent"
-version = "0.14.0"
+version = "0.15.0"
 description = "Subagent manager and LLM-facing spawn tool for exoclaw"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "exoclaw>=0.22.0",
+    # ``>=0.26.4`` for ``make_semaphore`` (cross-runtime
+    # ``asyncio.Semaphore`` shim used by ``AsyncioSpawner`` to
+    # cap concurrent spawns on MP) plus the ``cast(... | None,
+    # ...)`` string-quote fix in 0.26.3 that lets ``process_direct``
+    # run on MP at all.
+    "exoclaw>=0.26.4",
     "structlog>=25.0.0",
 ]
 
@@ -22,3 +27,7 @@ include = [
     "exoclaw_subagent/**/*.md",
     "exoclaw_subagent/py.typed",
 ]
+
+[tool.exoclaw]
+mp_compat = true
+mp_tests_dir = "tests/micro"

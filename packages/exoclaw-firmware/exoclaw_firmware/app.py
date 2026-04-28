@@ -152,6 +152,8 @@ async def run_serial_app(
     tools: "list | None" = None,
     extra_channels: "list | None" = None,
     enable_cron: bool = True,
+    enable_subagent: bool = True,
+    subagent_max_concurrent: int | None = 2,
     heartbeat_interval_ms: int | None = None,
 ) -> None:
     """Run the full agent app with USB-CDC as a baseline channel.
@@ -185,6 +187,23 @@ async def run_serial_app(
     ``5 * 60 * 1000`` (5 minutes); a typical "quiet hours" value
     is ``60 * 60 * 1000``. Jobs scheduled with the default
     ``wake_mode="now"`` are unaffected.
+
+    ``enable_subagent`` (default ``True``) wires the
+    ``SubagentManager`` + ``SpawnTool`` so the agent can dispatch
+    background tasks. Each spawn runs as a fresh ``DefaultConversation``
+    + ``AgentLoop`` against the same provider; results announce back
+    to the parent over the bus as ``system`` messages. Set to
+    ``False`` for a tightly-scoped chip that should never branch.
+
+    ``subagent_max_concurrent`` (default ``2``) caps how many
+    subagents may run concurrently on both runtimes. The cap goes
+    through ``exoclaw._compat.make_semaphore`` (real
+    ``asyncio.Semaphore`` on CPython, an ``asyncio.Event``-backed
+    counter shim on MicroPython since uasyncio doesn't ship
+    ``Semaphore``). Two is a sensible default on the ESP32-S3 8MB
+    target — each in-flight LLM call holds an mbedtls session in
+    heap, so unbounded fanout will OOM. ``None`` opts out of the
+    cap entirely.
     """
     from exoclaw.agent.tools.protocol import Tool
     from exoclaw.app import Exoclaw
@@ -271,6 +290,56 @@ async def run_serial_app(
         # ``Executor`` elsewhere in the workspace.
         all_tools.append(CronTool(backend=cron_backend))  # type: ignore[invalid-argument-type]
         await cron_service.start()
+
+    # Optional subagent — wired AFTER the rest of ``all_tools`` is
+    # built so subagents inherit the same tool surface (cron,
+    # LoadSkillTool, …) as the parent. The factory rebuilds a
+    # fresh ``DefaultConversation`` per spawn so each child gets
+    # its own session storage and consolidation state, isolated
+    # from the parent's running session.
+    if enable_subagent:
+        from exoclaw_subagent import AsyncioSpawner, Runner, SpawnTool, SubagentManager
+
+        def _conversation_factory() -> "DefaultConversation":
+            # Fresh per-spawn — the subagent gets its own session
+            # and skills_loader. Provider is shared (no need to pay
+            # the SSL handshake twice; HTTPClient is connection-
+            # pooled on CPython, single-stream on MP).
+            return DefaultConversation.create(
+                workspace=workspace,
+                provider=provider,
+                model=model,
+                builtin_skills_dir=_builtin_skills_dir(),
+            )
+
+        # ``AsyncioSpawner`` is the non-durable default. On a chip
+        # we don't have DBOS-style journals, and an in-process
+        # asyncio task is enough — if the chip resets mid-spawn,
+        # the spawn just dies. Persistent batch state lives in
+        # ``InMemoryBatchStore`` (the default), also fine for chip.
+        # The ``max_concurrent`` cap goes through
+        # ``exoclaw._compat.make_semaphore`` inside
+        # ``AsyncioSpawner``, so the same integer enforces the cap
+        # on both CPython (real ``asyncio.Semaphore``) and
+        # MicroPython (``_AsyncSemaphore`` shim).
+        def _spawner_factory(runner: Runner) -> AsyncioSpawner:
+            return AsyncioSpawner(runner, max_concurrent=subagent_max_concurrent)
+
+        subagent_mgr: SubagentManager = SubagentManager(
+            provider=provider,
+            bus=bus,
+            conversation_factory=_conversation_factory,
+            tools=list(all_tools),
+            model=model,
+            # Pass ``workspace`` so ``SubagentManager`` writes result
+            # markdown files under ``workspace/subagents/`` and the
+            # ``spawn`` tool's ``action="results"`` listing is
+            # populated. Without this the chip-side ``results``
+            # query always returns ``[]``.
+            workspace=workspace,
+            spawner_factory=_spawner_factory,
+        )
+        all_tools.append(SpawnTool(manager=subagent_mgr))
 
     app = Exoclaw(
         provider=provider,

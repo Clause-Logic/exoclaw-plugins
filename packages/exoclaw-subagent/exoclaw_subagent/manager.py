@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-import uuid
-from pathlib import Path
+import os
 from typing import Any, Callable, cast
 
-import structlog
-import structlog.contextvars
+from exoclaw._compat import (
+    Path,
+    bind_log_contextvars,
+    get_logger,
+    unbind_log_contextvars,
+)
 from exoclaw.agent.conversation import Conversation
 from exoclaw.agent.loop import AgentLoop
 from exoclaw.agent.tools.protocol import Tool
@@ -19,12 +22,30 @@ from exoclaw.providers.protocol import LLMProvider
 from .batch_store import BatchSnapshot, BatchStore, InMemoryBatchStore
 from .spawner import AsyncioSpawner, SpawnerFactory, SubagentHandle
 
-logger = structlog.get_logger()
+logger = get_logger()
 
 
 def _safe_filename(label: str) -> str:
     """Convert a label to a safe filename."""
     return "".join(c if c.isalnum() or c in "-_" else "-" for c in label).strip("-")
+
+
+def _mtime_for_sort(path: Path) -> float:
+    """Return ``path.stat().st_mtime`` on CPython, ``0.0`` on MP.
+
+    Same shape as ``exoclaw_tools_cron.service._mtime_or_none``: the
+    ``exoclaw._compat.Path`` shim on MicroPython doesn't implement
+    ``stat()``, so calling it raises ``AttributeError``. The mtime
+    sort is purely cosmetic (newest result first); falling back to
+    ``0.0`` on MP collapses the sort to glob's insertion order,
+    which is acceptable for the chip-side debug/status surface."""
+    stat = getattr(path, "stat", None)
+    if stat is None:
+        return 0.0
+    try:
+        return stat().st_mtime
+    except (OSError, AttributeError):
+        return 0.0
 
 
 def _build_batch_message(snap: BatchSnapshot) -> InboundMessage:
@@ -149,7 +170,10 @@ class SubagentManager:
         chain instead of starting a fresh root. Durable spawners pass
         these as workflow arguments so the ancestry survives replay.
         """
-        task_id = str(uuid.uuid4())[:8]
+        # ``os.urandom(4).hex()`` is the cross-runtime CSPRNG-backed
+        # short id — ``uuid`` isn't on MicroPython, and the same
+        # 8-hex-char shape is what the cron plugin uses.
+        task_id = os.urandom(4).hex()
         display_label = label or (task[:30] + ("..." if len(task) > 30 else ""))
 
         if batch is not None:
@@ -239,7 +263,7 @@ class SubagentManager:
             if parent_turn_id is not None:
                 bind_payload["turn.id"] = parent_turn_id
                 _bound_keys.append("turn.id")
-            structlog.contextvars.bind_contextvars(**bind_payload)
+            bind_log_contextvars(**bind_payload)
 
         try:
             try:
@@ -324,7 +348,7 @@ class SubagentManager:
             # Unbind only after the announcement and disk write so all
             # of the subagent's own log lines carry the parent ancestry.
             if _bound_keys:
-                structlog.contextvars.unbind_contextvars(*_bound_keys)
+                unbind_log_contextvars(*_bound_keys)
 
     def _write_result(
         self,
@@ -452,9 +476,7 @@ class SubagentManager:
 
         completed = []
         if self._results_dir and self._results_dir.exists():
-            for f in sorted(
-                self._results_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True
-            ):
+            for f in sorted(self._results_dir.glob("*.md"), key=_mtime_for_sort, reverse=True):
                 completed.append({"path": str(f), "name": f.stem})
 
         return {"running": running, "batches": batches, "completed": completed}

@@ -1,11 +1,12 @@
 """Spawn tool for creating background subagents."""
 
+from __future__ import annotations
+
 import json
-from contextvars import ContextVar
 from typing import Any, Protocol, runtime_checkable
 
-import structlog
-import structlog.contextvars
+from exoclaw._compat import TaskLocal as ContextVar
+from exoclaw._compat import get_log_contextvars
 from exoclaw.agent.tools.protocol import ToolBase, ToolContext
 
 
@@ -53,7 +54,7 @@ def _current_parent_turn() -> tuple[str | None, str | None]:
     ``(turn.chain, turn.id)`` or ``(None, None)`` if no parent turn is
     bound (e.g. spawn called outside an agent turn entirely).
     """
-    ctx = structlog.contextvars.get_contextvars()
+    ctx = get_log_contextvars()
     chain = ctx.get("turn.chain")
     turn_id = ctx.get("turn.id")
     return (
