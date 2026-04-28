@@ -312,11 +312,83 @@ class PillowRenderer:
             )
             return
 
-        # Default: italic alt-text fallback. Spec: plain image
-        # without a recognised class is rendered as italic alt
-        # in v0 (image fetch/render is post-v0).
+        # Default: try to load + paste a real raster image from
+        # ``src`` (resolved against ``base_path`` for relatives).
+        # Aspect-preserving thumbnail into the block's (w, h) slot.
+        # On any failure (missing file, unsupported format, IO
+        # error) fall through to the italic alt-text rendering —
+        # the agent still sees something rather than a blank
+        # space, and the alt text usually identifies what was
+        # supposed to be there.
+        if self._render_raster_image(
+            img=img,
+            node=node,
+            block=block,
+            base_path=base_path,
+        ):
+            return
         text = node.alt or node.src
         draw.text((block.x, block.y), text, font=italic_font, fill=fg)
+
+    def _render_raster_image(
+        self,
+        img: Any,
+        node: a.Image,
+        block: "LayoutBlock",
+        base_path: "str | None",
+    ) -> bool:
+        """Load + paste a raster image from ``node.src`` into the
+        block's slot. Returns ``True`` if the image was painted,
+        ``False`` if the caller should fall back (e.g. file not
+        found, format unsupported).
+
+        Relative ``src`` is resolved against the layout's
+        ``base_path`` — agents reference workspace-relative paths
+        like ``cat.jpg`` and the renderer resolves to
+        ``{workspace}/cat.jpg``. Absolute paths pass through
+        unchanged.
+        """
+        from PIL import Image as _PILImage
+
+        src = node.src
+        if not src:
+            return False
+        # ``src`` may be a URL — we don't fetch over the wire from
+        # inside the renderer (separation of concerns; the agent
+        # uses ``web_fetch`` to download into the workspace, then
+        # references the local path here).
+        if src.startswith(("http://", "https://")):
+            return False
+        if base_path is not None and not os.path.isabs(src):
+            full = os.path.normpath(os.path.join(base_path, src))
+        else:
+            full = src
+        if not os.path.exists(full):
+            return False
+        try:
+            raster = _PILImage.open(full)
+            raster.load()
+        except Exception:  # noqa: BLE001 — any PIL failure → alt fallback
+            return False
+        # Aspect-preserving fit. ``thumbnail`` resizes in place
+        # only down (never up), matching e-ink intuition: small
+        # source images render at native size rather than
+        # blocky upscale.
+        raster.thumbnail((max(1, block.w), max(1, block.h)))
+        # Centre the resized image inside the block slot.
+        ox = block.x + max(0, (block.w - raster.width) // 2)
+        oy = block.y + max(0, (block.h - raster.height) // 2)
+        # ``paste`` accepts an RGBA source onto an RGB canvas via
+        # the alpha mask if present — fall back to plain paste
+        # otherwise. ``getbands`` lets us check without forcing
+        # a conversion that'd flatten transparency for opaque
+        # sources.
+        bands = raster.getbands()
+        if "A" in bands:
+            img.paste(raster, (ox, oy), raster)
+        else:
+            img.paste(raster, (ox, oy))
+        return True
 
     def _render_include(
         self,

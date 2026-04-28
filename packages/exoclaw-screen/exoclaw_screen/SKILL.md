@@ -161,18 +161,28 @@ Example dashboard:
 
 ### Directives — image syntax
 
-Images with a recognised IAL class trigger renderer behaviour:
+Three image modes, dispatched on the IAL class:
 
 ```markdown
+![cat](cat.jpg){h=300}                            # plain raster
 ![QR](https://example.com/dashboard){.qrcode size=200}
 ![weather](weather.md){.include}
 ```
 
-- `.include` — recursively inline another markdown file. Single
-  level only in v0; cycle detection on path.
-- `.qrcode` — encode `src` as a QR code.
-- Plain image (no class) — falls back to italic alt text in v0.
-  Image fetch/render is a future feature.
+- **Plain image, no class** — load a real raster file (JPEG /
+  PNG / GIF / WebP / BMP) from `src` and paste into the layout
+  slot, aspect-preserving fit. `src` is resolved as
+  workspace-relative (e.g. `cat.jpg` → `{workspace}/cat.jpg`).
+  HTTP URLs are not fetched at render time — use `web_fetch`
+  with `save_to=<path>` first to land the bytes in the
+  workspace, then reference the local path here.
+  Use `{w=N h=N}` to size the slot; without sizing the image
+  collapses to one row of body-text height. The image is
+  centred inside the slot if it's smaller than the box.
+- `.qrcode` — encode `src` as a QR code (gated on the
+  `qrcode` package; falls back to italic URL text on chip).
+- `.include` — recursively inline another markdown file.
+  Single level only in v0; cycle detection on path.
 
 ## Out of scope for v0 (parsed but not rendered specially)
 

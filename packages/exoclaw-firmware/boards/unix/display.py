@@ -45,6 +45,20 @@ class HostPreviewDisplay:
     ) -> None:
         self.capabilities = capabilities
         self._out_path = out_path
+        # Default ``base_path`` to the directory containing
+        # ``screen_path`` — that's the workspace dir the agent
+        # writes its image files into via ``write_file`` / the
+        # save_to mode of ``web_fetch``. Without this, plain
+        # image directives like ``![cat](cat.jpg)`` would resolve
+        # against the CPython subprocess's cwd (``.stage/``)
+        # instead of the workspace, and the file wouldn't be
+        # found.
+        if base_path is None:
+            sp = capabilities.screen_path
+            if "/" in sp:
+                base_path = sp.rsplit("/", 1)[0] or "."
+            else:
+                base_path = "."
         self._base_path = base_path
 
     async def show_markdown(self, markdown: str) -> None:

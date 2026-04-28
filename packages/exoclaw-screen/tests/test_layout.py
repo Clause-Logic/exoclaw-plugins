@@ -147,3 +147,41 @@ class TestContainerLayout:
         assert headings[0].w == 260
         assert headings[1].x == 270  # 260 + 10
         assert headings[2].x == 540  # 260 + 10 + 260 + 10
+
+
+class TestImageBlock:
+    """A lone-image paragraph (``![alt](src){h=300}``) honors the
+    image's ``h`` IAL so the layout gives the renderer a slot
+    proportional to the source. Without this, the paragraph
+    would default to one row of body-text height and a
+    1024x768 photo would render into a tiny strip."""
+
+    def test_lone_image_honors_h_ial(self) -> None:
+        src = "![cat](cat.jpg){h=300}"
+        blocks = lay_out(parse(src), _caps())
+        assert len(blocks) == 1
+        assert blocks[0].kind == "paragraph"
+        assert blocks[0].h == 300
+
+    def test_lone_image_height_alias(self) -> None:
+        src = "![cat](cat.jpg){height=240}"
+        blocks = lay_out(parse(src), _caps())
+        assert blocks[0].h == 240
+
+    def test_lone_image_without_h_falls_back_to_one_row(self) -> None:
+        # Without IAL the paragraph still gets one row of
+        # body-text height — same as before, no regression.
+        src = "![cat](cat.jpg)"
+        blocks = lay_out(parse(src), _caps())
+        # row_h = 480 // 24 = 20
+        assert blocks[0].h == 20
+
+    def test_image_in_paragraph_with_text_does_not_pull_h(self) -> None:
+        # Mixed paragraph (text + image) shouldn't have its
+        # height hijacked by the image's IAL — that's the
+        # signal we treat the image as inline rather than a
+        # picture block.
+        src = "Look: ![cat](cat.jpg){h=300}"
+        blocks = lay_out(parse(src), _caps())
+        # row_h = 20.
+        assert blocks[0].h == 20

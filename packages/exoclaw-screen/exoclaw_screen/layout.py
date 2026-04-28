@@ -491,6 +491,20 @@ def _estimate_height(node: Any, caps: DisplayCapabilities) -> int:
     body-text height. Renderers can request a re-layout after
     rendering for accurate measure in v0.1."""
     row_h = max(1, caps.height // max(1, caps.char_rows))
+    # Lone-image paragraph (``![alt](src){h=300}`` on its own
+    # line) honors the image's ``h`` IAL so the agent can size a
+    # picture block by the image's reported dimensions. Without
+    # this, a 1024x768 photo would render into one row of
+    # body-text height.
+    if isinstance(node, a.Paragraph) and len(node.content) == 1:
+        only = node.content[0]
+        if isinstance(only, a.Image):
+            h_attr = only.attrs.get("h") or only.attrs.get("height")
+            if h_attr:
+                try:
+                    return max(1, int(str(h_attr)))
+                except ValueError:
+                    pass
     if isinstance(node, a.Heading):
         # Headings get more vertical real estate proportional to
         # level — h1 biggest, h6 smallest.
