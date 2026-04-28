@@ -1,6 +1,6 @@
 [project]
 name = "exoclaw-tools-web"
-version = "0.1.0"
+version = "0.2.0"
 description = "Web tools for exoclaw — HTML→Markdown converter, web_fetch, web_search. Cross-runtime (CPython + MicroPython)."
 readme = "README.md"
 requires-python = ">=3.11"

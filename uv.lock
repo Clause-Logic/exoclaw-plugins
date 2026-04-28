@@ -888,7 +888,7 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-screen"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "packages/exoclaw-screen" }
 dependencies = [
     { name = "exoclaw" },
@@ -1026,7 +1026,7 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-tools-web"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "packages/exoclaw-tools-web" }
 dependencies = [
     { name = "exoclaw", extra = ["http"] },
@@ -1037,7 +1037,7 @@ requires-dist = [{ name = "exoclaw", extras = ["http"], specifier = ">=0.26.5" }
 
 [[package]]
 name = "exoclaw-tools-workspace"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "packages/exoclaw-tools-workspace" }
 dependencies = [
     { name = "exoclaw" },
