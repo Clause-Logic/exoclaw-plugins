@@ -1,0 +1,1 @@
+To add strong emphasis, surround text with \_\_. For example: \_\_this is strong\_\_

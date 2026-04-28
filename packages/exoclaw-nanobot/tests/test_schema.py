@@ -83,7 +83,7 @@ class TestConfigDefaults:
         cfg = Config()
         assert cfg.tools.restrict_to_workspace is False
         assert cfg.tools.exec.timeout == 10
-        assert cfg.tools.web.search.max_results == 5
+        assert cfg.tools.web.search.search_model is None
 
 
 def cfg_env_prefix() -> str:

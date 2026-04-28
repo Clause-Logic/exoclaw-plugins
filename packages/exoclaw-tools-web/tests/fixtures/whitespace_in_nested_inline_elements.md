@@ -1,0 +1,1 @@
+Text at root **[link text with trailing space in strong](http://www.example.com)** more text at root

@@ -1,0 +1,1 @@
+To add strong emphasis, surround text with **. For example: **this is strong**

@@ -1,0 +1,1 @@
+[c\[iao](http://www.example.com)

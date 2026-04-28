@@ -1,0 +1,1 @@
+To add strong emphasis, surround text with __. For example: __this is strong__

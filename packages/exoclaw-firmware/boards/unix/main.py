@@ -28,6 +28,23 @@ if not api_key:
 workspace = Path(os.getenv("EXOCLAW_WORKSPACE") or ".sim-workspace")
 base_url = os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1"
 model = os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
+# Optional second model dedicated to ``web_search``. Both live on
+# the same endpoint (``base_url`` / ``api_key``) — the OpenRouter
+# pattern of ``minimax/minimax-m2.7`` for chat and
+# ``google/gemma-4-26b-a4b-it:online`` for search. The ``:online``
+# suffix is OpenRouter's web-plugin sugar; no ``extra_body``
+# needed. Unset → ``web_search`` doesn't attach to the agent's
+# tool surface and the chip falls back to ``web_fetch`` only.
+search_model = os.getenv("OPENAI_SEARCH_MODEL") or None
+# Per-LLM-call hard timeout (seconds). The full turn goes through
+# at most three LLM calls (initial → tool-call → final-response)
+# so a 25s cap keeps a single sim turn under ~75s worst case;
+# a typical turn finishes in ~30s. Override with
+# ``EXOCLAW_REQUEST_TIMEOUT`` if you're testing a particularly
+# slow model. The TTFT budget inside the provider is 15s — this
+# value is the wall-clock cap *after* TTFT for streaming-to-DONE.
+_rt_env = os.getenv("EXOCLAW_REQUEST_TIMEOUT") or ""
+request_timeout: float = float(_rt_env) if _rt_env else 25.0
 # Optional heartbeat tick to flush ``wake_mode="next-heartbeat"``
 # cron jobs. Unset / 0 → no coalescing (every cron fire wakes
 # immediately, the chatty default that keeps sim logs simple).
@@ -78,6 +95,8 @@ async def _main() -> None:
     print("main: workspace={} model={}".format(workspace, model))
     if screen_out:
         print("main: screen preview → {}".format(screen_out))
+    if search_model:
+        print("main: web_search model={}".format(search_model))
     if heartbeat_interval_ms:
         print("main: heartbeat every {}ms".format(heartbeat_interval_ms))
     print("main: ready — type a message and press enter (Ctrl-C to exit)")
@@ -87,7 +106,9 @@ async def _main() -> None:
         base_url=base_url,
         model=model,
         display=display,
+        web_search_model=search_model,
         heartbeat_interval_ms=heartbeat_interval_ms,
+        request_timeout=request_timeout,
     )
 
 
