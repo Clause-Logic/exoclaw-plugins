@@ -1,0 +1,1 @@
+[Some `code`](http://example.com/code)

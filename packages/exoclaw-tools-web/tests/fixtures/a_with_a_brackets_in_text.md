@@ -1,0 +1,1 @@
+[Some \[text\]](http://example.com/code)

@@ -352,12 +352,28 @@ class GatewayConfig(Base):
 
 
 class WebSearchConfig(Base):
-    api_key: str = ""
-    max_results: int = 5
+    """Web-search tool config — LLM-with-web-plugin pattern.
+
+    ``search_model`` names a model on the agent's provider that has
+    a web-search plugin enabled (e.g. OpenRouter's ``:online`` suffix:
+    ``google/gemma-4-26b-a4b-it:online``). Unset → ``web_search``
+    doesn't attach to the agent's tool surface.
+
+    The previous Brave-Search-API path (``api_key`` + ``max_results``)
+    is gone — chip MicroPython can't talk to Brave's API directly,
+    and the LLM-with-web-plugin pattern produces grounded answers
+    with citations in one round trip rather than results-then-fetch.
+    """
+
+    search_model: str | None = None
 
 
 class WebToolsConfig(Base):
-    proxy: str | None = None
+    """Web-tools config. ``proxy`` is gone — the new tools route
+    through ``exoclaw.http.HTTPClient`` (chip-friendly, no httpx
+    proxy support) for fetch and through the LLM provider for
+    search."""
+
     search: WebSearchConfig = Field(default_factory=WebSearchConfig)
 
 

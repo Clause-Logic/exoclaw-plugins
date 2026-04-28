@@ -24,6 +24,7 @@ members = [
     "exoclaw-tools-mcp",
     "exoclaw-tools-message",
     "exoclaw-tools-spawn",
+    "exoclaw-tools-web",
     "exoclaw-tools-workspace",
 ]
 
@@ -712,6 +713,7 @@ dependencies = [
     { name = "exoclaw-screen" },
     { name = "exoclaw-subagent" },
     { name = "exoclaw-tools-cron" },
+    { name = "exoclaw-tools-web" },
     { name = "exoclaw-tools-workspace" },
 ]
 
@@ -722,13 +724,14 @@ host-preview = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", extras = ["http"], specifier = ">=0.26.4" },
+    { name = "exoclaw", extras = ["http"], specifier = ">=0.26.5" },
     { name = "exoclaw-conversation", editable = "packages/exoclaw-conversation" },
     { name = "exoclaw-provider-openai", editable = "packages/exoclaw-provider-openai" },
     { name = "exoclaw-screen", editable = "packages/exoclaw-screen" },
     { name = "exoclaw-screen", extras = ["host-preview"], marker = "extra == 'host-preview'", editable = "packages/exoclaw-screen" },
     { name = "exoclaw-subagent", editable = "packages/exoclaw-subagent" },
     { name = "exoclaw-tools-cron", editable = "packages/exoclaw-tools-cron" },
+    { name = "exoclaw-tools-web", editable = "packages/exoclaw-tools-web" },
     { name = "exoclaw-tools-workspace", editable = "packages/exoclaw-tools-workspace" },
 ]
 provides-extras = ["host-preview"]
@@ -769,7 +772,7 @@ requires-dist = [{ name = "exoclaw", specifier = ">=0.7.0" }]
 
 [[package]]
 name = "exoclaw-nanobot"
-version = "0.27.2"
+version = "0.28.0"
 source = { editable = "packages/exoclaw-nanobot" }
 dependencies = [
     { name = "exoclaw" },
@@ -783,6 +786,7 @@ dependencies = [
     { name = "exoclaw-tools-cron" },
     { name = "exoclaw-tools-mcp" },
     { name = "exoclaw-tools-message" },
+    { name = "exoclaw-tools-web" },
     { name = "exoclaw-tools-workspace" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -802,6 +806,7 @@ requires-dist = [
     { name = "exoclaw-tools-cron", editable = "packages/exoclaw-tools-cron" },
     { name = "exoclaw-tools-mcp", editable = "packages/exoclaw-tools-mcp" },
     { name = "exoclaw-tools-message", editable = "packages/exoclaw-tools-message" },
+    { name = "exoclaw-tools-web", editable = "packages/exoclaw-tools-web" },
     { name = "exoclaw-tools-workspace", editable = "packages/exoclaw-tools-workspace" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pydantic-settings", specifier = ">=2.0" },
@@ -983,6 +988,17 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "exoclaw-subagent", editable = "packages/exoclaw-subagent" }]
+
+[[package]]
+name = "exoclaw-tools-web"
+version = "0.1.0"
+source = { editable = "packages/exoclaw-tools-web" }
+dependencies = [
+    { name = "exoclaw", extra = ["http"] },
+]
+
+[package.metadata]
+requires-dist = [{ name = "exoclaw", extras = ["http"], specifier = ">=0.26.5" }]
 
 [[package]]
 name = "exoclaw-tools-workspace"

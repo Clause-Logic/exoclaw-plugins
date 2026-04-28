@@ -48,6 +48,7 @@ def build_agent(
     api_key: str,
     base_url: str = "https://api.openai.com/v1",
     model: str = "gpt-4o-mini",
+    extra_models: "dict[str, str] | None" = None,
     request_timeout: float = 60.0,
 ) -> "tuple[OpenAIStreamingProvider, DefaultConversation]":
     """Build a (provider, conversation) pair ready to drive a turn.
@@ -60,7 +61,14 @@ def build_agent(
             board-specific ``secrets.py`` at the call site.
         base_url: Override for OpenAI-compatible endpoints (Groq,
             OpenRouter, local llama.cpp server, etc.).
-        model: Default model name. Must match a deployment key.
+        model: Default chat model. Must match a deployment key.
+        extra_models: Optional mapping of additional model names →
+            their ``base_url`` (sharing the same ``api_key``). Used
+            for tools that need a different model on the same
+            provider — e.g. ``WebSearchTool`` pointed at OpenRouter's
+            ``google/gemma-4-26b-a4b-it:online`` while chat stays on
+            ``minimax/minimax-m2.7``. Each entry registers as its
+            own ``Deployment``.
         request_timeout: Seconds to wait for a complete response
             before the fallback chain engages. The MP HTTP client
             reuses this for connect + read budgets.
@@ -76,6 +84,11 @@ def build_agent(
     deployments = {
         model: Deployment(base_url=base_url, api_key=api_key),
     }
+    if extra_models:
+        for extra_name, extra_url in extra_models.items():
+            if extra_name in deployments:
+                continue
+            deployments[extra_name] = Deployment(base_url=extra_url, api_key=api_key)
     provider = OpenAIStreamingProvider(
         default_model=model,
         deployments=deployments,
@@ -158,7 +171,10 @@ async def run_serial_app(
     subagent_max_concurrent: int | None = 2,
     enable_workspace_tools: bool = True,
     display: "Any | None" = None,
+    enable_web_tools: bool = True,
+    web_search_model: str | None = None,
     heartbeat_interval_ms: int | None = None,
+    request_timeout: float = 60.0,
 ) -> None:
     """Run the full agent app with USB-CDC as a baseline channel.
 
@@ -206,6 +222,17 @@ async def run_serial_app(
     on host whatever directory the firmware was launched with.
     Set to ``False`` for a chat-only chip with no file persistence.
 
+    ``enable_web_tools`` (default ``True``) wires the cross-runtime
+    ``web_fetch`` (URL → Markdown via the streaming pure-Python
+    HTML→Markdown converter) and — when ``web_search_model`` is set —
+    ``web_search`` (search via an LLM with web-search plugin
+    enabled). Both rely on ``exoclaw.http`` and the same
+    ``OpenAIStreamingProvider`` the agent already speaks to, so
+    no extra deps land on chip. ``web_search`` only attaches if
+    the caller passes a model name dedicated to a search-enabled
+    deployment (e.g. ``"openai/gemini-flash:search"``); otherwise
+    only ``web_fetch`` lands on the agent's tool surface.
+
     ``subagent_max_concurrent`` (default ``2``) caps how many
     subagents may run concurrently on both runtimes. The cap goes
     through ``exoclaw._compat.make_semaphore`` (real
@@ -225,11 +252,24 @@ async def run_serial_app(
 
     from exoclaw_firmware.channel import SerialChannel
 
+    # If the caller wants ``web_search`` enabled, register a second
+    # deployment for the search model on the same provider so
+    # ``provider.chat(model=web_search_model)`` validates. We assume
+    # the search model lives on the same endpoint as chat (the
+    # OpenRouter case: ``minimax/minimax-m2.7`` for chat,
+    # ``google/gemma-4-26b-a4b-it:online`` for search, both behind
+    # one OpenRouter key).
+    extra_models: "dict[str, str] | None" = None
+    if enable_web_tools and web_search_model and web_search_model != model:
+        extra_models = {web_search_model: base_url}
+
     provider, conversation = build_agent(
         workspace=workspace,
         api_key=api_key,
         base_url=base_url,
         model=model,
+        extra_models=extra_models,
+        request_timeout=request_timeout,
     )
     serial = SerialChannel(chat_id=chat_id, prompt=prompt, reply_prefix=reply_prefix)
     # Avoid ``[serial, *extra]`` — MicroPython 1.27 doesn't support
@@ -297,6 +337,22 @@ async def run_serial_app(
         from exoclaw_screen import RepaintScreenTool
 
         all_tools.append(RepaintScreenTool(display=display))
+
+    # Web tools — ``web_fetch`` always (no extra deps beyond
+    # ``exoclaw.http``); ``web_search`` only when a search-enabled
+    # deployment model is supplied. The chip path runs both via
+    # the streaming HTML→Markdown converter (no ``re``, no
+    # ``html.parser``) — bounded peak memory regardless of body
+    # size.
+    web_fetch_tool = None
+    if enable_web_tools:
+        from exoclaw_tools_web import WebFetchTool, WebSearchTool
+
+        web_fetch_tool = WebFetchTool()
+        all_tools.append(web_fetch_tool)  # type: ignore[invalid-argument-type]
+        if web_search_model:
+            search_tool = WebSearchTool(provider=provider, model=web_search_model)
+            all_tools.append(search_tool)  # type: ignore[invalid-argument-type]
 
     # Optional cron — start the timer task before the agent loop
     # so jobs that fire during boot (e.g. ``at`` schedules in the
@@ -403,4 +459,6 @@ async def run_serial_app(
             # ``CronService.stop`` is sync — cancels the timer task
             # in-place, no await needed.
             cron_service.stop()
+        if web_fetch_tool is not None:
+            await web_fetch_tool.aclose()
         await provider.close()

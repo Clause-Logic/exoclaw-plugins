@@ -33,6 +33,8 @@ sources = [
     "../exoclaw-tools-workspace/exoclaw_tools_workspace/SKILL.md",
     "../exoclaw-screen/exoclaw_screen/**/*.py",
     "../exoclaw-screen/exoclaw_screen/SKILL.md",
+    "../exoclaw-tools-web/exoclaw_tools_web/**/*.py",
+    "../exoclaw-tools-web/exoclaw_tools_web/SKILL.md",
     "../../../exoclaw/exoclaw/**/*.py",
 ]
 outputs = [".stage/.stamp"]
@@ -66,6 +68,12 @@ cp ../exoclaw-tools-workspace/exoclaw_tools_workspace/SKILL.md .stage/exoclaw_to
 # safe to copy onto chip flash even though Pillow isn't installed
 # there; chip boards just won't construct ``PillowRenderer``.
 cp -r ../exoclaw-screen/exoclaw_screen .stage/exoclaw_screen
+# Web tools — pure-Python, no CPython-only siblings; copy the
+# whole package tree. ``html_to_markdown.py`` is the chip-side
+# hot path: streaming HTML→Markdown converter, no ``re``, no
+# ``html.parser``. Single skill (``web``) gets bundled via
+# ``bundle_skills.py`` like the other firmware-bundled plugins.
+cp -r ../exoclaw-tools-web/exoclaw_tools_web .stage/exoclaw_tools_web
 cp -r exoclaw_firmware .stage/exoclaw_firmware
 # MP-runtime fillers at stage root — flat so plain ``import
 # typing`` / ``import dataclasses`` / ``import datetime`` resolve

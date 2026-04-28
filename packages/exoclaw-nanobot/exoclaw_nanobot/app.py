@@ -39,6 +39,7 @@ from exoclaw_tools_cron.types import CronJob
 from exoclaw_tools_mcp.config import MCPServerConfig as MCPConfig
 from exoclaw_tools_mcp.tool import connect_mcp_servers
 from exoclaw_tools_message.tool import MessageTool
+from exoclaw_tools_web import WebFetchTool, WebSearchTool
 from exoclaw_tools_workspace.filesystem import (
     EditFileTool,
     ListDirTool,
@@ -46,7 +47,6 @@ from exoclaw_tools_workspace.filesystem import (
     WriteFileTool,
 )
 from exoclaw_tools_workspace.shell import ExecTool
-from exoclaw_tools_workspace.web import WebFetchTool, WebSearchTool
 
 from exoclaw_nanobot.config.loader import load_config
 from exoclaw_nanobot.config.schema import Config
@@ -323,13 +323,19 @@ async def create(
             restrict_to_workspace=config.tools.restrict_to_workspace,
             path_append=config.tools.exec.path_append,
         ),
-        WebSearchTool(
-            api_key=config.tools.web.search.api_key,
-            max_results=config.tools.web.search.max_results,
-            proxy=config.tools.web.proxy,
-        ),
-        WebFetchTool(proxy=config.tools.web.proxy),
+        WebFetchTool(),
     ]
+    # ``web_search`` only attaches when a search-enabled deployment
+    # model is configured (e.g. OpenRouter's
+    # ``google/gemma-4-26b-a4b-it:online``). Unset → no
+    # ``web_search`` tool surface; ``web_fetch`` still works.
+    # Migrated from the previous Brave-Search-API path; the new
+    # tool routes the query through the LLM provider with
+    # ``:online`` / ``extra_body={"plugins": [{"id": "web"}]}``
+    # web grounding, returning a citation-bearing answer in one
+    # round trip.
+    if config.tools.web.search.search_model:
+        tools.append(WebSearchTool(provider=provider, model=config.tools.web.search.search_model))
 
     # Cron
     cron_service = CronService(store_path=workspace / "cron.json")

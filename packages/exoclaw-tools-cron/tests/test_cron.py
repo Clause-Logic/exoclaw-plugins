@@ -159,7 +159,7 @@ class TestComputeNextRun:
 
     def test_unknown_kind_returns_none(self) -> None:
         s = CronSchedule(kind="at")
-        s.kind = "unknown"  # type: ignore[assignment]
+        s.kind = "unknown"
         result = _compute_next_run(s, _now_ms())
         assert result is None
 

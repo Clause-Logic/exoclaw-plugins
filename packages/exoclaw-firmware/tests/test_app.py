@@ -53,3 +53,38 @@ def test_build_agent_constructs_pair(tmp_path: Path) -> None:
         import asyncio
 
         asyncio.run(provider.close())
+
+
+def test_build_agent_extra_models_registers_second_deployment(tmp_path: Path) -> None:
+    """When the caller passes ``extra_models``, the provider gets a
+    second ``Deployment`` so a tool (e.g. ``WebSearchTool``) can
+    call ``provider.chat(model=<extra-name>)`` without hitting the
+    "no deployment for model" guard.
+
+    The OpenRouter pattern: ``minimax/minimax-m2.7`` for chat,
+    ``google/gemma-4-26b-a4b-it:online`` for search, both behind
+    one OpenRouter key — the second deployment shares the chat
+    deployment's ``base_url + api_key``."""
+    chat_model = "minimax/minimax-m2.7"
+    search_model = "google/gemma-4-26b-a4b-it:online"
+    provider, _conversation = build_agent(
+        workspace=tmp_path,
+        api_key="sk-test",
+        base_url="https://openrouter.ai/api/v1",
+        model=chat_model,
+        extra_models={search_model: "https://openrouter.ai/api/v1"},
+    )
+    try:
+        # Both deployment keys should be registered on the
+        # provider — accessing the private dict is fine in a
+        # smoke test for wiring.
+        deployments = provider._deployments
+        assert chat_model in deployments
+        assert search_model in deployments
+        # Default still points at the chat model so normal turns
+        # don't accidentally route through the search deployment.
+        assert provider.get_default_model() == chat_model
+    finally:
+        import asyncio
+
+        asyncio.run(provider.close())

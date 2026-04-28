@@ -1,0 +1,1 @@
+To add emphasis, surround text with *. For example: *this is emphasis*

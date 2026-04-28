@@ -1,0 +1,30 @@
+[project]
+name = "exoclaw-tools-web"
+version = "0.1.0"
+description = "Web tools for exoclaw — HTML→Markdown converter, web_fetch, web_search. Cross-runtime (CPython + MicroPython)."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    # ``>=0.26.5`` for ``HTTPClient.stream_post(method="GET")`` —
+    # the WebFetchTool needs GET, which landed in 0.26.5.
+    "exoclaw[http]>=0.26.5",
+]
+
+[project.entry-points."exoclaw.skills"]
+web = "exoclaw_tools_web.skills:web"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = [
+    "exoclaw_tools_web/**/*.py",
+    "exoclaw_tools_web/**/*.md",
+    "exoclaw_tools_web/py.typed",
+]
+
+# Tells the workspace MP CI gate this package runs on MicroPython.
+[tool.exoclaw]
+mp_compat = true
+mp_tests_dir = "tests/micro"
