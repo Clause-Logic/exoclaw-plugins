@@ -18,19 +18,20 @@ from __future__ import annotations
 import os
 import sys
 import textwrap
+from typing import Any
 
 # Remove cwd from sys.path so MP-stub modules in ``.stage/``
 # (typing.py, datetime.py) don't shadow real stdlib.
 _cwd = os.getcwd()
 sys.path = [p for p in sys.path if p not in ("", ".", _cwd)]
 
-from exoclaw_screen.layout import lay_out
-from exoclaw_screen.parser import parse
-from exoclaw_screen.protocol import DisplayCapabilities
-from exoclaw_screen.renderer.pillow import PillowRenderer
+from exoclaw_screen.layout import lay_out  # noqa: E402
+from exoclaw_screen.parser import parse  # noqa: E402
+from exoclaw_screen.protocol import DisplayCapabilities  # noqa: E402
+from exoclaw_screen.renderer.pillow import PillowRenderer  # noqa: E402
 
 
-def _draw_hud(img: "Any", width: int, height: int, status: str, caption: str) -> None:
+def _draw_hud(img: Any, width: int, height: int, status: str, caption: str) -> None:
     """Composite the HUD overlay onto the rendered panel image."""
     from PIL import ImageDraw, ImageFont
 

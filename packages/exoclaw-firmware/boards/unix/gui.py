@@ -93,8 +93,8 @@ def main() -> int:
     )
 
     pygame.init()
-    WIDTH, HEIGHT = 800, 480
-    window = pygame.display.set_mode((WIDTH, HEIGHT))
+    width, height = 800, 480
+    window = pygame.display.set_mode((width, height))
     pygame.display.set_caption("exoclaw sim")
     clock = pygame.time.Clock()
 
@@ -109,7 +109,7 @@ def main() -> int:
         caption_font = pygame.font.SysFont(None, 16)
 
     last_mtime: float = 0.0
-    panel_surface = pygame.Surface((WIDTH, HEIGHT))
+    panel_surface = pygame.Surface((width, height))
     panel_surface.fill(_WHITE)
     status = "ready"
     caption = "spacebar to talk"
@@ -215,7 +215,7 @@ def main() -> int:
 
         # Status pip — top right.
         pip_color = _STATUS_COLORS.get(status, _GREEN)
-        dot_x, dot_y, dot_r = WIDTH - 16, 14, 5
+        dot_x, dot_y, dot_r = width - 16, 14, 5
         pygame.draw.circle(window, pip_color, (dot_x, dot_y), dot_r)
         pip_label = pip_font.render(status, True, _GRAY)
         window.blit(pip_label, (dot_x - dot_r - pip_label.get_width() - 4, dot_y - 6))
@@ -223,8 +223,8 @@ def main() -> int:
         # Caption bar — bottom, fades after 15s.
         if caption and (time.monotonic() - caption_time) < 5.0:
             bar_h = 44
-            bar_y = HEIGHT - bar_h
-            bar_surface = pygame.Surface((WIDTH, bar_h), pygame.SRCALPHA)
+            bar_y = height - bar_h
+            bar_surface = pygame.Surface((width, bar_h), pygame.SRCALPHA)
             bar_surface.fill((30, 30, 30, 210))
             window.blit(bar_surface, (0, bar_y))
             lines = textwrap.wrap(caption, width=95)[:2]
