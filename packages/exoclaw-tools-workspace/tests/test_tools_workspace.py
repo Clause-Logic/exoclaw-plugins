@@ -33,7 +33,11 @@ class TestResolvePath:
 
     def test_allowed_dir_enforced(self, tmp_path: Path) -> None:
         other = tmp_path / "other"
-        with pytest.raises(PermissionError):
+        # Sandbox violation raises ``OSError`` (CPython's
+        # ``PermissionError`` would also work since it IS-A
+        # ``OSError``, but ``PermissionError`` isn't on
+        # MicroPython's builtin namespace).
+        with pytest.raises(OSError):
             _resolve_path("/etc/passwd", allowed_dir=other)
 
     def test_allowed_dir_passes(self, tmp_path: Path) -> None:
@@ -466,9 +470,12 @@ class TestWebFetchTool:
 # ---------------------------------------------------------------------------
 
 
-class TestResolvepathPermissionError:
-    def test_permission_error_from_resolve(self, tmp_path: Path) -> None:
-        with pytest.raises(PermissionError):
+class TestResolvepathSandboxOSError:
+    def test_outside_sandbox_raises(self, tmp_path: Path) -> None:
+        # Sandbox violation raises ``OSError`` — name reflects that
+        # we used to raise ``PermissionError`` (a CPython subclass of
+        # ``OSError``) but switched to ``OSError`` for MP parity.
+        with pytest.raises(OSError):
             _resolve_path("/etc/shadow", allowed_dir=tmp_path)
 
 
@@ -614,14 +621,22 @@ class TestWriteFileToolExtra:
 
 class TestEditFileToolNotFound:
     async def test_not_found_message_similar_multiline(self, tmp_path: Path) -> None:
-        """_not_found_message: best_ratio > 0.5 branch (multi-line old_text with 2/3 matching lines)"""
+        """``_not_found_message``: prefix-match branch — ``old_text``
+        first 12 chars match the file head; the helper picks them up
+        and emits a ``Closest match`` hint with the line number.
+
+        (Pre-0.6 this branch was a ``difflib.unified_diff`` view; we
+        replaced it with a chip-friendly prefix walker since
+        ``difflib`` isn't in MP's frozen module set.)
+        """
         f = tmp_path / "edit.txt"
         f.write_text("line1\nline2\nline3")
         tool = EditFileTool(workspace=tmp_path)
-        # 2 of 3 lines match exactly — ratio = 0.67 > 0.5
         result = await tool.execute(str(f), "line1\nline2\nchanged_line3", "replacement")
         assert "Error" in result
-        assert "%" in result  # shows similarity percentage
+        assert "Closest match" in result
+        # The hint should land on line 1 (where the prefix ``line1\nline2`` starts).
+        assert "line 1" in result
 
     async def test_general_exception(self, tmp_path: Path) -> None:
         f = tmp_path / "edit.txt"
