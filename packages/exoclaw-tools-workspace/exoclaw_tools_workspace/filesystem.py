@@ -6,10 +6,13 @@ CPython and MicroPython. Chip-friendly compromises:
 - ``_compat.Path`` instead of ``pathlib.Path`` (the MP shim provides
   ``read_text`` / ``write_text`` / ``exists`` / ``iterdir`` / ``mkdir``
   / ``relative_to`` — same surface as CPython for our tool needs).
-- Sandbox via workspace-prefix + reject ``..`` segments. No
-  ``Path.resolve()`` / symlink chasing — chip filesystems (SPIFFS,
-  LittleFS, FATFS) don't have meaningful symlinks, and the MP shim's
-  ``resolve()`` is a no-op.
+- Sandbox via workspace-prefix + ``..`` segment reject + symlink-
+  resolved ``relative_to`` check. ``Path.resolve()`` is called on
+  CPython for symlink-escape protection (a symlink inside the
+  workspace pointing to ``/etc/passwd`` resolves before the sandbox
+  check fires). On MP the ``Path`` shim's ``resolve()`` is a no-op
+  (chip filesystems don't have meaningful symlinks), so the call
+  is cross-runtime safe.
 - Smaller char caps on MP (32 KB read, 4× early-exit bound); CPython
   keeps 128 KB / 4× as before. Chip RAM doesn't grant the big budget.
 - ``edit_file``'s "old_text not found" error uses a simple substring
@@ -51,17 +54,24 @@ def _resolve_path(
     paths) and reject anything outside ``allowed_dir`` (defaults to
     ``workspace`` if unset).
 
-    Sandbox is segment-prefix based — same shape as ``mimiclaw``'s
-    ``MIMI_SPIFFS_BASE`` check: reject ``..`` segments, then enforce
-    that the resolved path sits under ``allowed_dir`` via
-    ``relative_to``. No ``Path.resolve()`` call — chip filesystems
-    don't have symlinks and the shim's ``resolve()`` is a no-op.
+    Two-layer sandbox:
+
+    1. ``..`` segment reject — covers the obvious traversal attempt
+       like ``../etc/passwd``. Done before any joining because
+       ``Path("a/../b")`` is treated as ``b`` after resolve on
+       CPython, which would silently bypass a naive ``relative_to``
+       check on the un-resolved path.
+    2. ``relative_to`` against the sandbox after a runtime-correct
+       resolve. On CPython we call ``Path.resolve()`` so a symlink
+       inside the workspace pointing to ``/etc/passwd`` is resolved
+       to its target before the sandbox check fires (without this,
+       the link itself sits inside the workspace and ``relative_to``
+       passes — symlink-escape). On MicroPython the ``Path`` shim's
+       ``resolve`` is a no-op (chip filesystems don't have meaningful
+       symlinks, and the resolve helper isn't worth a syscall) so
+       the segment-reject + ``relative_to`` does the work.
     """
     sandbox = allowed_dir or workspace
-    # ``..`` segment in the input is the path-traversal escape hatch;
-    # reject before any joining. ``Path("a/../b")`` is treated as
-    # ``b`` after resolve on CPython, so without this check a caller
-    # could escape sandbox by encoding ``..`` in the request.
     parts = path.replace("\\", "/").split("/")
     if ".." in parts:
         raise OSError("path may not contain '..' segments: {!r}".format(path))
@@ -70,14 +80,17 @@ def _resolve_path(
     is_absolute = path.startswith("/")
     if not is_absolute and workspace is not None:
         p = workspace / path
-    if sandbox is not None:
-        # ``relative_to`` raises ``ValueError`` if ``p`` isn't under
-        # the sandbox — translate to ``OSError`` to match the
-        # rest of the tool surface.
+    # Resolve symlinks on CPython BEFORE the sandbox check so a
+    # symlink inside ``workspace`` pointing outside is rejected.
+    # The MP shim's ``resolve`` is a no-op (returns self), so the
+    # call is cross-runtime safe and the chip gets the cheap version.
+    p = p.resolve()
+    sandbox_resolved = sandbox.resolve() if sandbox is not None else None
+    if sandbox_resolved is not None:
         try:
-            p.relative_to(sandbox)
+            p.relative_to(sandbox_resolved)
         except ValueError:
-            raise OSError("path {!r} is outside sandbox {!r}".format(str(p), str(sandbox)))
+            raise OSError("path {!r} is outside sandbox {!r}".format(str(p), str(sandbox_resolved)))
     return p
 
 

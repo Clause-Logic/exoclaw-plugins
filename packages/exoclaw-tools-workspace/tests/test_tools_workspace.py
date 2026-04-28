@@ -470,8 +470,11 @@ class TestWebFetchTool:
 # ---------------------------------------------------------------------------
 
 
-class TestResolvepathPermissionError:
-    def test_permission_error_from_resolve(self, tmp_path: Path) -> None:
+class TestResolvepathSandboxOSError:
+    def test_outside_sandbox_raises(self, tmp_path: Path) -> None:
+        # Sandbox violation raises ``OSError`` — name reflects that
+        # we used to raise ``PermissionError`` (a CPython subclass of
+        # ``OSError``) but switched to ``OSError`` for MP parity.
         with pytest.raises(OSError):
             _resolve_path("/etc/shadow", allowed_dir=tmp_path)
 
