@@ -276,10 +276,13 @@ async def run_serial_app(
             WriteFileTool,
         )
 
-        all_tools.append(ReadFileTool(workspace=workspace))
-        all_tools.append(WriteFileTool(workspace=workspace))
-        all_tools.append(EditFileTool(workspace=workspace))
-        all_tools.append(ListDirTool(workspace=workspace))
+        # All four structurally satisfy the ``Tool`` Protocol —
+        # same ty annotation pattern as ``CronTool`` / ``SpawnTool``
+        # / ``LoadSkillTool`` above.
+        all_tools.append(ReadFileTool(workspace=workspace))  # type: ignore[invalid-argument-type]
+        all_tools.append(WriteFileTool(workspace=workspace))  # type: ignore[invalid-argument-type]
+        all_tools.append(EditFileTool(workspace=workspace))  # type: ignore[invalid-argument-type]
+        all_tools.append(ListDirTool(workspace=workspace))  # type: ignore[invalid-argument-type]
 
     # Optional cron — start the timer task before the agent loop
     # so jobs that fire during boot (e.g. ``at`` schedules in the
