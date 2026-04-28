@@ -1,35 +1,116 @@
-"""File system tools: read, write, edit, list."""
+"""File system tools: read, write, edit, list — cross-runtime.
 
-import difflib
-from collections.abc import AsyncIterator
-from pathlib import Path
-from typing import Any
+Same 4-tool surface (read_file, write_file, edit_file, list_dir) on
+CPython and MicroPython. Chip-friendly compromises:
 
+- ``_compat.Path`` instead of ``pathlib.Path`` (the MP shim provides
+  ``read_text`` / ``write_text`` / ``exists`` / ``iterdir`` / ``mkdir``
+  / ``relative_to`` — same surface as CPython for our tool needs).
+- Sandbox via workspace-prefix + reject ``..`` segments. No
+  ``Path.resolve()`` / symlink chasing — chip filesystems (SPIFFS,
+  LittleFS, FATFS) don't have meaningful symlinks, and the MP shim's
+  ``resolve()`` is a no-op.
+- Smaller char caps on MP (32 KB read, 4× early-exit bound); CPython
+  keeps 128 KB / 4× as before. Chip RAM doesn't grant the big budget.
+- ``edit_file``'s "old_text not found" error uses a simple substring
+  proximity hint instead of ``difflib.unified_diff``. ``difflib`` isn't
+  in chip MP's frozen module set.
+- ``open(..., encoding="utf-8")`` is CPython-only — MP's ``open()``
+  doesn't accept the kwarg. Gated on ``IS_MICROPYTHON``.
+- File size is read via ``os.stat`` directly (both runtimes have it
+  on a string path) instead of ``Path.stat()`` (the MP shim doesn't
+  implement ``stat`` on the ``Path`` object).
+"""
+
+from __future__ import annotations
+
+import os
+from typing import TYPE_CHECKING, Any
+
+from exoclaw._compat import IS_MICROPYTHON, Path
 from exoclaw.agent.tools.protocol import ToolBase
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+
+def _file_size(path: "str | Path") -> int:
+    """Return file size in bytes, or ``-1`` if ``stat`` fails. Works
+    on both runtimes — the MP ``Path`` shim doesn't implement
+    ``Path.stat()`` but ``os.stat(str_path)`` does work on MP."""
+    try:
+        return os.stat(str(path))[6]
+    except OSError:
+        return -1
 
 
 def _resolve_path(
-    path: str, workspace: Path | None = None, allowed_dir: Path | None = None
+    path: str, workspace: "Path | None" = None, allowed_dir: "Path | None" = None
 ) -> Path:
-    """Resolve path against workspace (if relative) and enforce directory restriction."""
-    p = Path(path).expanduser()
-    if not p.is_absolute() and workspace:
-        p = workspace / p
-    resolved = p.resolve()
-    if allowed_dir:
+    """Resolve a user-supplied path against ``workspace`` (relative
+    paths) and reject anything outside ``allowed_dir`` (defaults to
+    ``workspace`` if unset).
+
+    Sandbox is segment-prefix based — same shape as ``mimiclaw``'s
+    ``MIMI_SPIFFS_BASE`` check: reject ``..`` segments, then enforce
+    that the resolved path sits under ``allowed_dir`` via
+    ``relative_to``. No ``Path.resolve()`` call — chip filesystems
+    don't have symlinks and the shim's ``resolve()`` is a no-op.
+    """
+    sandbox = allowed_dir or workspace
+    # ``..`` segment in the input is the path-traversal escape hatch;
+    # reject before any joining. ``Path("a/../b")`` is treated as
+    # ``b`` after resolve on CPython, so without this check a caller
+    # could escape sandbox by encoding ``..`` in the request.
+    parts = path.replace("\\", "/").split("/")
+    if ".." in parts:
+        raise OSError("path may not contain '..' segments: {!r}".format(path))
+
+    p = Path(path)
+    is_absolute = path.startswith("/")
+    if not is_absolute and workspace is not None:
+        p = workspace / path
+    if sandbox is not None:
+        # ``relative_to`` raises ``ValueError`` if ``p`` isn't under
+        # the sandbox — translate to ``OSError`` to match the
+        # rest of the tool surface.
         try:
-            resolved.relative_to(allowed_dir.resolve())
+            p.relative_to(sandbox)
         except ValueError:
-            raise PermissionError(f"Path {path} is outside allowed directory {allowed_dir}")
-    return resolved
+            raise OSError("path {!r} is outside sandbox {!r}".format(str(p), str(sandbox)))
+    return p
+
+
+# ── Per-runtime caps ────────────────────────────────────────────────
+# Chip MP gets a smaller budget than CPython. The 4× early-exit
+# bound is the "file too large, use offset/limit" threshold — scaled
+# from the inline ``_MAX_CHARS`` cap by the same factor on both.
+_MAX_CHARS_CPYTHON = 128_000
+_MAX_CHARS_MP = 32_000
+_MAX_CHARS = _MAX_CHARS_MP if IS_MICROPYTHON else _MAX_CHARS_CPYTHON
+
+
+def _open_text(path_str: str, mode: str = "r") -> Any:
+    """Open a text file with UTF-8. CPython needs ``encoding="utf-8"``
+    explicitly; MP's ``open()`` doesn't accept the kwarg but defaults
+    to bytes-as-utf-8 already on the unix port."""
+    if IS_MICROPYTHON:  # pragma: no cover (cpython)
+        return open(path_str, mode)
+    return open(path_str, mode, encoding="utf-8")  # pragma: no cover (micropython)
 
 
 class ReadFileTool(ToolBase):
-    """Tool to read file contents."""
+    """Read file contents. Supports ranged reads (offset/limit) for
+    large files.
 
-    _MAX_CHARS = 128_000  # ~128 KB — prevents OOM from reading huge files into LLM context
+    The class-level ``_MAX_CHARS`` is set per-runtime: 128 KB on
+    CPython, 32 KB on MicroPython. Files larger than 4× this cap
+    require offset/limit — the agent gets a hint message, not a
+    silent truncation, so the model can pick a reasonable chunk size."""
 
-    def __init__(self, workspace: Path | None = None, allowed_dir: Path | None = None):
+    _MAX_CHARS = _MAX_CHARS
+
+    def __init__(self, workspace: "Path | None" = None, allowed_dir: "Path | None" = None):
         self._workspace = workspace
         self._allowed_dir = allowed_dir
 
@@ -63,10 +144,9 @@ class ReadFileTool(ToolBase):
         }
 
     async def execute(
-        self, path: str, offset: int = 0, limit: int | None = None, **kwargs: Any
+        self, path: str, offset: int = 0, limit: "int | None" = None, **kwargs: Any
     ) -> str:
         try:
-            # Validate offset and limit
             if offset < 0:
                 return "Error: offset must be >= 0"
             if limit is not None and limit < 1:
@@ -74,81 +154,68 @@ class ReadFileTool(ToolBase):
 
             file_path = _resolve_path(path, self._workspace, self._allowed_dir)
             if not file_path.exists():
-                return f"Error: File not found: {path}"
+                return "Error: File not found: {}".format(path)
             if not file_path.is_file():
-                return f"Error: Not a file: {path}"
+                return "Error: Not a file: {}".format(path)
 
-            size = file_path.stat().st_size
+            size = _file_size(file_path)
 
-            # If no range specified and file is huge, return metadata + hint
+            # Early exit before allocation: if the caller didn't
+            # narrow with offset/limit and the file is way over budget,
+            # bounce them with a hint instead of buffering it.
             if offset == 0 and limit is None and size > self._MAX_CHARS * 4:
                 return (
-                    f"Error: File too large ({size:,} bytes). "
-                    f"Use offset and limit to read a portion, e.g. read_file(path, offset=0, limit=50)."
+                    "Error: File too large ({} bytes). "
+                    "Use offset and limit to read a portion, e.g. "
+                    "read_file(path, offset=0, limit=50).".format(size)
                 )
 
-            # Ranged read: stream lines to avoid loading entire file
+            # Ranged read — stream lines so the heap holds only the
+            # selected window, not the whole file.
             if offset > 0 or limit is not None:
                 selected: list[str] = []
                 total_lines = 0
                 end = offset + limit if limit is not None else None
-                with open(file_path, encoding="utf-8") as fh:
+                with _open_text(str(file_path)) as fh:
                     for i, line in enumerate(fh):
                         total_lines = i + 1
                         if i < offset:
                             continue
                         if end is not None and i >= end:
-                            # Keep counting total lines
                             for _ in fh:
                                 total_lines += 1
                             break
                         selected.append(line)
 
                 actual_end = offset + len(selected)
-                header = f"[lines {offset + 1}-{actual_end} of {total_lines}]\n"
+                header = "[lines {}-{} of {}]\n".format(offset + 1, actual_end, total_lines)
                 text = "".join(selected)
                 if len(text) > self._MAX_CHARS:
                     text = text[: self._MAX_CHARS] + "\n... (truncated)"
                 return header + text
 
-            # Full file
+            # Full file — within the inline cap.
             content = file_path.read_text(encoding="utf-8")
             if len(content) > self._MAX_CHARS:
                 return (
                     content[: self._MAX_CHARS]
-                    + f"\n\n... (truncated — file is {len(content):,} chars, showing first {self._MAX_CHARS:,}. Use offset/limit to read more.)"
+                    + "\n\n... (truncated — file is {} chars, showing first {}. "
+                    "Use offset/limit to read more.)".format(len(content), self._MAX_CHARS)
                 )
             return content
-        except PermissionError as e:
-            return f"Error: {e}"
+        except OSError as e:
+            return "Error: {}".format(e)
         except Exception as e:
-            return f"Error reading file: {str(e)}"
+            return "Error reading file: {}".format(e)
 
     async def execute_streaming(
-        self, path: str, offset: int = 0, limit: int | None = None, **kwargs: Any
-    ) -> AsyncIterator[str]:
-        """Step D opt-in: stream the file's content from disk in fixed
-        character chunks, lifting the inline path's ``_MAX_CHARS`` cap.
-
-        Only the **full-file** path streams. Ranged reads (``offset``
-        or ``limit`` set) fall back to the inline implementation
-        because line-counting requires reading lines, and a single
-        2 MB line in a minified JSON would force a 2 MB allocation
-        regardless of how we structure the iteration. The streaming
-        variant is the safe path for "I want the whole file no
-        matter how big" — typically logs, transcripts, exported
-        data — where line size is not under the user's control.
-
-        ``open(..., encoding='utf-8').read(8192)`` returns up to
-        8192 **characters** (not bytes) at a time, with codepoint
-        boundaries handled by ``TextIOWrapper`` internally. So no
-        partial-codepoint dance is needed here, unlike the
-        subprocess-pipe path in ``ExecTool``.
+        self, path: str, offset: int = 0, limit: "int | None" = None, **kwargs: Any
+    ) -> "AsyncIterator[str]":
+        """Step D opt-in: stream the file's content from disk in
+        fixed-character chunks, lifting the inline ``_MAX_CHARS`` cap.
+        Only the full-file path streams; ranged reads fall back to
+        the inline path because line-counting still needs full reads.
         """
-        # Same input validation as ``execute``. A negative ``offset``
-        # would otherwise slip through into the streaming branch
-        # (which checks ``offset > 0``) and silently stream the full
-        # file instead of returning the expected error.
         if offset < 0:
             yield "Error: offset must be >= 0"
             return
@@ -157,43 +224,38 @@ class ReadFileTool(ToolBase):
             return
 
         if offset > 0 or limit is not None:
-            # Ranged reads: line-count semantics, keep the inline
-            # path. The executor's ``execute_tool_with_handle``
-            # checks ``inspect.isasyncgenfunction`` to decide which
-            # path to take, so we have to actually be an async
-            # generator here even for the fallback case.
             yield await self.execute(path, offset=offset, limit=limit, **kwargs)
             return
 
         try:
             file_path = _resolve_path(path, self._workspace, self._allowed_dir)
-        except PermissionError as e:
-            yield f"Error: {e}"
+        except OSError as e:
+            yield "Error: {}".format(e)
             return
         if not file_path.exists():
-            yield f"Error: File not found: {path}"
+            yield "Error: File not found: {}".format(path)
             return
         if not file_path.is_file():
-            yield f"Error: Not a file: {path}"
+            yield "Error: Not a file: {}".format(path)
             return
 
         try:
-            with open(file_path, encoding="utf-8") as fh:
+            with _open_text(str(file_path)) as fh:
                 while True:
                     chunk = fh.read(8192)
                     if not chunk:
                         return
                     yield chunk
-        except PermissionError as e:
-            yield f"Error: {e}"
+        except OSError as e:
+            yield "Error: {}".format(e)
         except Exception as e:
-            yield f"Error reading file: {e}"
+            yield "Error reading file: {}".format(e)
 
 
 class WriteFileTool(ToolBase):
-    """Tool to write content to a file."""
+    """Write content to a file. Creates parent directories as needed."""
 
-    def __init__(self, workspace: Path | None = None, allowed_dir: Path | None = None):
+    def __init__(self, workspace: "Path | None" = None, allowed_dir: "Path | None" = None):
         self._workspace = workspace
         self._allowed_dir = allowed_dir
 
@@ -221,17 +283,19 @@ class WriteFileTool(ToolBase):
             file_path = _resolve_path(path, self._workspace, self._allowed_dir)
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(content, encoding="utf-8")
-            return f"Successfully wrote {len(content)} bytes to {file_path}"
-        except PermissionError as e:
-            return f"Error: {e}"
+            return "Successfully wrote {} bytes to {}".format(len(content), file_path)
+        except OSError as e:
+            return "Error: {}".format(e)
         except Exception as e:
-            return f"Error writing file: {str(e)}"
+            return "Error writing file: {}".format(e)
 
 
 class EditFileTool(ToolBase):
-    """Tool to edit a file by replacing text."""
+    """Edit a file by replacing exact ``old_text`` with ``new_text``.
+    The match must be unique — if ``old_text`` appears multiple times,
+    the call is rejected so the agent can re-fetch with more context."""
 
-    def __init__(self, workspace: Path | None = None, allowed_dir: Path | None = None):
+    def __init__(self, workspace: "Path | None" = None, allowed_dir: "Path | None" = None):
         self._workspace = workspace
         self._allowed_dir = allowed_dir
 
@@ -241,7 +305,10 @@ class EditFileTool(ToolBase):
 
     @property
     def description(self) -> str:
-        return "Edit a file by replacing old_text with new_text. The old_text must exist exactly in the file."
+        return (
+            "Edit a file by replacing old_text with new_text. The old_text must exist "
+            "exactly in the file."
+        )
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -249,7 +316,10 @@ class EditFileTool(ToolBase):
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "The file path to edit"},
-                "old_text": {"type": "string", "description": "The exact text to find and replace"},
+                "old_text": {
+                    "type": "string",
+                    "description": "The exact text to find and replace",
+                },
                 "new_text": {"type": "string", "description": "The text to replace with"},
             },
             "required": ["path", "old_text", "new_text"],
@@ -259,7 +329,7 @@ class EditFileTool(ToolBase):
         try:
             file_path = _resolve_path(path, self._workspace, self._allowed_dir)
             if not file_path.exists():
-                return f"Error: File not found: {path}"
+                return "Error: File not found: {}".format(path)
 
             content = file_path.read_text(encoding="utf-8")
 
@@ -268,49 +338,67 @@ class EditFileTool(ToolBase):
 
             count = content.count(old_text)
             if count > 1:
-                return f"Warning: old_text appears {count} times. Please provide more context to make it unique."
+                return (
+                    "Warning: old_text appears {} times. Please provide more context "
+                    "to make it unique.".format(count)
+                )
 
             new_content = content.replace(old_text, new_text, 1)
             file_path.write_text(new_content, encoding="utf-8")
-            return f"Successfully edited {file_path}"
-        except PermissionError as e:
-            return f"Error: {e}"
+            return "Successfully edited {}".format(file_path)
+        except OSError as e:
+            return "Error: {}".format(e)
         except Exception as e:
-            return f"Error editing file: {str(e)}"
+            return "Error editing file: {}".format(e)
 
     @staticmethod
     def _not_found_message(old_text: str, content: str, path: str) -> str:
-        """Build a helpful error when old_text is not found."""
-        lines = content.splitlines(keepends=True)
-        old_lines = old_text.splitlines(keepends=True)
-        window = len(old_lines)
+        """Build a helpful error when ``old_text`` isn't in ``content``.
 
-        best_ratio, best_start = 0.0, 0
-        for i in range(max(1, len(lines) - window + 1)):
-            ratio = difflib.SequenceMatcher(None, old_lines, lines[i : i + window]).ratio()
-            if ratio > best_ratio:
-                best_ratio, best_start = ratio, i
-
-        if best_ratio > 0.5:
-            diff = "\n".join(
-                difflib.unified_diff(
-                    old_lines,
-                    lines[best_start : best_start + window],
-                    fromfile="old_text (provided)",
-                    tofile=f"{path} (actual, line {best_start + 1})",
-                    lineterm="",
-                )
+        Uses simple character-prefix matching to find the longest
+        prefix of ``old_text`` that DOES appear in ``content`` and
+        echoes the first 200 chars of context around the partial
+        match. ``difflib`` isn't in chip MP's frozen module set, so
+        this is a runtime-portable replacement for the
+        ``unified_diff`` view the CPython tool used to render. Same
+        signal — "your old_text doesn't quite match, here's where I
+        think it might've been intended" — at a fraction of the
+        runtime + memory cost.
+        """
+        best_prefix_len = 0
+        best_pos = -1
+        # Walk down from the full ``old_text`` to its first character,
+        # looking for the longest prefix that occurs in ``content``.
+        # Cap the inner search at 64 chars — anything more granular is
+        # unhelpful noise, and on a chip we don't want to scan a big
+        # file 200 times.
+        for length in range(min(len(old_text), 64), 0, -1):
+            prefix = old_text[:length]
+            pos = content.find(prefix)
+            if pos != -1:
+                best_prefix_len = length
+                best_pos = pos
+                break
+        if best_pos == -1 or best_prefix_len < 3:
+            return (
+                "Error: old_text not found in {}. No similar text found. "
+                "Verify the file content.".format(path)
             )
-            return f"Error: old_text not found in {path}.\nBest match ({best_ratio:.0%} similar) at line {best_start + 1}:\n{diff}"
+        # 100-char window before and after the partial match.
+        ctx_start = max(0, best_pos - 100)
+        ctx_end = min(len(content), best_pos + best_prefix_len + 100)
+        line_no = content[:best_pos].count("\n") + 1
+        snippet = content[ctx_start:ctx_end]
         return (
-            f"Error: old_text not found in {path}. No similar text found. Verify the file content."
+            "Error: old_text not found in {}. Closest match (first {} chars of "
+            "old_text) at line {}:\n{}".format(path, best_prefix_len, line_no, snippet)
         )
 
 
 class ListDirTool(ToolBase):
-    """Tool to list directory contents."""
+    """List directory contents."""
 
-    def __init__(self, workspace: Path | None = None, allowed_dir: Path | None = None):
+    def __init__(self, workspace: "Path | None" = None, allowed_dir: "Path | None" = None):
         self._workspace = workspace
         self._allowed_dir = allowed_dir
 
@@ -334,20 +422,24 @@ class ListDirTool(ToolBase):
         try:
             dir_path = _resolve_path(path, self._workspace, self._allowed_dir)
             if not dir_path.exists():
-                return f"Error: Directory not found: {path}"
+                return "Error: Directory not found: {}".format(path)
             if not dir_path.is_dir():
-                return f"Error: Not a directory: {path}"
+                return "Error: Not a directory: {}".format(path)
 
             items = []
-            for item in sorted(dir_path.iterdir()):
-                prefix = "📁 " if item.is_dir() else "📄 "
-                items.append(f"{prefix}{item.name}")
+            # ``Path.iterdir`` is the cross-runtime listing API; the
+            # MP shim wraps ``os.listdir``. Sort by name for stable
+            # output across runs (CPython's ``iterdir`` order is
+            # filesystem-defined; MP just returns ``listdir``'s list).
+            for item in sorted(dir_path.iterdir(), key=lambda p: p.name):
+                prefix = "[d] " if item.is_dir() else "[f] "
+                items.append(prefix + item.name)
 
             if not items:
-                return f"Directory {path} is empty"
+                return "Directory {} is empty".format(path)
 
             return "\n".join(items)
-        except PermissionError as e:
-            return f"Error: {e}"
+        except OSError as e:
+            return "Error: {}".format(e)
         except Exception as e:
-            return f"Error listing directory: {str(e)}"
+            return "Error listing directory: {}".format(e)

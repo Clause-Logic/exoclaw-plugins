@@ -700,7 +700,7 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-firmware"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "packages/exoclaw-firmware" }
 dependencies = [
     { name = "exoclaw", extra = ["http"] },
@@ -708,6 +708,7 @@ dependencies = [
     { name = "exoclaw-provider-openai" },
     { name = "exoclaw-subagent" },
     { name = "exoclaw-tools-cron" },
+    { name = "exoclaw-tools-workspace" },
 ]
 
 [package.metadata]
@@ -717,6 +718,7 @@ requires-dist = [
     { name = "exoclaw-provider-openai", editable = "packages/exoclaw-provider-openai" },
     { name = "exoclaw-subagent", editable = "packages/exoclaw-subagent" },
     { name = "exoclaw-tools-cron", editable = "packages/exoclaw-tools-cron" },
+    { name = "exoclaw-tools-workspace", editable = "packages/exoclaw-tools-workspace" },
 ]
 
 [[package]]
@@ -948,7 +950,7 @@ requires-dist = [{ name = "exoclaw-subagent", editable = "packages/exoclaw-subag
 
 [[package]]
 name = "exoclaw-tools-workspace"
-version = "0.5.0"
+version = "0.6.0"
 source = { editable = "packages/exoclaw-tools-workspace" }
 dependencies = [
     { name = "exoclaw" },
@@ -959,7 +961,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", specifier = ">=0.24.0" },
+    { name = "exoclaw", specifier = ">=0.26.4" },
     { name = "httpx", specifier = ">=0.28.0,<1.0.0" },
     { name = "readability-lxml", specifier = ">=0.8.1" },
     { name = "structlog", specifier = ">=25.0.0" },

@@ -154,6 +154,7 @@ async def run_serial_app(
     enable_cron: bool = True,
     enable_subagent: bool = True,
     subagent_max_concurrent: int | None = 2,
+    enable_workspace_tools: bool = True,
     heartbeat_interval_ms: int | None = None,
 ) -> None:
     """Run the full agent app with USB-CDC as a baseline channel.
@@ -194,6 +195,13 @@ async def run_serial_app(
     + ``AgentLoop`` against the same provider; results announce back
     to the parent over the bus as ``system`` messages. Set to
     ``False`` for a tightly-scoped chip that should never branch.
+
+    ``enable_workspace_tools`` (default ``True``) wires the
+    cross-runtime ``read_file`` / ``write_file`` / ``edit_file`` /
+    ``list_dir`` tools, sandboxed to ``workspace``. On chip the
+    typical workspace is an SD card path (``/sd/exoclaw/workspace``);
+    on host whatever directory the firmware was launched with.
+    Set to ``False`` for a chat-only chip with no file persistence.
 
     ``subagent_max_concurrent`` (default ``2``) caps how many
     subagents may run concurrently on both runtimes. The cap goes
@@ -250,6 +258,28 @@ async def run_serial_app(
         # subtype — same situation as ``CronTool`` below and
         # ``DBOSExecutor`` / ``Executor`` elsewhere in the workspace.
         all_tools.append(LoadSkillTool(skills=skills_loader, active_tools=active_optional_tools))  # type: ignore[invalid-argument-type]
+
+    # Workspace file tools — read/write/edit/list inside the agent's
+    # workspace directory. On a chip the typical setup is
+    # ``workspace=Path("/sd/exoclaw/workspace")`` (SD card mount;
+    # files persist across reboots and the SD has gigabytes of
+    # storage even though the chip heap is small). On a host it's
+    # whatever directory the firmware was launched with. The
+    # 32 KB-on-MP read cap is RAM-driven (``read_text`` materialises
+    # the whole file as one Python str) — it has nothing to do with
+    # storage capacity, so SD doesn't relax it.
+    if enable_workspace_tools:
+        from exoclaw_tools_workspace import (
+            EditFileTool,
+            ListDirTool,
+            ReadFileTool,
+            WriteFileTool,
+        )
+
+        all_tools.append(ReadFileTool(workspace=workspace))
+        all_tools.append(WriteFileTool(workspace=workspace))
+        all_tools.append(EditFileTool(workspace=workspace))
+        all_tools.append(ListDirTool(workspace=workspace))
 
     # Optional cron — start the timer task before the agent loop
     # so jobs that fire during boot (e.g. ``at`` schedules in the
