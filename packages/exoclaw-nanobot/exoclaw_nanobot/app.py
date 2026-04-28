@@ -48,8 +48,6 @@ from exoclaw_tools_workspace.filesystem import (
 from exoclaw_tools_workspace.shell import ExecTool
 from exoclaw_tools_workspace.web import WebFetchTool, WebSearchTool
 
-from exoclaw_conversation import LoadSkillTool
-
 from exoclaw_nanobot.config.loader import load_config
 from exoclaw_nanobot.config.schema import Config
 
