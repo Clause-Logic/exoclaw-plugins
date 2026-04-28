@@ -35,6 +35,8 @@ sources = [
     "../exoclaw-screen/exoclaw_screen/SKILL.md",
     "../exoclaw-tools-web/exoclaw_tools_web/**/*.py",
     "../exoclaw-tools-web/exoclaw_tools_web/SKILL.md",
+    "../exoclaw-tools-voice/exoclaw_tools_voice/**/*.py",
+    "../exoclaw-tools-voice/exoclaw_tools_voice/SKILL.md",
     "../../../exoclaw/exoclaw/**/*.py",
 ]
 outputs = [".stage/.stamp"]
@@ -74,6 +76,12 @@ cp -r ../exoclaw-screen/exoclaw_screen .stage/exoclaw_screen
 # ``html.parser``. Single skill (``web``) gets bundled via
 # ``bundle_skills.py`` like the other firmware-bundled plugins.
 cp -r ../exoclaw-tools-web/exoclaw_tools_web .stage/exoclaw_tools_web
+# Voice tools — cross-runtime AudioCapture protocol, streaming
+# base64+JSON body generator, MicListener (SerialChannel
+# ``/talk`` interceptor). Concrete capture impl is per-board
+# (``audio.py`` sibling at .stage/ root): unix sim ships
+# ``LiveMicCapture`` via sounddevice; chip will ship I2S PDM.
+cp -r ../exoclaw-tools-voice/exoclaw_tools_voice .stage/exoclaw_tools_voice
 cp -r exoclaw_firmware .stage/exoclaw_firmware
 # MP-runtime fillers at stage root — flat so plain ``import
 # typing`` / ``import dataclasses`` / ``import datetime`` resolve
@@ -123,7 +131,7 @@ cp boards/$EXOCLAW_BOARD/main.py .stage/main.py
 # (e.g. ``display.py`` for the unix host-preview display). Each
 # one lands at stage root so ``from display import …`` resolves
 # the same on unix-port and chip MP.
-for sib in display.py drivers.py; do
+for sib in display.py drivers.py audio.py; do
     if [ -f boards/$EXOCLAW_BOARD/$sib ]; then
         cp boards/$EXOCLAW_BOARD/$sib .stage/$sib
     fi

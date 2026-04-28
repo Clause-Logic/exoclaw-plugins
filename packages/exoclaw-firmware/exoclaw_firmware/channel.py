@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from exoclaw._compat import get_logger
 from exoclaw.bus.events import InboundMessage, OutboundMessage
@@ -60,11 +60,21 @@ class SerialChannel:
         prompt: str = "you> ",
         reply_prefix: str = "bot> ",
         poll_interval: float = 0.05,
+        line_interceptor: "Any | None" = None,
     ) -> None:
         self._chat_id = chat_id
         self._prompt = prompt
         self._reply_prefix = reply_prefix
         self._poll_interval = poll_interval
+        # Optional async ``Callable[[str], str | None]`` that gets
+        # each line BEFORE it's published as an inbound message.
+        # If it returns a string, that string is used instead of
+        # the typed line — useful for transforming control tokens
+        # (``/talk`` → live mic transcription on the unix sim).
+        # If it returns ``None`` the original line passes through
+        # unchanged. Lets the SerialChannel stay generic while
+        # voice / vision / etc. plug in via composition.
+        self._line_interceptor = line_interceptor
         self._running = False
         self._reader_task: asyncio.Task[None] | None = None
 
@@ -159,6 +169,24 @@ class SerialChannel:
                 except (AttributeError, OSError):
                     pass
                 continue
+            if self._line_interceptor is not None:
+                try:
+                    replacement = await self._line_interceptor(content)
+                except Exception as e:  # noqa: BLE001 — interceptor errors shouldn't kill the channel
+                    logger.warning(
+                        "serial_interceptor_failed",
+                        **{"error": str(e)},
+                    )
+                    replacement = None
+                if replacement is not None:
+                    content = replacement
+                if not content:
+                    sys.stdout.write(self._prompt)
+                    try:
+                        sys.stdout.flush()
+                    except (AttributeError, OSError):
+                        pass
+                    continue
             await bus.publish_inbound(
                 InboundMessage(
                     channel=self.name,
