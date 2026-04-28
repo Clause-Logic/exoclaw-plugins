@@ -35,13 +35,18 @@ on ``BatchStore`` MUST be safe to invoke twice with the same arguments:
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Protocol, runtime_checkable
 
 
-@dataclass
 class BatchSnapshot:
     """State of a batch at the moment a member completion was recorded.
+
+    Hand-written ``__init__`` rather than ``@dataclass`` for parity
+    with cron's ``CronJob`` / ``CronSchedule`` — MicroPython 1.27
+    doesn't populate ``__annotations__`` for variable annotations,
+    so the runtime ``@dataclass`` decorator on MP synthesises an
+    empty ``__init__``. Plain class on both runtimes keeps the
+    call surface identical.
 
     ``results`` carries what ``_announce_batch`` needs to build its
     message — label, status, and result file path per completed member.
@@ -50,13 +55,24 @@ class BatchSnapshot:
     from the first task to join.
     """
 
-    batch_id: str
-    total: int
-    completed: int
-    results: list[dict[str, str]] = field(default_factory=list)
-    origin_channel: str = "cli"
-    origin_chat_id: str = "direct"
-    session_key: str | None = None
+    def __init__(
+        self,
+        batch_id: str,
+        total: int,
+        completed: int,
+        results: "list[dict[str, str]] | None" = None,
+        origin_channel: str = "cli",
+        origin_chat_id: str = "direct",
+        session_key: "str | None" = None,
+    ) -> None:
+        self.batch_id = batch_id
+        self.total = total
+        self.completed = completed
+        # Mutable default → ``None`` sentinel + per-instance fresh list.
+        self.results: list[dict[str, str]] = list(results) if results is not None else []
+        self.origin_channel = origin_channel
+        self.origin_chat_id = origin_chat_id
+        self.session_key = session_key
 
 
 AnnounceCallback = Callable[[BatchSnapshot], Awaitable[None]]

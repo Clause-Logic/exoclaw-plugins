@@ -1,6 +1,6 @@
 """Entry point for exoclaw skill discovery."""
 
-from pathlib import Path
+from exoclaw._compat import Path
 
 
 def spawn() -> dict[str, str]:

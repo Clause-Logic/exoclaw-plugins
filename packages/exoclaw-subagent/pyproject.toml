@@ -1,11 +1,15 @@
 [project]
 name = "exoclaw-subagent"
-version = "0.14.0"
+version = "0.15.0"
 description = "Subagent manager and LLM-facing spawn tool for exoclaw"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "exoclaw>=0.22.0",
+    # ``>=0.26.3`` for the ``cast(... | None, ...)`` string-quote fix
+    # in ``loop._process_message`` — without it every chip-side spawn
+    # dies with ``TypeError: unsupported types for __or__:
+    # '_Subscriptable', 'NoneType'`` before the child's first LLM call.
+    "exoclaw>=0.26.3",
     "structlog>=25.0.0",
 ]
 
@@ -22,3 +26,7 @@ include = [
     "exoclaw_subagent/**/*.md",
     "exoclaw_subagent/py.typed",
 ]
+
+[tool.exoclaw]
+mp_compat = true
+mp_tests_dir = "tests/micro"
