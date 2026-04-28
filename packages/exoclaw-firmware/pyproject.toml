@@ -96,3 +96,9 @@ bundle_skills_from = [
     # outside the agent's tool surface.
     "exoclaw-tools-voice",
 ]
+
+[dependency-groups]
+dev = [
+    "numpy>=2.4.4",
+    "pygame>=2.6.1",
+]

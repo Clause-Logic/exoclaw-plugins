@@ -48,9 +48,9 @@ class MicListener:
         audio_model: str,
         trigger_token: str = _DEFAULT_TOKEN,
         prompt: str = _DEFAULT_PROMPT,
-        max_duration_s: float = 15.0,
-        silence_threshold: int = 500,
-        silence_seconds: float = 1.5,
+        max_duration_s: float = 10.0,
+        silence_threshold: int = 800,
+        silence_seconds: float = 1.0,
         max_tokens: int = 512,
     ) -> None:
         self._provider = provider

@@ -125,6 +125,7 @@ async def _main() -> None:
         web_search_model=search_model,
         audio_capture=audio_capture,
         audio_model=audio_model,
+        enable_subagent=False,
         heartbeat_interval_ms=heartbeat_interval_ms,
         request_timeout=request_timeout,
     )

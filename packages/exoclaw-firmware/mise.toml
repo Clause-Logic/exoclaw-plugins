@@ -131,7 +131,7 @@ cp boards/$EXOCLAW_BOARD/main.py .stage/main.py
 # (e.g. ``display.py`` for the unix host-preview display). Each
 # one lands at stage root so ``from display import …`` resolves
 # the same on unix-port and chip MP.
-for sib in display.py drivers.py audio.py; do
+for sib in display.py drivers.py audio.py render.py capture.py; do
     if [ -f boards/$EXOCLAW_BOARD/$sib ]; then
         cp boards/$EXOCLAW_BOARD/$sib .stage/$sib
     fi
@@ -223,4 +223,21 @@ export EXOCLAW_HOST_PYTHON
 # ``.stage`` on its sys.path.
 unset PYTHONPATH
 MICROPYPATH=".frozen:$PWD" "$EXOCLAW_MICROPYTHON_BIN" main.py
+"""
+
+[tasks.sim-gui]
+description = "Run the firmware sim with a live GUI window (spacebar = push-to-talk)"
+env = { EXOCLAW_BOARD = "unix" }
+run = """
+set -e
+if [ -z "$EXOCLAW_MICROPYTHON_BIN" ]; then
+    echo 'EXOCLAW_MICROPYTHON_BIN not set — see workspace mise.local.toml.'
+    exit 1
+fi
+if [ -z "$OPENAI_API_KEY" ]; then
+    echo 'OPENAI_API_KEY not set — export it before running ``mise run sim-gui``.'
+    exit 1
+fi
+mise run stage
+uv run python boards/unix/gui.py
 """

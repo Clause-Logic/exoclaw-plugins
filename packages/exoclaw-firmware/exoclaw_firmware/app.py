@@ -385,7 +385,7 @@ async def run_serial_app(
     if enable_web_tools:
         from exoclaw_tools_web import WebFetchTool, WebSearchTool
 
-        web_fetch_tool = WebFetchTool()
+        web_fetch_tool = WebFetchTool(workspace=workspace)
         all_tools.append(web_fetch_tool)  # type: ignore[invalid-argument-type]
         if web_search_model:
             search_tool = WebSearchTool(provider=provider, model=web_search_model)

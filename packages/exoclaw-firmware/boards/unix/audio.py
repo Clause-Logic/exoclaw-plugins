@@ -83,24 +83,19 @@ class WavFileCapture:
 
 
 class LiveMicCapture:
-    """Live-mic capture via an ``ffmpeg`` subprocess.
+    """Live-mic capture via a CPython subprocess.
 
-    Each ``listen()`` call:
+    Each ``listen()`` call shells out to ``capture.py`` (a
+    board-sibling script staged at ``.stage/capture.py``) which
+    uses ``sounddevice`` + ``numpy`` for real VAD silence-detect.
+    Same pattern as ``display.py`` shelling out to ``render.py``
+    for Pillow rendering — MP unix-port can't load CFFI-wrapped
+    libs directly, so the host CPython does the work.
 
-    1. Picks a temp WAV path under ``$TMPDIR``.
-    2. Runs ``ffmpeg -f avfoundation -i :<device>`` to record from
-       the system default mic. ``silenceremove`` filter trims
-       leading silence + stops on ``silence_seconds`` of trailing
-       silence, capped by ``-t max_duration_s``.
-    3. After ffmpeg exits, opens the resulting WAV file and yields
-       its bytes in chunks via the same path as ``WavFileCapture``.
-
-    Why ffmpeg over a Python audio lib: the unix-port runs under
-    MicroPython for runtime parity with the chip. MP can't load
-    CFFI-wrapped libs (sounddevice, PyAudio). ``os.system`` is
-    available on MP unix-port and ffmpeg ships with most dev
-    setups via Homebrew. Same shell-out pattern as the screen
-    package's ``host_render`` for Pillow.
+    The subprocess records from the system default mic, stops
+    when ``silence_seconds`` of quiet elapse after speech (or
+    ``max_duration_s`` hard cap), writes a WAV file, and exits.
+    This capture then yields the WAV bytes in chunks.
     """
 
     def __init__(
@@ -108,8 +103,6 @@ class LiveMicCapture:
         sample_rate_hz: int = 16000,
         bit_depth: int = 16,
         channels: int = 1,
-        ffmpeg_bin: str = "ffmpeg",
-        avfoundation_device: str = ":0",
     ) -> None:
         self.capabilities = AudioCapabilities(
             sample_rate_hz=sample_rate_hz,
@@ -117,13 +110,6 @@ class LiveMicCapture:
             channels=channels,
             format="wav",
         )
-        self._ffmpeg_bin = ffmpeg_bin
-        # ``:0`` is the macOS avfoundation default audio input.
-        # Override with ``EXOCLAW_AVFOUNDATION_DEVICE`` env var if
-        # the system has multiple inputs and you want a specific
-        # one (run ``ffmpeg -f avfoundation -list_devices true -i ""``
-        # to enumerate).
-        self._device = os.getenv("EXOCLAW_AVFOUNDATION_DEVICE") or avfoundation_device
 
     def listen(
         self,
@@ -131,72 +117,53 @@ class LiveMicCapture:
         silence_threshold: int,
         silence_seconds: float,
     ) -> AsyncIterator[bytes]:
-        return self._iter(max_duration_s, silence_threshold, silence_seconds)
-
-    async def _iter(
-        self,
-        max_duration_s: float,
-        silence_threshold: int,
-        silence_seconds: float,
-    ) -> AsyncIterator[bytes]:
-        # Map int16 ``silence_threshold`` (0..32767) to ffmpeg's
-        # dB notation. -30 dBFS ≈ amplitude ~1000 — reasonable
-        # default for indoor speech vs. fan hum. Caller can
-        # override via the threshold knob.
-        # Convert: amplitude → dBFS = 20 * log10(amp / 32767).
-        # For threshold=500 → ~-36 dBFS. For 1000 → ~-30 dBFS.
-        if silence_threshold > 0:
-            import math
-
-            db = 20.0 * math.log10(max(1, silence_threshold) / 32767.0)
-            stop_threshold_db = "{:.1f}dB".format(db)
-        else:
-            stop_threshold_db = "-30dB"
-
-        # Pick a temp WAV path. ``time.time_ns`` exists on both
-        # CPython and MP; falls back to ``time.time`` if not.
+        # Phase 1: capture to disk SYNCHRONOUSLY via os.system.
+        # This blocks the asyncio loop but that's fine — the user
+        # is speaking, nothing else should run. The critical thing
+        # is that capture finishes BEFORE we return the iterator,
+        # because the caller opens an HTTP connection and starts
+        # sending the body immediately when it iterates. If we
+        # delayed capture into _iter(), the HTTP connection would
+        # sit idle for 10s waiting for the mic → server EPIPE.
         try:
             stamp = time.time_ns()
         except AttributeError:
             stamp = int(time.time() * 1_000_000_000)
         tmp_dir = os.getenv("TMPDIR") or "/tmp"
-        wav_path = "{}/exoclaw-voice-{}.wav".format(tmp_dir.rstrip("/"), stamp)
+        self._wav_path = "{}/exoclaw-voice-{}.wav".format(tmp_dir.rstrip("/"), stamp)
 
-        # ``-y`` overwrite, ``-loglevel error`` quiet, ``-nostdin``
-        # so the child doesn't fight with the SerialChannel for
-        # stdin. The ``silenceremove`` filter strips leading
-        # silence (start_periods=1 + start_silence=0.5 — wait up
-        # to half a second for speech), then stops once
-        # ``silence_seconds`` of trailing silence below
-        # ``stop_threshold_db`` elapse.
-        cmd = (
-            '{ffmpeg} -nostdin -y -loglevel error -f avfoundation -i "{dev}" '
-            "-ac {ch} -ar {sr} -sample_fmt s16 -t {max_dur} "
-            '-af "silenceremove=start_periods=1:start_silence=0.5:'
-            "start_threshold={thr}:stop_periods=1:stop_silence={ss}:"
-            'stop_threshold={thr}" {out}'
-        ).format(
-            ffmpeg=self._ffmpeg_bin,
-            dev=self._device,
-            ch=self.capabilities.channels,
-            sr=self.capabilities.sample_rate_hz,
-            max_dur=int(max_duration_s),
-            thr=stop_threshold_db,
-            ss=silence_seconds,
-            out=wav_path,
-        )
-
+        host_python = os.getenv("EXOCLAW_HOST_PYTHON") or "python3"
+        argv = [
+            host_python,
+            "-P",
+            "capture.py",
+            self._wav_path,
+            str(self.capabilities.sample_rate_hz),
+            str(self.capabilities.channels),
+            str(max_duration_s),
+            str(silence_threshold),
+            str(silence_seconds),
+        ]
+        cmd = " ".join('"' + a + '"' for a in argv)
         rc = os.system(cmd)
         if rc != 0:
-            # Surface the failure as a synthetic empty WAV so the
-            # listener returns "(no speech detected)" rather than
-            # blowing up the agent loop.
-            raise RuntimeError("ffmpeg recording failed (rc={}); cmd: {}".format(rc, cmd))
+            raise RuntimeError("capture.py failed (rc={}); cmd: {}".format(rc, cmd))
 
+        # Phase 2: return an iterator that streams from the
+        # already-written file. By the time the HTTP body
+        # generator pulls from this, the data is on disk and
+        # yields instantly — no idle gap on the wire.
+        return self._stream_from_file()
+
+    async def _stream_from_file(self) -> AsyncIterator[bytes]:
+        wav_path = self._wav_path
+        # ``capture.py`` prints ``SILENCE`` and exits 0 without
+        # writing a WAV when no speech was detected. Yield nothing
+        # so the listener returns ``(no speech detected)`` cleanly.
         try:
             f = open(wav_path, "rb")
-        except OSError as e:
-            raise RuntimeError("failed to read recorded WAV: {}".format(e)) from e
+        except OSError:
+            return
 
         try:
             while True:
