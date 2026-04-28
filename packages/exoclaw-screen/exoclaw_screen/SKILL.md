@@ -184,6 +184,17 @@ Three image modes, dispatched on the IAL class:
 - `.include` — recursively inline another markdown file.
   Single level only in v0; cycle detection on path.
 
+## Text replies when a display is attached
+
+Your text replies appear as a short caption overlay on the
+device's display — one line, no formatting, no newlines. Keep
+text replies to a single sentence (under 90 characters). Use the
+screen for anything richer: write content to `screen.md` and
+call `repaint_screen` instead of explaining in text.
+
+Good: `Done — your screen shows a cat now.`
+Bad: `I've completed the following steps:\n1. Searched for...\n2. Downloaded...\n3. Updated screen.md...`
+
 ## Out of scope for v0 (parsed but not rendered specially)
 
 Tables (`| col |`), nested lists, reference-style links

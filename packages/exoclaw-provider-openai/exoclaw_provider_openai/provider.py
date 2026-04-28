@@ -191,6 +191,44 @@ class OpenAIStreamingProvider:
         if self._owns_client:
             await self._client.aclose()
 
+    async def send_streaming_body(
+        self,
+        model: str,
+        body: "AsyncIterator[bytes]",
+    ) -> str:
+        """Send a chat-completions request with a caller-supplied
+        streaming body, return the assistant's text content.
+
+        Escape hatch for callers that need full control over the
+        request shape — primarily ``ListenAndTranscribeTool``,
+        which streams a base64-encoded audio payload that's too
+        big to materialise in heap on chip MP. The caller builds
+        the JSON envelope (model, messages, etc.) themselves; we
+        just route it to the right deployment, run the SSE
+        consume, and hand back the model's text reply.
+
+        No retry or fallback chain — once the body iterator is
+        consumed, the audio bytes are gone and can't be replayed.
+        Callers that want retry must rebuild their iterator
+        before each attempt.
+        """
+        deployment = self._deployments.get(model)
+        if deployment is None:
+            raise ValueError(f"no deployment for model {model!r}")
+        url = deployment.base_url.rstrip("/") + "/chat/completions"
+        headers = self._build_headers(deployment)
+        async with self._client.stream_post(
+            url,
+            headers=headers,
+            content=body,
+            timeout=self._request_timeout,
+        ) as resp:
+            if resp.status_code >= 400:
+                text = await resp.aread()
+                raise RuntimeError(f"status {resp.status_code} from {model}: {text[:500]!r}")
+            response = await self._consume_sse_stream(resp)
+        return response.content or ""
+
     async def chat(
         self,
         messages: list[dict[str, Any]],

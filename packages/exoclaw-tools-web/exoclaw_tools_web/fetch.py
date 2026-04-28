@@ -298,6 +298,17 @@ class WebFetchTool(ToolBase):
 
         # Resolve + sandbox.
         if self._workspace is not None:
+            # Strip a leading workspace-name prefix the model
+            # sometimes includes (e.g. ``.sim-workspace/cat.jpg``
+            # when the workspace IS ``.sim-workspace``). Without
+            # this, the join double-nests the path.
+            ws_name = str(self._workspace).rstrip("/") + "/"
+            if save_to.startswith(ws_name):
+                save_to = save_to[len(ws_name) :]
+            elif save_to.startswith(str(self._workspace).rstrip("/")):
+                save_to = save_to[len(str(self._workspace).rstrip("/")) :]
+                if save_to.startswith("/"):
+                    save_to = save_to[1:]
             for seg in save_to.split("/"):
                 if seg == "..":
                     return "Error: save_to must not contain '..' segments"
@@ -310,6 +321,21 @@ class WebFetchTool(ToolBase):
             async with client.stream_post(url, method="GET", timeout=self._timeout) as resp:
                 if resp.status_code >= 400:
                     return "Error: HTTP {} fetching {}".format(resp.status_code, url)
+                # Check content-type before reading the body. If
+                # the server returned HTML instead of binary
+                # content (common with image URLs that redirect to
+                # a landing page), surface a clear error so the
+                # agent can pick a different URL.
+                ct = (resp.headers.get("content-type") or "").lower()
+                if "text/html" in ct:
+                    return (
+                        "Error: {} returned HTML, not a binary file. "
+                        "The URL is probably a web page, not a direct "
+                        "image link. Try a URL that serves the raw "
+                        "image (look for .jpg/.png in the URL, or use "
+                        "a direct image hosting service like "
+                        "placecats.com/600/400)."
+                    ).format(url)
                 body = await resp.aread()
         except Exception as e:  # noqa: BLE001
             logger.error("web_fetch_save_failed", **{"url": url, "error": str(e)})

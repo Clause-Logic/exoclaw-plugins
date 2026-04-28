@@ -76,6 +76,18 @@ def _resolve_path(
     if ".." in parts:
         raise OSError("path may not contain '..' segments: {!r}".format(path))
 
+    # Strip a leading workspace-name prefix the model sometimes
+    # includes (e.g. ``.sim-workspace/screen.md`` when the
+    # workspace IS ``.sim-workspace``). Without this, the join
+    # double-nests the path. Common with models that see the
+    # workspace name in the system prompt and prepend it.
+    if workspace is not None:
+        ws_str = str(workspace).rstrip("/")
+        if path.startswith(ws_str + "/"):
+            path = path[len(ws_str) + 1 :]
+        elif path == ws_str:
+            path = "."
+
     p = Path(path)
     is_absolute = path.startswith("/")
     if not is_absolute and workspace is not None:

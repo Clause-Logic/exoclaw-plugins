@@ -1,29 +1,14 @@
 """Unix-port host-preview ``Display`` implementation.
 
-The unix board runs under MicroPython's unix-port (so the chip-
-relevant agent + provider + tool code paths get exercised
-under MP semantics). MP unix-port can't load Pillow — Pillow is
-a CPython C extension — so this Display delegates the actual
-rasterisation to a CPython subprocess via ``os.system``.
+The unix board runs under MicroPython's unix-port. MP can't load
+Pillow, so this Display delegates rasterisation to a CPython
+subprocess (``render.py``).
 
-Each ``show_markdown`` call:
-
-1. Writes the agent's markdown to disk (already at
-   ``capabilities.screen_path`` since the agent edited
-   ``screen.md`` via the file tools).
-2. Shells out to the CPython renderer CLI:
-   ``$EXOCLAW_HOST_PYTHON -m exoclaw_screen.renderer.host_render``
-3. The CLI imports Pillow, parses + lays out + renders, exits.
-
-Result: ``repaint_screen`` produces a real PNG on the host while
-the agent + tool dispatch all stay on MP unix-port — runtime
-parity with the chip (no CPython-only code paths get exercised
-that the chip wouldn't see).
-
-``$EXOCLAW_HOST_PYTHON`` defaults to plain ``python3`` (must be
-on PATH and have Pillow installed). The ``mise run sim`` task
-sets it explicitly to the workspace's venv python so the user
-doesn't have to install Pillow globally.
+HUD overlay (status pip + captions bar) is part of the Display
+Protocol. ``set_status`` / ``set_caption`` store state and
+trigger a re-render so the HUD updates immediately — same
+semantics as a partial-refresh on e-ink. The renderer composites
+them on top of the main canvas.
 """
 
 from __future__ import annotations
@@ -34,8 +19,7 @@ from exoclaw_screen.protocol import DisplayCapabilities
 
 
 class HostPreviewDisplay:
-    """Pillow-backed ``Display`` for the unix-port sim. Routes
-    rasterisation through a CPython subprocess."""
+    """Pillow-backed ``Display`` for the unix-port sim."""
 
     def __init__(
         self,
@@ -45,14 +29,6 @@ class HostPreviewDisplay:
     ) -> None:
         self.capabilities = capabilities
         self._out_path = out_path
-        # Default ``base_path`` to the directory containing
-        # ``screen_path`` — that's the workspace dir the agent
-        # writes its image files into via ``write_file`` / the
-        # save_to mode of ``web_fetch``. Without this, plain
-        # image directives like ``![cat](cat.jpg)`` would resolve
-        # against the CPython subprocess's cwd (``.stage/``)
-        # instead of the workspace, and the file wouldn't be
-        # found.
         if base_path is None:
             sp = capabilities.screen_path
             if "/" in sp:
@@ -60,34 +36,42 @@ class HostPreviewDisplay:
             else:
                 base_path = "."
         self._base_path = base_path
+        self._status = ""
+        self._caption = ""
+
+    def set_status(self, status: str) -> None:
+        self._status = status
+        self._render()
+
+    def set_caption(self, text: str) -> None:
+        self._caption = text
+        self._render()
 
     async def show_markdown(self, markdown: str) -> None:
-        # Write the markdown to disk first. ``capabilities.screen_path``
-        # is the canonical agent-facing path (the agent edited it
-        # via ``write_file``); we re-write it here so ``show_markdown``
-        # works even if the caller passes ad-hoc markdown that
-        # didn't come from the file. Idempotent — same bytes on the
-        # round-trip case.
         md_path = self.capabilities.screen_path
         with open(md_path, "w") as f:
             f.write(markdown)
+        self._render()
+
+    async def clear(self) -> None:
+        await self.show_markdown("")
+
+    def _render(self) -> None:
+        """Shell out to render.py to produce the PNG."""
+        md_path = self.capabilities.screen_path
+        # Ensure the md file exists even if show_markdown hasn't
+        # been called yet (HUD-only updates on a fresh boot).
+        try:
+            os.stat(md_path)
+        except OSError:
+            with open(md_path, "w") as f:
+                f.write("")
 
         host_python = os.getenv("EXOCLAW_HOST_PYTHON") or "python3"
-        # All args are primitive scalars — quote each with double
-        # quotes; no embedded ``"`` in any of them by construction
-        # (paths come from the workspace, mode strings are fixed
-        # constants from ``protocol``).
         argv = [
             host_python,
-            # ``-P``: don't prepend the script's directory (or cwd
-            # for ``-m``) to ``sys.path``. Critical here because the
-            # MP unix-port sim's cwd is ``.stage/`` which contains
-            # the MP-stub ``typing.py`` — without ``-P`` CPython
-            # would pick the stub over its real stdlib ``typing``
-            # and ImportError on ``from typing import final``.
             "-P",
-            "-m",
-            "exoclaw_screen.renderer.host_render",
+            "render.py",
             md_path,
             self._out_path,
             str(self.capabilities.width),
@@ -100,15 +84,12 @@ class HostPreviewDisplay:
         ]
         if self._base_path:
             argv.append(self._base_path)
+        # HUD args — passed after base_path. render.py reads
+        # them positionally if present.
+        argv.append(self._status or "")
+        argv.append(self._caption or "")
+
         cmd = " ".join('"' + a + '"' for a in argv)
         rc = os.system(cmd)
         if rc != 0:
-            # ``os.system`` returns the wait-status; non-zero means
-            # the renderer failed. Surface it so ``RepaintScreenTool``
-            # reports the error to the agent rather than silently
-            # producing a stale PNG.
-            raise RuntimeError("host_render exited rc={} (cmd: {})".format(rc, cmd))
-
-    async def clear(self) -> None:
-        # "Show empty markdown" — same path, just an empty doc.
-        await self.show_markdown("")
+            raise RuntimeError("render.py exited rc={} (cmd: {})".format(rc, cmd))

@@ -1,0 +1,28 @@
+[project]
+name = "exoclaw-tools-voice"
+version = "0.1.0"
+description = "Voice input for exoclaw — listen + transcribe via audio-capable LLM. Cross-runtime (CPython + MicroPython)."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "exoclaw[http]>=0.26.5",
+    "exoclaw-provider-openai>=0.4.2",
+]
+
+[project.entry-points."exoclaw.skills"]
+voice = "exoclaw_tools_voice.skills:voice"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = [
+    "exoclaw_tools_voice/**/*.py",
+    "exoclaw_tools_voice/**/*.md",
+    "exoclaw_tools_voice/py.typed",
+]
+
+[tool.exoclaw]
+mp_compat = true
+mp_tests_dir = "tests/micro"

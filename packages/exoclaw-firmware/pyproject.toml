@@ -1,6 +1,6 @@
 [project]
 name = "exoclaw-firmware"
-version = "0.8.0"
+version = "0.9.0"
 description = "Deployable exoclaw image for MicroPython boards (ESP32-S3 and friends)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -19,6 +19,7 @@ dependencies = [
     "exoclaw-tools-workspace>=0.6.0",
     "exoclaw-screen>=0.1.0",
     "exoclaw-tools-web>=0.1.0",
+    "exoclaw-tools-voice>=0.1.0",
 ]
 
 [project.optional-dependencies]
@@ -27,6 +28,10 @@ dependencies = [
 # ``exoclaw-screen`` (Pillow + qrcode). Chip boards bring their
 # own driver and don't need this.
 host-preview = ["exoclaw-screen[host-preview]>=0.1.0"]
+# Live-mic voice capture for the unix sim's ``LiveMicCapture``.
+# CFFI-wrapped PortAudio; CPython-only. Chip boards use
+# ``machine.I2S`` and don't need this extra.
+host-voice = ["sounddevice>=0.5.5"]
 
 [build-system]
 requires = ["hatchling"]
@@ -84,4 +89,16 @@ bundle_skills_from = [
     # and the same ``OpenAIStreamingProvider`` the agent
     # already speaks to.
     "exoclaw-tools-web",
+    # Voice — captures audio + transcribes via an audio-capable
+    # LLM. Bundled so the agent's prompt sees the ``voice``
+    # skill (which explains the ``/talk`` token + voice-as-input
+    # semantics) even though voice currently triggers from
+    # outside the agent's tool surface.
+    "exoclaw-tools-voice",
+]
+
+[dependency-groups]
+dev = [
+    "numpy>=2.4.4",
+    "pygame>=2.6.1",
 ]
