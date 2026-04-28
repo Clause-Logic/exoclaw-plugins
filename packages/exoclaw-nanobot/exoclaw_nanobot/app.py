@@ -18,6 +18,7 @@ from exoclaw.providers.protocol import LLMProvider
 from exoclaw.utils import create_isolated_task
 from exoclaw_channel_cli.channel import CLIChannel
 from exoclaw_channel_heartbeat.service import HeartbeatService
+from exoclaw_conversation import LoadSkillTool
 from exoclaw_conversation.context import ContextBuilder
 from exoclaw_conversation.conversation import DefaultConversation
 from exoclaw_conversation.memory import MemoryStore
@@ -46,8 +47,6 @@ from exoclaw_tools_workspace.filesystem import (
 )
 from exoclaw_tools_workspace.shell import ExecTool
 from exoclaw_tools_workspace.web import WebFetchTool, WebSearchTool
-
-from exoclaw_conversation import LoadSkillTool
 
 from exoclaw_nanobot.config.loader import load_config
 from exoclaw_nanobot.config.schema import Config
