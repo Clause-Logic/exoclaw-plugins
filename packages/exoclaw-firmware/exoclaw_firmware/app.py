@@ -153,7 +153,7 @@ async def run_serial_app(
     extra_channels: "list | None" = None,
     enable_cron: bool = True,
     enable_subagent: bool = True,
-    subagent_max_concurrent: int | None = None,
+    subagent_max_concurrent: int | None = 2,
     heartbeat_interval_ms: int | None = None,
 ) -> None:
     """Run the full agent app with USB-CDC as a baseline channel.
@@ -195,13 +195,15 @@ async def run_serial_app(
     to the parent over the bus as ``system`` messages. Set to
     ``False`` for a tightly-scoped chip that should never branch.
 
-    ``subagent_max_concurrent`` (default ``None``) caps how many
-    subagents may run concurrently. ``None`` means uncapped — the
-    cap requires ``asyncio.Semaphore`` which MicroPython 1.27
-    doesn't ship; pass an integer only on hosts that have it
-    (CPython). On MP the agent is the only thing scheduling
-    spawns, so unbounded growth is bounded by the model's
-    willingness to spawn (typically a small handful).
+    ``subagent_max_concurrent`` (default ``2``) caps how many
+    subagents may run concurrently on both runtimes. The cap goes
+    through ``exoclaw._compat.make_semaphore`` (real
+    ``asyncio.Semaphore`` on CPython, an ``asyncio.Event``-backed
+    counter shim on MicroPython since uasyncio doesn't ship
+    ``Semaphore``). Two is a sensible default on the ESP32-S3 8MB
+    target — each in-flight LLM call holds an mbedtls session in
+    heap, so unbounded fanout will OOM. ``None`` opts out of the
+    cap entirely.
     """
     from exoclaw.agent.tools.protocol import Tool
     from exoclaw.app import Exoclaw
@@ -315,8 +317,11 @@ async def run_serial_app(
         # asyncio task is enough — if the chip resets mid-spawn,
         # the spawn just dies. Persistent batch state lives in
         # ``InMemoryBatchStore`` (the default), also fine for chip.
-        # Wrap with the concurrency cap so two in-flight subagents
-        # don't blow the heap on the ESP32-S3.
+        # The ``max_concurrent`` cap goes through
+        # ``exoclaw._compat.make_semaphore`` inside
+        # ``AsyncioSpawner``, so the same integer enforces the cap
+        # on both CPython (real ``asyncio.Semaphore``) and
+        # MicroPython (``_AsyncSemaphore`` shim).
         def _spawner_factory(runner: Runner) -> AsyncioSpawner:
             return AsyncioSpawner(runner, max_concurrent=subagent_max_concurrent)
 
@@ -326,6 +331,12 @@ async def run_serial_app(
             conversation_factory=_conversation_factory,
             tools=list(all_tools),
             model=model,
+            # Pass ``workspace`` so ``SubagentManager`` writes result
+            # markdown files under ``workspace/subagents/`` and the
+            # ``spawn`` tool's ``action="results"`` listing is
+            # populated. Without this the chip-side ``results``
+            # query always returns ``[]``.
+            workspace=workspace,
             spawner_factory=_spawner_factory,
         )
         all_tools.append(SpawnTool(manager=subagent_mgr))

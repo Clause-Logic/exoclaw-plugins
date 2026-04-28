@@ -86,11 +86,11 @@ def test_in_memory_batch_store_register_and_announce():
     exactly once when the batch completes. Pure in-memory protocol
     exercise, no I/O.
 
-    This is the MP coverage path for the dataclass-style
-    ``BatchSnapshot`` (``@dataclass`` with
-    ``field(default_factory=list)``), the dict-of-sets bookkeeping
-    in ``InMemoryBatchStore``, and ``asyncio.Lock`` — all of which
-    need to clear on the MP side.
+    This is the MP coverage path for ``BatchSnapshot`` (now built
+    with a hand-written ``__init__`` since MP doesn't populate
+    ``__annotations__`` for the runtime ``@dataclass`` decorator),
+    the dict-of-sets bookkeeping in ``InMemoryBatchStore``, and
+    ``asyncio.Lock`` — all of which need to clear on the MP side.
     """
     from exoclaw_subagent import InMemoryBatchStore
 

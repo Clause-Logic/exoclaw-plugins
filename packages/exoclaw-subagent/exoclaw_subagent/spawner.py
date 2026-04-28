@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Callable, Coroutine, Protocol, runtime_checkable
 
+from exoclaw._compat import make_semaphore
 from exoclaw.utils import create_isolated_task
 
 Runner = Callable[..., Coroutine[Any, Any, None]]
@@ -135,8 +136,12 @@ class AsyncioSpawner:
         if max_concurrent is not None and max_concurrent < 1:
             raise ValueError(f"max_concurrent must be >= 1 or None, got {max_concurrent!r}")
         self._runner = runner
-        self._semaphore: asyncio.Semaphore | None = (
-            asyncio.Semaphore(max_concurrent) if max_concurrent is not None else None
+        # ``make_semaphore`` is the cross-runtime shim: real
+        # ``asyncio.Semaphore`` on CPython, an ``asyncio.Event``-
+        # backed counter on MicroPython since uasyncio doesn't
+        # ship ``Semaphore``. Same ``async with`` surface.
+        self._semaphore: Any = (
+            make_semaphore(max_concurrent) if max_concurrent is not None else None
         )
 
     async def start(

@@ -5,11 +5,12 @@ description = "Subagent manager and LLM-facing spawn tool for exoclaw"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    # ``>=0.26.3`` for the ``cast(... | None, ...)`` string-quote fix
-    # in ``loop._process_message`` — without it every chip-side spawn
-    # dies with ``TypeError: unsupported types for __or__:
-    # '_Subscriptable', 'NoneType'`` before the child's first LLM call.
-    "exoclaw>=0.26.3",
+    # ``>=0.26.4`` for ``make_semaphore`` (cross-runtime
+    # ``asyncio.Semaphore`` shim used by ``AsyncioSpawner`` to
+    # cap concurrent spawns on MP) plus the ``cast(... | None,
+    # ...)`` string-quote fix in 0.26.3 that lets ``process_direct``
+    # run on MP at all.
+    "exoclaw>=0.26.4",
     "structlog>=25.0.0",
 ]
 

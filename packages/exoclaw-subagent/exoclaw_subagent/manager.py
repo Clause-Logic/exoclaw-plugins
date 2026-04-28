@@ -30,6 +30,24 @@ def _safe_filename(label: str) -> str:
     return "".join(c if c.isalnum() or c in "-_" else "-" for c in label).strip("-")
 
 
+def _mtime_for_sort(path: Path) -> float:
+    """Return ``path.stat().st_mtime`` on CPython, ``0.0`` on MP.
+
+    Same shape as ``exoclaw_tools_cron.service._mtime_or_none``: the
+    ``exoclaw._compat.Path`` shim on MicroPython doesn't implement
+    ``stat()``, so calling it raises ``AttributeError``. The mtime
+    sort is purely cosmetic (newest result first); falling back to
+    ``0.0`` on MP collapses the sort to glob's insertion order,
+    which is acceptable for the chip-side debug/status surface."""
+    stat = getattr(path, "stat", None)
+    if stat is None:
+        return 0.0
+    try:
+        return stat().st_mtime
+    except (OSError, AttributeError):
+        return 0.0
+
+
 def _build_batch_message(snap: BatchSnapshot) -> InboundMessage:
     """Shape the ``BatchSnapshot`` into the system InboundMessage that
     lands in the parent session's inbox when a batch completes."""
@@ -458,9 +476,7 @@ class SubagentManager:
 
         completed = []
         if self._results_dir and self._results_dir.exists():
-            for f in sorted(
-                self._results_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True
-            ):
+            for f in sorted(self._results_dir.glob("*.md"), key=_mtime_for_sort, reverse=True):
                 completed.append({"path": str(f), "name": f.stem})
 
         return {"running": running, "batches": batches, "completed": completed}
