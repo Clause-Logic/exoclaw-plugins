@@ -15,10 +15,29 @@ gitignored). Keeps API keys out of the source tree.
 from __future__ import annotations
 
 from exoclaw._compat import Path, get_logger
+from exoclaw_conversation import SummarizingConsolidationPolicy
 from exoclaw_conversation.conversation import DefaultConversation
+from exoclaw_conversation.memory import MemoryStore
 from exoclaw_provider_openai import Deployment, OpenAIStreamingProvider
 
 logger = get_logger()
+
+
+def _builtin_skills_dir() -> Path:
+    """Resolve the firmware-bundled skills directory.
+
+    At stage time ``bundle_skills.py`` (host-side) writes plugin
+    skills into the firmware package's ``skills/`` directory,
+    alongside any board-specific skills the stage task copies in.
+    At runtime we point ``SkillsLoader`` at this path; the loader
+    reads SKILL.md / hooks/ from each subdirectory and merges them
+    with workspace (agent-managed) skills.
+
+    Resolves to ``<pkg-install-dir>/skills`` on both CPython and
+    MicroPython by reading this module's ``__file__`` and taking
+    the parent. Works without ``importlib.metadata`` so the chip
+    path resolves identically to the sim."""
+    return Path(__file__).parent / "skills"
 
 
 def build_agent(
@@ -60,10 +79,19 @@ def build_agent(
         deployments=deployments,
         request_timeout=request_timeout,
     )
+    # SummarizingConsolidationPolicy preserves a per-session
+    # ``summary`` in session metadata across compactions so the
+    # agent retains "what was I doing" continuity. Without this
+    # the chip loses that continuity every time the JSONL is
+    # truncated. The policy wraps the same MemoryStore the basic
+    # path uses — extra ergonomic, no extra LLM call.
+    memory = MemoryStore(workspace, provider, model)
     conversation = DefaultConversation.create(
         workspace=workspace,
         provider=provider,
         model=model,
+        consolidation_policy=SummarizingConsolidationPolicy(memory=memory),
+        builtin_skills_dir=_builtin_skills_dir(),
     )
     return provider, conversation
 
@@ -163,6 +191,7 @@ async def run_serial_app(
     from exoclaw.bus.events import InboundMessage
     from exoclaw.bus.queue import MessageBus
     from exoclaw.channels.protocol import Channel
+    from exoclaw_conversation import LoadSkillTool
 
     from exoclaw_firmware.channel import SerialChannel
 
@@ -187,11 +216,26 @@ async def run_serial_app(
     # cron-fire callback.
     bus = MessageBus()
 
+    # ``LoadSkillTool`` lets the agent activate any skill listed in
+    # the ``<skills>`` block of the system prompt — both bundled
+    # ones (cron, board-specific) and any SKILL.md files under
+    # ``workspace/skills/``. Without this tool the SKILL.md files
+    # are visible-but-not-loadable; the model can see them in the
+    # listing but can't pull them into context.
+    skills_loader = getattr(conversation.prompt, "skills", None)
+    active_optional_tools = getattr(conversation.prompt, "_active_optional_tools", None)
+    all_tools: list[Tool] = list(tools or [])
+    if skills_loader is not None and active_optional_tools is not None:
+        # ``LoadSkillTool`` structurally satisfies the ``Tool``
+        # Protocol (``@runtime_checkable``) but ty can't prove the
+        # subtype — same situation as ``CronTool`` below and
+        # ``DBOSExecutor`` / ``Executor`` elsewhere in the workspace.
+        all_tools.append(LoadSkillTool(skills=skills_loader, active_tools=active_optional_tools))  # type: ignore[invalid-argument-type]
+
     # Optional cron — start the timer task before the agent loop
     # so jobs that fire during boot (e.g. ``at`` schedules in the
     # past after a reboot) reach the agent on the first cycle.
     cron_service = None
-    all_tools: list[Tool] = list(tools or [])
     if enable_cron:
         from exoclaw_tools_cron.service import CronService, LocalCronBackend
         from exoclaw_tools_cron.tool import CronTool

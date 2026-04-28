@@ -1,13 +1,13 @@
 [project]
 name = "exoclaw-nanobot"
-version = "0.27.1"
+version = "0.27.2"
 description = "Full-stack exoclaw bundle — config, provider registry, and one-line wiring"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "exoclaw>=0.26.0",
     "exoclaw-loop-detection",
-    "exoclaw-conversation>=0.19.0",
+    "exoclaw-conversation>=0.21.0",
     "exoclaw-provider-litellm>=0.7.0",
     "exoclaw-channel-cli",
     "exoclaw-channel-heartbeat",

@@ -16,10 +16,15 @@
 description = "Build a flash-ready tree under .stage with core + plugins + board files"
 sources = [
     "exoclaw_firmware/**/*.py",
+    "exoclaw_firmware/skills/**/*",
     "boards/${EXOCLAW_BOARD}/**/*.py",
+    "boards/${EXOCLAW_BOARD}/skills/**/*",
+    "scripts/bundle_skills.py",
+    "pyproject.toml",
     "../exoclaw-conversation/exoclaw_conversation/**/*.py",
     "../exoclaw-provider-openai/exoclaw_provider_openai/**/*.py",
     "../exoclaw-tools-cron/exoclaw_tools_cron/**/*.py",
+    "../exoclaw-tools-cron/exoclaw_tools_cron/SKILL.md",
     "../../../exoclaw/exoclaw/**/*.py",
 ]
 outputs = [".stage/.stamp"]
@@ -63,6 +68,20 @@ find .stage -name '__pycache__' -type d -exec rm -rf {} +
 # inside live at stage root for ``import typing`` to resolve;
 # drop the duplicate inside the package tree.
 rm -rf .stage/exoclaw/_mp_lib
+# Bundle skills from pip-installed plugin packages declared in
+# ``[tool.exoclaw.firmware] bundle_skills_from``. Resolved on the
+# host via ``importlib.metadata``; copied flat into the firmware
+# package's ``skills/`` directory so the runtime sees them at
+# ``Path(exoclaw_firmware.__file__).parent / "skills"``.
+mkdir -p .stage/exoclaw_firmware/skills
+uv run python scripts/bundle_skills.py pyproject.toml .stage/exoclaw_firmware/skills
+# Board-specific skills (deployment-bundled, board-scoped) merge
+# into the same directory. A board can ship behaviors specific to
+# its hardware (e.g. an esp32 board with sensor tools could ship a
+# skill teaching the agent how to read its own GPIO).
+if [ -d boards/$EXOCLAW_BOARD/skills ]; then
+    cp -r boards/$EXOCLAW_BOARD/skills/. .stage/exoclaw_firmware/skills/
+fi
 # Board-specific boot.py / main.py / secrets.py go to flash root.
 cp boards/$EXOCLAW_BOARD/boot.py .stage/boot.py
 cp boards/$EXOCLAW_BOARD/main.py .stage/main.py

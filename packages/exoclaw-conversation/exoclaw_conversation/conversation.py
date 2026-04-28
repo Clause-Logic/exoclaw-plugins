@@ -75,8 +75,23 @@ class DefaultConversation:
         memory_window: int = 100,
         skill_packages: list[str] | None = None,
         consolidation_policy: ConsolidationPolicy | None = None,
+        builtin_skills_dir: Path | None = None,
+        allowed_skills: list[str] | None = None,
     ) -> DefaultConversation:
-        """Construct with the standard file-backed implementations."""
+        """Construct with the standard file-backed implementations.
+
+        ``builtin_skills_dir`` is the deployment-bundled skills root
+        — intrinsic-to-this-deployment skills that ship with the
+        firmware / server image and sit alongside workspace
+        (agent-managed) skills in the loader. Version-locked with
+        the deployment tag. On a chip this is typically the staged
+        ``.stage/skills/`` directory copied into the firmware image;
+        on a server it's an installer-relative path. ``None`` leaves
+        only workspace + entry-point package skills visible.
+
+        ``allowed_skills`` forwards to ``SkillsLoader.allowed_names``
+        to restrict the visible surface to a known whitelist when
+        the deployment-bundled set is meant to be exhaustive."""
         from .context import ContextBuilder
         from .memory import MemoryStore
         from .session.manager import SessionManager
@@ -85,7 +100,13 @@ class DefaultConversation:
         return cls(
             history=SessionManager(workspace),
             memory=memory,
-            prompt=ContextBuilder(workspace, memory=memory, skill_packages=skill_packages),
+            prompt=ContextBuilder(
+                workspace,
+                memory=memory,
+                skill_packages=skill_packages,
+                builtin_skills_dir=builtin_skills_dir,
+                allowed_skills=allowed_skills,
+            ),
             memory_window=memory_window,
             consolidation_policy=consolidation_policy,
         )

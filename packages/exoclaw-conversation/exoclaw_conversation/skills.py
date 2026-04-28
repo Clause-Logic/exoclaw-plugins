@@ -4,10 +4,39 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from typing import Any
 
 from exoclaw._compat import IS_MICROPYTHON, Path, is_executable, which
+
+
+def _split_frontmatter(content: str) -> tuple[str | None, str]:
+    """Split a YAML/JSON frontmatter header off the front of ``content``.
+
+    Returns ``(frontmatter_text_or_None, body)``. Pure string ops —
+    used instead of ``re.DOTALL`` (which MicroPython's ``re``
+    doesn't ship). Frontmatter shape is::
+
+        ---
+        ...
+        ---
+        body...
+
+    The closing ``---`` may or may not have a trailing newline; the
+    body starts after the next newline (if any). Returns ``(None,
+    content)`` when no valid frontmatter is present."""
+    if not content.startswith("---\n"):
+        return None, content
+    end = content.find("\n---", 4)
+    if end == -1:
+        return None, content
+    frontmatter = content[4:end]
+    rest_start = end + len("\n---")
+    # Skip a trailing newline after the closing ``---`` so the body
+    # doesn't start with a stray ``\n``.
+    if rest_start < len(content) and content[rest_start] == "\n":
+        rest_start += 1
+    return frontmatter, content[rest_start:]
+
 
 # Default builtin skills directory — none bundled in this package
 BUILTIN_SKILLS_DIR: Path | None = None
@@ -406,11 +435,8 @@ class SkillsLoader:
 
     def _strip_frontmatter(self, content: str) -> str:
         """Remove YAML frontmatter from markdown content."""
-        if content.startswith("---"):
-            match = re.match(r"^---\n.*?\n---\n", content, re.DOTALL)
-            if match:
-                return content[match.end() :].strip()
-        return content
+        _fm, body = _split_frontmatter(content)
+        return body.strip() if _fm is not None else content
 
     def _parse_exoclaw_metadata(self, raw: str) -> dict[str, Any]:
         """Parse skill metadata JSON from frontmatter (supports exoclaw, nanobot, openclaw keys)."""
@@ -420,10 +446,12 @@ class SkillsLoader:
                 result = data.get("exoclaw", data.get("nanobot", data.get("openclaw", {})))
                 return dict(result) if isinstance(result, dict) else {}
             return {}
-        except (ValueError, json.JSONDecodeError, TypeError):
-            # MP's ``json.loads`` raises plain ``ValueError``;
-            # CPython's ``JSONDecodeError`` is a ``ValueError``
-            # subclass. Catch the union for cross-runtime safety.
+        except (ValueError, TypeError):
+            # MP's ``json`` module doesn't expose ``JSONDecodeError``
+            # at all — referencing it in the ``except`` tuple raises
+            # ``AttributeError`` at module load. CPython's
+            # ``JSONDecodeError`` is a ``ValueError`` subclass anyway,
+            # so ``ValueError`` covers both runtimes.
             return {}
 
     def _check_requirements(self, skill_meta: dict[str, Any]) -> bool:
@@ -511,18 +539,17 @@ class SkillsLoader:
                     tools: list[str] = []
                     skills: list[str] = []
                     prompt = raw
-                    if raw.startswith("---"):
-                        match = re.match(r"^---\n(.*?)\n---\n?", raw, re.DOTALL)
-                        if match:
-                            prompt = raw[match.end() :].strip()
-                            for line in match.group(1).splitlines():
-                                if ":" in line:
-                                    key, value = line.split(":", 1)
-                                    key = key.strip()
-                                    if key == "tools":
-                                        tools = [t.strip() for t in value.split(",") if t.strip()]
-                                    elif key == "skills":
-                                        skills = [s.strip() for s in value.split(",") if s.strip()]
+                    fm_raw, body = _split_frontmatter(raw)
+                    if fm_raw is not None:
+                        prompt = body.strip()
+                        for line in fm_raw.splitlines():
+                            if ":" in line:
+                                key, value = line.split(":", 1)
+                                key = key.strip()
+                                if key == "tools":
+                                    tools = [t.strip() for t in value.split(",") if t.strip()]
+                                elif key == "skills":
+                                    skills = [s.strip() for s in value.split(",") if s.strip()]
                     results.append(
                         AgentHook(
                             skill_name=skill_dir.name,
@@ -580,14 +607,13 @@ class SkillsLoader:
         if not content:
             return None
 
-        if content.startswith("---"):
-            match = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
-            if match:
-                metadata = {}
-                for line in match.group(1).split("\n"):
-                    if ":" in line:
-                        key, value = line.split(":", 1)
-                        metadata[key.strip()] = value.strip().strip("\"'")
-                return metadata
+        fm, _body = _split_frontmatter(content)
+        if fm is not None:
+            metadata = {}
+            for line in fm.split("\n"):
+                if ":" in line:
+                    key, value = line.split(":", 1)
+                    metadata[key.strip()] = value.strip().strip("\"'")
+            return metadata
 
         return None

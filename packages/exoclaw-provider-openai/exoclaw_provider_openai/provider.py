@@ -229,7 +229,12 @@ class OpenAIStreamingProvider:
                 # Exception for the type checker and fall through to
                 # the _RetryableError itself if the cause isn't a
                 # plain Exception (it always is in practice).
-                cause = e.__cause__
+                # MicroPython exceptions don't expose ``__cause__``
+                # at all; ``getattr`` keeps the fallback identical
+                # across runtimes (no ``raise from`` chain available
+                # on MP, so the wrapper exception is the cause we
+                # log on that path anyway).
+                cause = getattr(e, "__cause__", None)
                 last_err = cause if isinstance(cause, Exception) else e
                 logger.warning(
                     "llm_fallback",
