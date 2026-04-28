@@ -1,0 +1,40 @@
+[project]
+name = "exoclaw-screen"
+version = "0.1.0"
+description = "File-backed display surface for exoclaw — markdown + IAL + Pandoc fenced divs render onto any board"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    # ``>=0.26.5`` for the cross-runtime ``Display`` Protocol shim
+    # surface (``Path``, ``IS_MICROPYTHON``, log/contextvars helpers).
+    # The screen package itself is pure-Python parser + layout +
+    # renderer dispatch; per-board renderers live in firmware
+    # boards/ directories and depend on this package.
+    "exoclaw>=0.26.5",
+    "structlog>=25.0.0",
+]
+
+[project.optional-dependencies]
+# Host preview renderer — Pillow is CPython-only, so the chip path
+# never installs it. Plugin authors who want the host preview run
+# ``pip install exoclaw-screen[host-preview]``.
+host-preview = [
+    "Pillow>=10.0.0",
+]
+
+[project.entry-points."exoclaw.skills"]
+screen = "exoclaw_screen.skills:screen"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = [
+    "exoclaw_screen/**/*.py",
+    "exoclaw_screen/**/*.md",
+]
+
+[tool.exoclaw]
+mp_compat = true
+mp_tests_dir = "tests/micro"
