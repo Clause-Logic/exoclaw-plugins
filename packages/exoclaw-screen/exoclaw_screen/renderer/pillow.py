@@ -383,7 +383,10 @@ class PillowRenderer:
         scale = min(bw / sw, bh / sh)
         nw, nh = max(1, int(sw * scale)), max(1, int(sh * scale))
         if (nw, nh) != (sw, sh):
-            raster = raster.resize((nw, nh), _PILImage.LANCZOS)
+            resample = getattr(_PILImage, "LANCZOS", None) or getattr(
+                _PILImage.Resampling, "LANCZOS", 1
+            )
+            raster = raster.resize((nw, nh), resample)
         ox = block.x + max(0, (bw - nw) // 2)
         oy = block.y + max(0, (bh - nh) // 2)
         # ``paste`` accepts an RGBA source onto an RGB canvas via
