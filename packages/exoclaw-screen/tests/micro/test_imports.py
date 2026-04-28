@@ -4,10 +4,16 @@ Pure-Python — no pytest. Driven by the workspace's
 ``mise run test-micro`` task on a coverage-variant MicroPython
 binary.
 
-Verifies the parser and layout engine import + run on chip MP.
-The renderer (``renderer/pillow.py``) imports Pillow lazily
-inside ``render_to_png()`` so it doesn't break MP module-load —
-this test imports the renderer module to confirm the gating works.
+Covers the chip-relevant surface: parser, layout engine, IAL
+parser, container layout, image-directive IAL collision. The
+host-side ``renderer/pillow.py`` is **not** exercised here — it
+imports Pillow lazily inside ``render_to_png()`` and chip MP
+doesn't ship Pillow. The validation of the lazy-import boundary
+is implicit: ``from exoclaw_screen import ...`` (top-level)
+must not pull the renderer module, otherwise this whole file
+would fail to import on chip. We assert that import works
+below; we do not import ``exoclaw_screen.renderer.pillow``
+directly.
 """
 
 
@@ -93,3 +99,90 @@ def test_ial_parser_handles_classes_and_attrs():
     assert attrs["class"] == ["title"]
     assert attrs["align"] == "center"
     assert attrs["color"] == "red"
+
+
+def test_block_ial_full_grammar_round_trip():
+    """Paragraph + blockquote + code block + list IAL all wire
+    correctly on MP. Mirrors the v0 grammar surface that the
+    SKILL.md prompt promises agents — if this regresses on chip,
+    the agent's IAL output silently loses metadata."""
+    from exoclaw_screen import ast as a
+    from exoclaw_screen.parser import parse
+
+    src = (
+        "Paragraph text. {color=red}\n"
+        "\n"
+        "> quoted line {.callout}\n"
+        "\n"
+        "```python {.snippet}\n"
+        "print('hi')\n"
+        "```\n"
+        "\n"
+        "{.bullets}\n"
+        "- a\n"
+        "- b\n"
+    )
+    doc = parse(src)
+    para = doc.children[0]
+    assert isinstance(para, a.Paragraph)
+    assert para.attrs.get("color") == "red"
+
+    bq = doc.children[1]
+    assert isinstance(bq, a.Blockquote)
+    assert bq.attrs.get("class") == ["callout"]
+
+    cb = doc.children[2]
+    assert isinstance(cb, a.CodeBlock)
+    assert cb.lang == "python"
+    assert cb.attrs.get("class") == ["snippet"]
+
+    lst = doc.children[3]
+    assert isinstance(lst, a.ListBlock)
+    assert lst.attrs.get("class") == ["bullets"]
+
+
+def test_image_directive_ial_not_stolen_by_paragraph():
+    """The grammar's tightest corner: a paragraph that ends with
+    an image directive's IAL ``){.qrcode}`` must keep the IAL
+    on the image, not the paragraph."""
+    from exoclaw_screen import ast as a
+    from exoclaw_screen.parser import parse
+
+    doc = parse("Scan: ![QR](https://example.com){.qrcode size=200}")
+    para = doc.children[0]
+    assert isinstance(para, a.Paragraph)
+    assert para.attrs == {}
+    img = para.content[-1]
+    assert isinstance(img, a.Image)
+    assert img.attrs.get("class") == ["qrcode"]
+    assert img.attrs.get("size") == "200"
+
+
+def test_layout_honors_container_w_h_gap():
+    """Layout's ``.row`` / ``.col`` ``w`` / ``h`` / ``gap`` honoring
+    must work on MP — the chip-side renderer relies on those
+    rectangles being correct."""
+    from exoclaw_screen.layout import lay_out
+    from exoclaw_screen.parser import parse
+    from exoclaw_screen.protocol import (
+        COLOR_MONO,
+        REFRESH_SLOW,
+        DisplayCapabilities,
+    )
+
+    caps = DisplayCapabilities(
+        width=800,
+        height=480,
+        color_mode=COLOR_MONO,
+        refresh_class=REFRESH_SLOW,
+        char_cols=80,
+        char_rows=24,
+        supports_partial=True,
+    )
+    src = "::: {.row gap=20}\n# A\n# B\n:::"
+    blocks = lay_out(parse(src), caps)
+    headings = [b for b in blocks if b.kind == "heading"]
+    assert len(headings) == 2
+    # gap=20 between two children: each = (800 - 20) / 2 = 390.
+    assert headings[0].w == 390
+    assert headings[1].x == 410

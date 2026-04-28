@@ -21,6 +21,7 @@ from exoclaw_screen.protocol import (
     Display,
     DisplayCapabilities,
 )
+from exoclaw_screen.tool import RepaintScreenTool
 
 __all__ = [
     "COLOR_GRAY2",
@@ -34,4 +35,5 @@ __all__ = [
     "REFRESH_MEDIUM",
     "REFRESH_SLOW",
     "REFRESH_VERY_SLOW",
+    "RepaintScreenTool",
 ]

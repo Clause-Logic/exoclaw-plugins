@@ -14,6 +14,8 @@ gitignored). Keeps API keys out of the source tree.
 
 from __future__ import annotations
 
+from typing import Any
+
 from exoclaw._compat import Path, get_logger
 from exoclaw_conversation import SummarizingConsolidationPolicy
 from exoclaw_conversation.conversation import DefaultConversation
@@ -155,6 +157,7 @@ async def run_serial_app(
     enable_subagent: bool = True,
     subagent_max_concurrent: int | None = 2,
     enable_workspace_tools: bool = True,
+    display: "Any | None" = None,
     heartbeat_interval_ms: int | None = None,
 ) -> None:
     """Run the full agent app with USB-CDC as a baseline channel.
@@ -283,6 +286,17 @@ async def run_serial_app(
         all_tools.append(WriteFileTool(workspace=workspace))  # type: ignore[invalid-argument-type]
         all_tools.append(EditFileTool(workspace=workspace))  # type: ignore[invalid-argument-type]
         all_tools.append(ListDirTool(workspace=workspace))  # type: ignore[invalid-argument-type]
+
+    # Optional screen display — when the board passes a concrete
+    # ``Display`` impl, wire ``RepaintScreenTool`` so the agent can
+    # call ``repaint_screen`` after editing ``screen.md``. The
+    # ``Display`` Protocol is defined in ``exoclaw_screen``; impls
+    # are board-specific (host-preview Pillow on the unix sim,
+    # SPI e-ink driver on chip boards).
+    if display is not None:
+        from exoclaw_screen import RepaintScreenTool
+
+        all_tools.append(RepaintScreenTool(display=display))
 
     # Optional cron — start the timer task before the agent loop
     # so jobs that fire during boot (e.g. ``at`` schedules in the

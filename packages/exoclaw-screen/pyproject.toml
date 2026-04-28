@@ -17,9 +17,13 @@ dependencies = [
 [project.optional-dependencies]
 # Host preview renderer — Pillow is CPython-only, so the chip path
 # never installs it. Plugin authors who want the host preview run
-# ``pip install exoclaw-screen[host-preview]``.
+# ``pip install exoclaw-screen[host-preview]``. The ``qrcode``
+# package powers the ``.qrcode`` directive on host; chip MP doesn't
+# ship a QR encoder yet so the renderer falls back to italic URL
+# text on any board where ``qrcode`` isn't importable.
 host-preview = [
     "Pillow>=10.0.0",
+    "qrcode>=7.4.0",
 ]
 
 [project.entry-points."exoclaw.skills"]

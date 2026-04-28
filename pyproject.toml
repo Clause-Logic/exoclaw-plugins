@@ -20,6 +20,7 @@ exoclaw-tools-llm-call = { workspace = true }
 exoclaw-channel-pipe = { workspace = true }
 exoclaw-loop-detection = { workspace = true }
 exoclaw-executor-dbos = { workspace = true }
+exoclaw-screen = { workspace = true }
 
 [dependency-groups]
 dev = [

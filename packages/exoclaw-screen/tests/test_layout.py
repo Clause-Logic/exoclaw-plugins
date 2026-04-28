@@ -58,3 +58,92 @@ class TestLayout:
         blocks = lay_out(doc, _caps())
         assert blocks[0].attrs.get("class") == ["section"]
         assert blocks[0].attrs.get("align") == "center"
+
+
+class TestContainerLayout:
+    """Container ``.row`` / ``.col`` honor ``w`` / ``h`` / ``gap`` attrs."""
+
+    def test_row_splits_width_evenly_when_no_w(self) -> None:
+        # Two children, no widths — each gets half of 800.
+        src = "::: {.row}\n# A\n# B\n:::"
+        doc = parse(src)
+        blocks = lay_out(doc, _caps())
+        # Find the heading blocks (children of the container).
+        headings = [b for b in blocks if b.kind == "heading"]
+        assert len(headings) == 2
+        assert headings[0].x == 0
+        assert headings[0].w == 400
+        assert headings[1].x == 400
+        assert headings[1].w == 400
+
+    def test_row_honors_explicit_w_pct(self) -> None:
+        src = "::: {.row}\n::: {.col w=25%}\n# A\n:::\n::: {.col w=75%}\n# B\n:::\n:::"
+        doc = parse(src)
+        blocks = lay_out(doc, _caps())
+        cols = [b for b in blocks if b.kind == "container" and b.attrs.get("w") in ("25%", "75%")]
+        assert len(cols) == 2
+        # 25% of 800 = 200; 75% of 800 = 600.
+        assert cols[0].w == 200
+        assert cols[1].w == 600
+        assert cols[1].x == 200
+
+    def test_row_honors_gap(self) -> None:
+        # gap=20 between two children: each child = (800 - 20) / 2 = 390.
+        src = "::: {.row gap=20}\n# A\n# B\n:::"
+        doc = parse(src)
+        blocks = lay_out(doc, _caps())
+        headings = [b for b in blocks if b.kind == "heading"]
+        assert len(headings) == 2
+        assert headings[0].w == 390
+        assert headings[1].x == 410  # 390 + 20 gap
+
+    def test_col_honors_h_attr(self) -> None:
+        src = "::: {.col h=300}\n# A\n# B\n:::"
+        doc = parse(src)
+        blocks = lay_out(doc, _caps())
+        # Each child should get half of 300.
+        headings = [b for b in blocks if b.kind == "heading"]
+        assert len(headings) == 2
+        assert headings[0].h == 150
+        assert headings[1].h == 150
+        assert headings[1].y == 150
+
+    def test_col_honors_gap_in_height(self) -> None:
+        src = "::: {.col h=300 gap=20}\n# A\n# B\n:::"
+        doc = parse(src)
+        blocks = lay_out(doc, _caps())
+        headings = [b for b in blocks if b.kind == "heading"]
+        # Available height = 300 - 20 = 280; each child = 140.
+        assert headings[0].h == 140
+        assert headings[1].h == 140
+        assert headings[1].y == 160  # 140 + 20 gap
+
+    def test_nested_row_in_col(self) -> None:
+        src = "::: {.col}\n::: {.row}\n# A\n# B\n:::\n# C\n:::"
+        doc = parse(src)
+        blocks = lay_out(doc, _caps())
+        # Heading C should occupy full width.
+        c = [b for b in blocks if b.kind == "heading" and b.x == 0]
+        # A is at x=0, C is at x=0 — both should be in this list.
+        assert len(c) >= 2
+
+    def test_grid_cols_3(self) -> None:
+        src = "::: {.grid cols=3}\n# A\n# B\n# C\n:::"
+        doc = parse(src)
+        blocks = lay_out(doc, _caps())
+        headings = [b for b in blocks if b.kind == "heading"]
+        assert len(headings) == 3
+        # Each cell = 800 / 3.
+        assert headings[0].w == 800 // 3
+        assert headings[1].x == 800 // 3
+        assert headings[2].x == 2 * (800 // 3)
+
+    def test_grid_cols_3_with_gap(self) -> None:
+        src = "::: {.grid cols=3 gap=10}\n# A\n# B\n# C\n:::"
+        doc = parse(src)
+        blocks = lay_out(doc, _caps())
+        headings = [b for b in blocks if b.kind == "heading"]
+        # cell_w = (800 - 20) / 3 = 260.
+        assert headings[0].w == 260
+        assert headings[1].x == 270  # 260 + 10
+        assert headings[2].x == 540  # 260 + 10 + 260 + 10

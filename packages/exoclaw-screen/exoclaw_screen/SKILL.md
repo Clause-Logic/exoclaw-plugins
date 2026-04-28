@@ -90,6 +90,26 @@ _Updated 10:23am_ {.footer align=right size=small}
 Class shorthand: `.foo`. Bare attributes: `key=value`. Combined:
 `{.title align=center color=red}`. No quoted values in v0.
 
+IAL attaches to:
+
+- Headings, paragraphs, blockquotes, code blocks, images —
+  trailing `{...}` on the block.
+- Code blocks — `\`\`\`python {.callout}` (lang token first, then
+  optional IAL).
+- **Lists** — IAL attaches to the list as a whole, not items. Put
+  `{.cols=2 align=left}` on its own line *immediately above* the
+  first list marker:
+
+  ```markdown
+  {.bullets}
+  - a
+  - b
+  - c
+  ```
+
+  Blank line between IAL and list is allowed; any other block
+  between them drops the IAL.
+
 ### Layout containers — fenced divs
 
 `:::` with an IAL opens a container. `:::` alone closes it.

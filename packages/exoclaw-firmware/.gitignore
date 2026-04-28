@@ -4,3 +4,7 @@ boards/*/secrets.py
 
 # Output of ``mise run stage`` — assembled flash tree.
 .stage/
+
+# ``mise run sim`` artefacts — workspace state + screen-preview PNG.
+.sim-workspace/
+screen.png

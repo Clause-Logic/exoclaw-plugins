@@ -21,9 +21,12 @@ Two layers of node:
 A block's ``content`` field is a list of inline nodes (or list of
 block nodes for containers / blockquotes).
 
-``attrs`` is the IAL attribute dict — ``{".class": True}`` for a
-class, ``{"key": "value"}`` for an attribute. Always present
-(empty dict if no IAL).
+``attrs`` is the IAL attribute dict produced by
+``parser.parse_ial``. Class shorthand ``.foo`` lands under the
+``"class"`` key as an ordered list (e.g. ``{"class": ["title",
+"section"]}``). Bare ``key=value`` attributes land as their own
+keys with string values. A bare key with no ``=`` lands as
+``{"key": True}``. Always present (empty dict if no IAL).
 """
 
 from __future__ import annotations

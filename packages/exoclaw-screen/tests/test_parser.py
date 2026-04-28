@@ -261,3 +261,140 @@ class TestEscaping:
         # Should produce a plain Text node, no Italic.
         assert all(isinstance(c, a.Text) for c in para.content)
         assert "*not italic*" in "".join(c.text for c in para.content)
+
+
+# ── IAL on block elements (paragraph / blockquote / code / list) ──
+
+
+class TestParagraphIAL:
+    def test_simple_trailing_ial(self) -> None:
+        doc = parse("Now: 72°F {color=red weight=bold}")
+        para = doc.children[0]
+        assert isinstance(para, a.Paragraph)
+        assert para.attrs.get("color") == "red"
+        assert para.attrs.get("weight") == "bold"
+
+    def test_class_ial(self) -> None:
+        doc = parse("Hello world {.callout}")
+        para = doc.children[0]
+        assert isinstance(para, a.Paragraph)
+        assert para.attrs.get("class") == ["callout"]
+
+    def test_image_directive_keeps_its_ial(self) -> None:
+        # The IAL belongs to the image, not the paragraph.
+        doc = parse("![QR](https://example.com){.qrcode size=200}")
+        para = doc.children[0]
+        assert isinstance(para, a.Paragraph)
+        # Paragraph should NOT have stolen the IAL.
+        assert para.attrs == {}
+        # The image inside still has the IAL.
+        img = para.content[0]
+        assert isinstance(img, a.Image)
+        assert img.attrs.get("class") == ["qrcode"]
+        assert img.attrs.get("size") == "200"
+
+    def test_paragraph_text_and_image_directive_keeps_image_ial(self) -> None:
+        # Paragraph with text + trailing image directive — IAL is the image's.
+        doc = parse("Scan: ![QR](https://example.com){.qrcode}")
+        para = doc.children[0]
+        assert isinstance(para, a.Paragraph)
+        assert para.attrs == {}
+
+    def test_no_trailing_ial_means_empty_attrs(self) -> None:
+        doc = parse("Plain text.")
+        para = doc.children[0]
+        assert isinstance(para, a.Paragraph)
+        assert para.attrs == {}
+
+
+class TestBlockquoteIAL:
+    def test_trailing_ial_on_quote(self) -> None:
+        doc = parse("> wisdom of the day {.callout color=blue}")
+        bq = doc.children[0]
+        assert isinstance(bq, a.Blockquote)
+        assert bq.attrs.get("class") == ["callout"]
+        assert bq.attrs.get("color") == "blue"
+
+    def test_image_directive_inside_quote_keeps_its_ial(self) -> None:
+        doc = parse("> ![QR](https://example.com){.qrcode}")
+        bq = doc.children[0]
+        assert isinstance(bq, a.Blockquote)
+        # The blockquote-level IAL should NOT have been stolen from the image.
+        assert bq.attrs == {}
+
+    def test_no_ial_means_empty_attrs(self) -> None:
+        doc = parse("> just a quote")
+        bq = doc.children[0]
+        assert isinstance(bq, a.Blockquote)
+        assert bq.attrs == {}
+
+
+class TestCodeBlockIAL:
+    def test_lang_with_ial(self) -> None:
+        doc = parse("```python {.callout}\nprint('hi')\n```")
+        cb = doc.children[0]
+        assert isinstance(cb, a.CodeBlock)
+        assert cb.lang == "python"
+        assert cb.attrs.get("class") == ["callout"]
+
+    def test_ial_only_no_lang(self) -> None:
+        doc = parse("``` {.callout}\nprint('hi')\n```")
+        cb = doc.children[0]
+        assert isinstance(cb, a.CodeBlock)
+        assert cb.lang == ""
+        assert cb.attrs.get("class") == ["callout"]
+
+    def test_lang_only_still_works(self) -> None:
+        doc = parse("```python\nprint('hi')\n```")
+        cb = doc.children[0]
+        assert cb.lang == "python"
+        assert cb.attrs == {}
+
+
+class TestListIAL:
+    def test_standalone_ial_above_list(self) -> None:
+        src = "{cols=2 align=left}\n- a\n- b\n- c"
+        doc = parse(src)
+        lst = doc.children[0]
+        assert isinstance(lst, a.ListBlock)
+        assert lst.attrs.get("cols") == "2"
+        assert lst.attrs.get("align") == "left"
+
+    def test_standalone_ial_with_blank_then_list(self) -> None:
+        src = "{cols=2}\n\n- a\n- b"
+        doc = parse(src)
+        lst = doc.children[0]
+        assert isinstance(lst, a.ListBlock)
+        assert lst.attrs.get("cols") == "2"
+
+    def test_class_only_ial_above_list(self) -> None:
+        src = "{.bullets}\n- a\n- b"
+        doc = parse(src)
+        lst = doc.children[0]
+        assert isinstance(lst, a.ListBlock)
+        assert lst.attrs.get("class") == ["bullets"]
+
+    def test_paragraph_with_ial_followed_by_list_doesnt_leak(self) -> None:
+        # A paragraph that ends with ``{...}`` IAL should NOT have
+        # its IAL stolen by the list that follows it.
+        src = "A para. {.callout}\n\n- a\n- b"
+        doc = parse(src)
+        assert len(doc.children) == 2
+        para = doc.children[0]
+        lst = doc.children[1]
+        assert isinstance(para, a.Paragraph)
+        assert para.attrs.get("class") == ["callout"]
+        assert isinstance(lst, a.ListBlock)
+        assert lst.attrs == {}
+
+    def test_no_list_after_means_ial_is_dropped(self) -> None:
+        # A standalone IAL followed by a non-list block — ensure
+        # the parser doesn't crash and doesn't smuggle the attrs
+        # somewhere weird.
+        src = "{cols=2}\n\n# Heading"
+        doc = parse(src)
+        # Either the ``{cols=2}`` line gets emitted as a paragraph
+        # OR is dropped (we drop it). The heading is unaffected.
+        h = doc.children[-1]
+        assert isinstance(h, a.Heading)
+        assert h.attrs == {}

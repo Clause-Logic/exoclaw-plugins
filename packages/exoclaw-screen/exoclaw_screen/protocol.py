@@ -47,7 +47,7 @@ REFRESH_MEDIUM = "medium"
 REFRESH_SLOW = "slow"
 """Full e-ink refresh — 1–3s. UC8179 etc."""
 REFRESH_VERY_SLOW = "very_slow"
-"""Color e-ink (Spectra 6) — 10–20s. Avoid avoidable redraws."""
+"""Color e-ink (Spectra 6) — 10–20s. Avoid unnecessary redraws."""
 
 
 class DisplayCapabilities:

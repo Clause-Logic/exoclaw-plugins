@@ -1,6 +1,6 @@
 [project]
 name = "exoclaw-firmware"
-version = "0.7.0"
+version = "0.8.0"
 description = "Deployable exoclaw image for MicroPython boards (ESP32-S3 and friends)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -17,7 +17,15 @@ dependencies = [
     "exoclaw-tools-cron>=0.9.0",
     "exoclaw-subagent>=0.15.0",
     "exoclaw-tools-workspace>=0.6.0",
+    "exoclaw-screen>=0.1.0",
 ]
+
+[project.optional-dependencies]
+# Host-preview screen rendering — the unix board's
+# ``HostPreviewDisplay`` lifts the ``[host-preview]`` extra from
+# ``exoclaw-screen`` (Pillow + qrcode). Chip boards bring their
+# own driver and don't need this.
+host-preview = ["exoclaw-screen[host-preview]>=0.1.0"]
 
 [build-system]
 requires = ["hatchling"]
@@ -62,4 +70,10 @@ bundle_skills_from = [
     # ``web`` submodules are CPython-only and not pulled at
     # package-import time on chip.
     "exoclaw-tools-workspace",
+    # Screen's ``screen`` skill teaches the agent the markdown +
+    # IAL + Pandoc-fenced-div grammar for the file-backed display
+    # surface. Without bundling, the agent has no signal that
+    # ``repaint_screen`` exists or how to author content for the
+    # panel's resolution + char budget.
+    "exoclaw-screen",
 ]

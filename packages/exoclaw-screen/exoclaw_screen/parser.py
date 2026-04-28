@@ -79,7 +79,11 @@ def parse_ial(text: str) -> "dict[str, Any]":
                 vstart = i
                 while i < n and text[i] not in " \t":
                     i += 1
-                out[key] = text[vstart:i]
+                # Empty-key guard — input like ``"=foo"`` would
+                # otherwise produce ``{"": "foo"}``. Skip silently;
+                # malformed IAL shouldn't leak through to renderers.
+                if key:
+                    out[key] = text[vstart:i]
             else:
                 # Bare key — store as ``True`` so caller can test
                 # presence with ``"key" in attrs``.
@@ -126,6 +130,46 @@ def parse_trailing_ial(line: str) -> "tuple[str, dict[str, Any]]":
     # Strip the IAL plus any leading whitespace before the ``{``.
     head = s[:found].rstrip()
     return head, attrs
+
+
+def _trailing_ial_belongs_to_image(line: str) -> bool:
+    """Detect if a line's trailing ``{...}`` is the IAL of a
+    closing image directive ``![alt](url){.qrcode}`` rather than
+    a block-level IAL.
+
+    Walks back from the trailing ``}`` to find the matching ``{``;
+    if the char immediately before that ``{`` is ``)`` AND somewhere
+    earlier on the same line is ``![``, the IAL belongs to the image.
+    Used by paragraph + blockquote IAL stripping to avoid stealing
+    the image directive's class.
+    """
+    s = line.rstrip()
+    if not s.endswith("}"):
+        return False
+    depth = 0
+    j = len(s) - 1
+    found = -1
+    while j >= 0:
+        c = s[j]
+        if c == "}":
+            depth += 1
+        elif c == "{":
+            depth -= 1
+            if depth == 0:
+                found = j
+                break
+        j -= 1
+    if found <= 0:
+        return False
+    # Char immediately before ``{`` (skip trailing whitespace
+    # between ``)`` and ``{`` — most images write them flush).
+    k = found - 1
+    while k >= 0 and s[k] in " \t":
+        k -= 1
+    if k < 0 or s[k] != ")":
+        return False
+    # Look earlier for an ``![`` opening on the same line.
+    return "![" in s[:k]
 
 
 # ── Inline parser ────────────────────────────────────────────────
@@ -373,11 +417,32 @@ def _container_kind_from_attrs(attrs: "dict[str, Any]") -> str:
     return "col"
 
 
+def _is_standalone_ial_line(line: str) -> "tuple[bool, dict[str, Any]]":
+    """Return ``(True, attrs)`` if ``line`` (after strip) is just an
+    IAL block ``{...}`` and nothing else. Used to detect the
+    list-as-whole IAL form where ``{.cols=2}`` lives on its own line
+    immediately above the first ``- item``.
+    """
+    s = line.strip()
+    if not (s.startswith("{") and s.endswith("}") and len(s) >= 2):
+        return False, {}
+    attrs = parse_ial(s[1:-1])
+    if not attrs:
+        return False, {}
+    return True, attrs
+
+
 def _parse_blocks(cur: _LineCursor, depth: int = 0) -> "list[Any]":
     """Parse a block sequence, returning when the cursor hits EOF
     OR a ``:::`` close fence at the current depth.
     """
     out: list[Any] = []
+    # ``pending_list_attrs`` carries a standalone-IAL line's attrs
+    # forward to the next list block (and ONLY a list block — if a
+    # different block comes between, the IAL is dropped on the floor
+    # to keep the grammar tight). See list-as-whole IAL rule:
+    # ordering is "IAL line, optional blank lines, then list".
+    pending_list_attrs: dict[str, Any] = {}
     while not cur.at_eof():
         line = cur.peek()
         # ``:::`` close fence — return to caller (parent fence).
@@ -388,6 +453,30 @@ def _parse_blocks(cur: _LineCursor, depth: int = 0) -> "list[Any]":
         if not line.strip():
             cur.advance()
             continue
+        # Standalone IAL line: ``{.cols=2 align=left}`` on its own.
+        # If the NEXT non-blank line opens a list, we attach to the
+        # list. If it doesn't, drop the line (don't emit a paragraph
+        # of literal ``{...}`` text — that's noise the agent didn't
+        # mean).
+        is_ial, ial_attrs = _is_standalone_ial_line(line)
+        if is_ial:
+            # Peek ahead past blanks for the next non-blank line.
+            saved_i = cur._i
+            cur.advance()
+            while not cur.at_eof() and not cur.peek().strip():
+                cur.advance()
+            if not cur.at_eof() and _detect_list_marker(cur.peek()) is not None:
+                pending_list_attrs = ial_attrs
+                # Don't reset cursor — we've consumed the IAL line
+                # plus any blanks before the list.
+                continue
+            # Not followed by a list — restore cursor, treat the
+            # line as a regular paragraph (fall through). This
+            # preserves "an unrelated paragraph that ends with
+            # ``{...}`` shouldn't have its IAL stolen by a list
+            # that follows" — here the IAL stands alone.
+            cur._i = saved_i
+            # Fall through to paragraph collection below.
         # ``::: {.row}`` open fence — recurse.
         is_open, attrs = _is_fence_open(line)
         if is_open:
@@ -395,6 +484,7 @@ def _parse_blocks(cur: _LineCursor, depth: int = 0) -> "list[Any]":
             kind = _container_kind_from_attrs(attrs)
             children = _parse_blocks(cur, depth + 1)
             out.append(a.Container(kind=kind, attrs=attrs, children=children))
+            pending_list_attrs = {}
             continue
         # Heading: ``# `` to ``###### ``.
         if line.startswith("#"):
@@ -406,16 +496,34 @@ def _parse_blocks(cur: _LineCursor, depth: int = 0) -> "list[Any]":
                 rest = line[level + 1 :]
                 rest, attrs = parse_trailing_ial(rest)
                 out.append(a.Heading(level=level, content=_parse_inline(rest), attrs=attrs))
+                pending_list_attrs = {}
                 continue
         # Horizontal rule.
         if _is_hr(line):
             cur.advance()
             out.append(a.HorizontalRule())
+            pending_list_attrs = {}
             continue
         # Fenced code block: ``\`\`\`...\`\`\```.
         if line.startswith("```"):
             cur.advance()
-            lang = line[3:].strip()
+            info = line[3:].strip()
+            # Info string: ``lang`` token (first whitespace-delimited
+            # word), then optional trailing ``{...}`` IAL.
+            cb_attrs: dict[str, Any] = {}
+            if info.endswith("}"):
+                stripped_info, cb_attrs = parse_trailing_ial(info)
+                if cb_attrs:
+                    info = stripped_info
+            # First whitespace-delimited word is the lang.
+            lang = info.strip()
+            # If there's still extra cruft after a space (no IAL but
+            # multiple words), only the first is the lang.
+            for sp in (" ", "\t"):
+                idx = lang.find(sp)
+                if idx != -1:
+                    lang = lang[:idx]
+                    break
             buf: list[str] = []
             while not cur.at_eof():
                 inner = cur.peek()
@@ -423,7 +531,8 @@ def _parse_blocks(cur: _LineCursor, depth: int = 0) -> "list[Any]":
                     cur.advance()
                     break
                 buf.append(cur.advance())
-            out.append(a.CodeBlock(text="\n".join(buf), lang=lang))
+            out.append(a.CodeBlock(text="\n".join(buf), lang=lang, attrs=cb_attrs))
+            pending_list_attrs = {}
             continue
         # Blockquote: ``>`` line prefix (one or more contiguous lines).
         if line.startswith(">"):
@@ -435,10 +544,24 @@ def _parse_blocks(cur: _LineCursor, depth: int = 0) -> "list[Any]":
                     quote_lines.append(ln[2:])
                 else:
                     quote_lines.append(ln[1:])
+            # Blockquote-level IAL: same rule as paragraph — trailing
+            # ``{...}`` on the last non-blank line, unless it's an
+            # image directive's IAL.
+            bq_attrs: dict[str, Any] = {}
+            last_idx = len(quote_lines) - 1
+            while last_idx >= 0 and not quote_lines[last_idx].strip():
+                last_idx -= 1
+            if last_idx >= 0:
+                last_line = quote_lines[last_idx]
+                if not _trailing_ial_belongs_to_image(last_line):
+                    stripped, bq_attrs = parse_trailing_ial(last_line)
+                    if bq_attrs:
+                        quote_lines[last_idx] = stripped
             quote_text = "\n".join(quote_lines)
             sub_cursor = _LineCursor(quote_text.splitlines())
             children = _parse_blocks(sub_cursor)
-            out.append(a.Blockquote(content=children))
+            out.append(a.Blockquote(content=children, attrs=bq_attrs))
+            pending_list_attrs = {}
             continue
         # List: unordered (``- `` / ``* ``) or ordered (``1. ``).
         list_match = _detect_list_marker(line)
@@ -453,7 +576,8 @@ def _parse_blocks(cur: _LineCursor, depth: int = 0) -> "list[Any]":
                 cur.advance()
                 content_text = _strip_list_marker(ln, ordered)
                 items.append(a.ListItem(content=_parse_inline(content_text)))
-            out.append(a.ListBlock(ordered=ordered, items=items))
+            out.append(a.ListBlock(ordered=ordered, items=items, attrs=pending_list_attrs))
+            pending_list_attrs = {}
             continue
         # Paragraph: collect contiguous non-blank, non-special lines.
         para_lines: list[str] = []
@@ -465,16 +589,20 @@ def _parse_blocks(cur: _LineCursor, depth: int = 0) -> "list[Any]":
                 break
             para_lines.append(cur.advance())
         if para_lines:
+            # Paragraph-level IAL: strip a trailing ``{...}`` from
+            # the paragraph's last line UNLESS that line ends with
+            # an image-directive close ``)`` immediately before the
+            # IAL — in which case the IAL belongs to the image.
+            # See ``_trailing_ial_belongs_to_image`` for the rule.
+            attrs: dict[str, Any] = {}
+            last = para_lines[-1]
+            if not _trailing_ial_belongs_to_image(last):
+                stripped, attrs = parse_trailing_ial(last)
+                if attrs:
+                    para_lines[-1] = stripped
             text = "\n".join(para_lines)
-            # NOTE: paragraph-level IAL stripping is intentionally
-            # NOT applied here. A trailing ``{...}`` on a paragraph
-            # is most often an image directive (e.g. ``![QR](url)
-            # {.qrcode size=200}``); stripping it at the paragraph
-            # level would steal the IAL from the image and the
-            # directive would silently lose its class. Heading-level
-            # IAL still gets ``parse_trailing_ial``-stripped (see
-            # the heading branch above).
-            out.append(a.Paragraph(content=_parse_inline(text)))
+            out.append(a.Paragraph(content=_parse_inline(text), attrs=attrs))
+            pending_list_attrs = {}
     return out
 
 
