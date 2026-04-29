@@ -124,12 +124,20 @@ class FileBudgetStore:
         parent = self._path.parent
         if str(parent) and not parent.exists():
             parent.mkdir(parents=True, exist_ok=True)
-        # Atomic write — temp + rename. ``os.rename`` is the cross-runtime
-        # atomic-on-POSIX primitive; the ``Path.replace`` method isn't on
-        # the MP-compat ``Path`` shim so we drop to ``os.rename`` instead.
+        # Atomic write — temp + rename. ``os.replace`` is preferred over
+        # ``os.rename`` because Windows' ``rename`` fails if the target
+        # exists (so the second ``save()`` call would raise
+        # ``FileExistsError``). MicroPython 1.27 ships ``os.rename`` but
+        # not ``os.replace``; fall back to ``rename`` there. The MP-compat
+        # ``Path`` shim doesn't expose ``.replace``, so we go through the
+        # ``os`` module either way.
         tmp = parent / (self._path.name + ".tmp")
         tmp.write_text(text)
-        os.rename(str(tmp), str(self._path))
+        replace = getattr(os, "replace", None)
+        if replace is not None:
+            replace(str(tmp), str(self._path))
+        else:
+            os.rename(str(tmp), str(self._path))
 
     def clear(self) -> None:
         try:

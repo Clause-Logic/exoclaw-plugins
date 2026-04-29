@@ -304,7 +304,14 @@ async def create(
         # for server deploys where the container restarts mid-day. The
         # path should live OUTSIDE the agent's workspace; see schema
         # ``DailyBudgetDefaults.state_path`` for the security note.
-        store = FileBudgetStore(daily_budget.state_path) if daily_budget.state_path else None
+        # ``expanduser`` so configs like ``~/.nanobot/budget-state.json``
+        # resolve relative to the bot's home dir instead of creating a
+        # literal ``./~/...`` directory under cwd.
+        store = (
+            FileBudgetStore(Path(daily_budget.state_path).expanduser())
+            if daily_budget.state_path
+            else None
+        )
         daily_tracker = DailyBudgetTracker(
             DailyBudgetConfig(
                 daily_budget=daily_budget.daily_budget,
