@@ -115,6 +115,51 @@ class TestTurnBudgetTracker:
         tracker.record({"total_tokens": 0})
         assert "90%" in (tracker.consume_threshold_warning() or "")
 
+    def test_jump_past_multiple_thresholds_fires_highest(self) -> None:
+        """When utilization jumps from below 50% to 100% in a single
+        call (e.g. ``iteration_budget=1``), we want the *highest* crossed
+        threshold — not "50%" warning when we're actually at 100%."""
+        tracker = TurnBudgetTracker(
+            TurnBudgetConfig(
+                iteration_budget=1,
+                token_budget=None,
+                warning_thresholds=(0.5, 0.8, 0.9),
+            )
+        )
+        # Below at_limit so the suppression doesn't kick in: first record
+        # would push to 1/1 = at_limit. Use a no-record path: directly
+        # bump iteration count via record() and then reset is_at_limit
+        # by upping the budget. Easiest is to just test with a 2-iter
+        # budget and jump halfway in one go.
+        tracker = TurnBudgetTracker(
+            TurnBudgetConfig(
+                iteration_budget=10,
+                token_budget=1000,
+                warning_thresholds=(0.5, 0.8, 0.9),
+            )
+        )
+        # Tokens jump straight to 90% on first iteration.
+        tracker.record({"total_tokens": 900})
+        msg = tracker.consume_threshold_warning()
+        assert msg is not None
+        assert "90%" in msg
+        # And subsequent calls don't fire 50% or 80% retroactively.
+        assert tracker.consume_threshold_warning() is None
+
+    def test_threshold_warnings_suppressed_when_at_limit(self) -> None:
+        """Once the budget is exhausted, the at-limit message takes over
+        — threshold warnings shouldn't surface a stale "50%" when we're
+        actually at 100%."""
+        tracker = TurnBudgetTracker(
+            TurnBudgetConfig(
+                iteration_budget=1,
+                warning_thresholds=(0.5,),
+            )
+        )
+        tracker.record({"total_tokens": 0})  # at_limit immediately
+        assert tracker.is_at_limit() is True
+        assert tracker.consume_threshold_warning() is None
+
     def test_token_axis_drives_warning_when_higher(self) -> None:
         tracker = TurnBudgetTracker(
             TurnBudgetConfig(
@@ -316,6 +361,49 @@ class TestBudgetWrapperEnforcement:
         tracker = TurnBudgetTracker(TurnBudgetConfig())
         with pytest.raises(ValueError, match="fallback_model"):
             BudgetWrapper(FakeProvider(), tracker, Enforcement.FALLBACK, None)
+
+    async def test_close_delegates_to_inner(self) -> None:
+        """Inner providers (e.g. ``OpenAIStreamingProvider``) own HTTP
+        clients that need to be released at shutdown — the wrapper has
+        to forward ``close()`` so those resources don't leak."""
+
+        @dataclass
+        class ClosableFake(FakeProvider):
+            close_calls: int = 0
+
+            async def close(self) -> None:
+                self.close_calls += 1
+
+        inner = ClosableFake()
+        wrapper = BudgetWrapper(inner, TurnBudgetTracker(TurnBudgetConfig()))
+        await wrapper.close()
+        assert inner.close_calls == 1
+
+    async def test_close_no_op_when_inner_lacks_close(self) -> None:
+        """``FakeProvider`` has no ``close`` — wrapper should silently
+        no-op rather than raising AttributeError."""
+        wrapper = BudgetWrapper(FakeProvider(), TurnBudgetTracker(TurnBudgetConfig()))
+        await wrapper.close()  # must not raise
+
+    async def test_tracking_falls_back_to_inner_default_model(self) -> None:
+        """When the caller omits ``model`` (common — agent loop relies
+        on the inner provider's defaulting), the daily tracker would
+        ignore the call (``model=None`` is treated as "not a primary").
+        Wrapper resolves to ``inner.get_default_model()`` for tracking
+        so the daily budget actually counts those tokens."""
+        cfg = DailyBudgetConfig(
+            daily_budget=1000,
+            primary_models=("fake-model",),
+            enforcement=Enforcement.OBSERVE,  # focus on tracking, not fallback
+        )
+        tracker = DailyBudgetTracker(cfg)
+        inner = FakeProvider(usage={"total_tokens": 250})  # default_model = "fake-model"
+        wrapper = BudgetWrapper(inner, tracker)
+
+        # Caller omits model — without the fix the tracker would see
+        # ``None`` and skip the count.
+        await wrapper.chat(messages=[{"role": "user", "content": "hi"}])
+        assert tracker.total_tokens == 250
 
 
 class TestDailyBudgetWrapper:

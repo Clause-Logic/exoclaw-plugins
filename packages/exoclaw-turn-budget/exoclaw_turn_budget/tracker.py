@@ -122,14 +122,34 @@ class TurnBudgetTracker:
         return False
 
     def consume_threshold_warning(self) -> str | None:
-        """Return one warning message if a new threshold was crossed."""
+        """Return one warning message if a new threshold was crossed.
+
+        Once at the limit (``is_at_limit()`` true) threshold warnings are
+        suppressed — the at-limit message takes over instead, so the agent
+        doesn't get a stale "you're at 50%" notice when it's actually at
+        100%. When utilization jumps past multiple thresholds in a single
+        call (e.g. ``iteration_budget=1`` going 0→1), the *highest*
+        crossed threshold fires and all lower thresholds are marked as
+        already-fired so they don't surface later.
+        """
+        if self.is_at_limit():
+            return None
         cfg = self._config
         util = self.utilization()
-        for threshold in cfg.warning_thresholds:
+        # Reverse iteration so the highest crossed threshold wins.
+        # ``sorted(..., reverse=True)`` rather than ``reversed()`` —
+        # callers may pass thresholds out of order.
+        sorted_desc = sorted(cfg.warning_thresholds, reverse=True)
+        for threshold in sorted_desc:
             if threshold in self._warned_thresholds:
                 continue
             if util >= threshold:
-                self._warned_thresholds.add(threshold)
+                # Mark this threshold AND every lower threshold as
+                # already fired — they were all crossed simultaneously
+                # and shouldn't pop later.
+                for t in cfg.warning_thresholds:
+                    if t <= threshold:
+                        self._warned_thresholds.add(t)
                 return self._format_at(cfg.warning_template, int(threshold * 100))
         return None
 
@@ -233,13 +253,21 @@ class DailyBudgetTracker:
         return self.total_tokens >= self._config.daily_budget
 
     def consume_threshold_warning(self) -> str | None:
+        # Highest-crossed-threshold-wins + suppress-when-at-limit logic
+        # mirrors ``TurnBudgetTracker.consume_threshold_warning`` — see
+        # that docstring for rationale.
+        if self.is_at_limit():
+            return None
         cfg = self._config
         util = self.utilization()
-        for threshold in cfg.warning_thresholds:
+        sorted_desc = sorted(cfg.warning_thresholds, reverse=True)
+        for threshold in sorted_desc:
             if threshold in self._warned_thresholds:
                 continue
             if util >= threshold:
-                self._warned_thresholds.add(threshold)
+                for t in cfg.warning_thresholds:
+                    if t <= threshold:
+                        self._warned_thresholds.add(t)
                 return _format(
                     cfg.warning_template,
                     self.SCOPE,

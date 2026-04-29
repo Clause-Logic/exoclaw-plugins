@@ -71,6 +71,23 @@ class BudgetWrapper:
     def get_default_model(self) -> str:
         return self._inner.get_default_model()
 
+    async def close(self) -> None:
+        """Delegate close to the inner provider when present.
+
+        Concrete providers (e.g. ``OpenAIStreamingProvider``) own HTTP
+        clients that need to be released — without this delegation,
+        wrapping leaks the inner client's resources at shutdown.
+        """
+        inner_close = getattr(self._inner, "close", None)
+        if inner_close is None:
+            return
+        result = inner_close()
+        # Inner ``close`` is conventionally async on this codebase, but
+        # be defensive: if a sync implementation slips through, don't
+        # try to await its return value.
+        if hasattr(result, "__await__"):
+            await result
+
     async def chat(
         self,
         messages: list[dict[str, object]],
@@ -124,8 +141,15 @@ class BudgetWrapper:
             response_format=response_format,
         )
 
+        # Resolve to a concrete model name for tracking purposes —
+        # callers commonly omit ``model`` (the agent loop relies on the
+        # inner provider's default), but ``DailyBudgetTracker`` with
+        # ``primary_models`` set ignores ``None`` and would silently
+        # undercount. Forward the original (possibly None) value to the
+        # inner provider so its own defaulting still applies.
+        tracked_model = used_model if used_model is not None else self._inner.get_default_model()
         self._tracker.record(
             response.usage if response.usage else None,
-            used_model,
+            tracked_model,
         )
         return response
