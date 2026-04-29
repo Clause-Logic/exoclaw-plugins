@@ -226,6 +226,45 @@ class LoopDetectionDefaults(Base):
     detect_ping_pong: bool = True
 
 
+class TurnBudgetDefaults(Base):
+    """Per-turn iteration + token budget. Disabled by default — opt in by
+    setting ``enabled: true`` in nanobot.toml. Catches single-turn runaways
+    (e.g. a research skill chaining hundreds of web_search calls) before
+    they exhaust the provider's weekly quota.
+
+    The tracker is shared across the parent turn and any subagents it
+    spawns — they go through the same wrapped provider, so a cap of 100
+    iterations is a budget for the *whole* tree, not each subagent.
+    """
+
+    enabled: bool = False
+    iteration_budget: int | None = 50
+    token_budget: int | None = 1_500_000
+    warning_thresholds: list[float] = Field(default_factory=lambda: [0.5, 0.8, 0.9])
+    enforcement: str = "cutoff"  # observe | warn | cutoff | fallback
+    fallback_model: str | None = None
+
+
+class DailyBudgetDefaults(Base):
+    """Per-day token cap with model fallback. Disabled by default. Tracks
+    cumulative tokens for the configured ``primary_models`` over a calendar
+    day in UTC; default ``enforcement: fallback`` silently demotes to
+    ``fallback_model`` once the daily budget is spent so the bot keeps
+    working through end-of-day instead of going dark.
+
+    Aim ``daily_budget`` slightly below ``weekly_quota / 7`` to leave a
+    safety margin. Fallback-model tokens don't count against the budget.
+    """
+
+    enabled: bool = False
+    daily_budget: int = 35_000_000
+    primary_models: list[str] = Field(default_factory=list)
+    warning_thresholds: list[float] = Field(default_factory=list)
+    enforcement: str = "fallback"  # observe | warn | cutoff | fallback
+    fallback_model: str | None = None
+    reset_hour_utc: int = 0
+
+
 class AgentDefaults(Base):
     workspace: str = "~/.nanobot/workspace"
     model: str = "anthropic/claude-opus-4-5"
@@ -239,6 +278,8 @@ class AgentDefaults(Base):
     search_model: str | None = None
     model_fallbacks: list[str] = Field(default_factory=list)
     loop_detection: LoopDetectionDefaults = Field(default_factory=LoopDetectionDefaults)
+    turn_budget: TurnBudgetDefaults = Field(default_factory=TurnBudgetDefaults)
+    daily_budget: DailyBudgetDefaults = Field(default_factory=DailyBudgetDefaults)
 
 
 class ModelConfig(Base):

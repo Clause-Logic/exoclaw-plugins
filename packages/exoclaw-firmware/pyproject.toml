@@ -20,6 +20,7 @@ dependencies = [
     "exoclaw-screen>=0.1.0",
     "exoclaw-tools-web>=0.1.0",
     "exoclaw-tools-voice>=0.1.0",
+    "exoclaw-turn-budget",
 ]
 
 [project.optional-dependencies]

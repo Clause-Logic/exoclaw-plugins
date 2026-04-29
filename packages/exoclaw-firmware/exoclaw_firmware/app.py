@@ -14,13 +14,20 @@ gitignored). Keeps API keys out of the source tree.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from exoclaw._compat import Path, get_logger
 from exoclaw_conversation import SummarizingConsolidationPolicy
 from exoclaw_conversation.conversation import DefaultConversation
 from exoclaw_conversation.memory import MemoryStore
 from exoclaw_provider_openai import Deployment, OpenAIStreamingProvider
+
+if TYPE_CHECKING:  # pragma: no cover (runtime)
+    # Type-only imports — the runtime ``exoclaw_turn_budget`` import
+    # below is gated on the caller actually opting in to budgets, so
+    # chip builds that don't use budgets don't pay the import cost.
+    from exoclaw.iteration_policy import IterationPolicy
+    from exoclaw_turn_budget import DailyBudgetConfig, TurnBudgetConfig
 
 logger = get_logger()
 
@@ -50,7 +57,9 @@ def build_agent(
     model: str = "gpt-4o-mini",
     extra_models: "dict[str, str] | None" = None,
     request_timeout: float = 60.0,
-) -> "tuple[OpenAIStreamingProvider, DefaultConversation]":
+    turn_budget: "TurnBudgetConfig | None" = None,
+    daily_budget: "DailyBudgetConfig | None" = None,
+) -> "tuple[Any, DefaultConversation, IterationPolicy | None]":
     """Build a (provider, conversation) pair ready to drive a turn.
 
     Args:
@@ -72,12 +81,21 @@ def build_agent(
         request_timeout: Seconds to wait for a complete response
             before the fallback chain engages. The MP HTTP client
             reuses this for connect + read budgets.
+        turn_budget: Optional ``TurnBudgetConfig`` — when set, wraps
+            the provider with a per-turn iteration + token budget and
+            returns a paired ``TurnBudgetPolicy`` for the agent loop.
+            Catches single-turn runaways (e.g. a research skill chaining
+            hundreds of web_search calls) before they exhaust the
+            provider's weekly quota.
+        daily_budget: Optional ``DailyBudgetConfig`` — when set, wraps
+            the provider with a UTC-day token cap. Default enforcement
+            is fallback (silently demote to a cheaper model when spent).
 
     Returns:
-        ``(provider, conversation)`` — call ``await
-        conversation.build_prompt(...)`` then ``await
-        provider.chat(messages=...)`` then ``await
-        conversation.record(...)`` to drive a turn manually.
+        ``(provider, conversation, iteration_policy)`` — pass
+        ``iteration_policy`` to ``Exoclaw(iteration_policy=...)`` so the
+        agent loop terminates when the per-turn budget is hit. Without
+        a ``turn_budget``, the third element is ``None``.
     """
     workspace.mkdir(parents=True, exist_ok=True)
 
@@ -89,11 +107,36 @@ def build_agent(
             if extra_name in deployments:
                 continue
             deployments[extra_name] = Deployment(base_url=extra_url, api_key=api_key)
-    provider = OpenAIStreamingProvider(
+    base_provider = OpenAIStreamingProvider(
         default_model=model,
         deployments=deployments,
         request_timeout=request_timeout,
     )
+
+    # Optional budget wrappers. Lazy-imported so chip builds without
+    # budgets configured don't pay the import cost. Daily wraps first
+    # (innermost) so its model rewrite happens before the turn layer
+    # sees the call; turn wraps daily so per-turn cutoff short-circuits
+    # before consulting the daily counter. The wrapped provider is what
+    # ``MemoryStore`` and ``DefaultConversation`` consume below, so
+    # consolidation/memory LLM calls also count against the budget.
+    provider: Any = base_provider
+    iteration_policy: Any = None
+    if turn_budget is not None or daily_budget is not None:
+        from exoclaw_turn_budget import (
+            BudgetWrapper,
+            DailyBudgetTracker,
+            TurnBudgetPolicy,
+            TurnBudgetTracker,
+        )
+
+        if daily_budget is not None:
+            provider = BudgetWrapper(provider, DailyBudgetTracker(daily_budget))
+        if turn_budget is not None:
+            turn_tracker = TurnBudgetTracker(turn_budget)
+            provider = BudgetWrapper(provider, turn_tracker)
+            iteration_policy = TurnBudgetPolicy(turn_tracker)
+
     # SummarizingConsolidationPolicy preserves a per-session
     # ``summary`` in session metadata across compactions so the
     # agent retains "what was I doing" continuity. Without this
@@ -108,7 +151,7 @@ def build_agent(
         consolidation_policy=SummarizingConsolidationPolicy(memory=memory),
         builtin_skills_dir=_builtin_skills_dir(),
     )
-    return provider, conversation
+    return provider, conversation, iteration_policy
 
 
 async def run_demo(
@@ -130,7 +173,7 @@ async def run_demo(
     returned only tool calls — unlikely for the demo prompt but
     handled).
     """
-    provider, conversation = build_agent(
+    provider, conversation, _ = build_agent(
         workspace=workspace,
         api_key=api_key,
         base_url=base_url,
@@ -178,6 +221,8 @@ async def run_serial_app(
     voice_trigger_token: str = "/talk",
     heartbeat_interval_ms: int | None = None,
     request_timeout: float = 60.0,
+    turn_budget: "TurnBudgetConfig | None" = None,
+    daily_budget: "DailyBudgetConfig | None" = None,
 ) -> None:
     """Run the full agent app with USB-CDC as a baseline channel.
 
@@ -275,13 +320,15 @@ async def run_serial_app(
         if audio_model not in extra_models:
             extra_models[audio_model] = base_url
 
-    provider, conversation = build_agent(
+    provider, conversation, iteration_policy = build_agent(
         workspace=workspace,
         api_key=api_key,
         base_url=base_url,
         model=model,
         extra_models=extra_models,
         request_timeout=request_timeout,
+        turn_budget=turn_budget,
+        daily_budget=daily_budget,
     )
 
     # Voice as channel-trigger: the SerialChannel's
@@ -488,6 +535,7 @@ async def run_serial_app(
         tools=all_tools,
         bus=bus,
         model=model,
+        iteration_policy=iteration_policy,
     )
     try:
         await app.run()
