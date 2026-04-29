@@ -11,6 +11,8 @@ from exoclaw_turn_budget import (
     DailyBudgetConfig,
     DailyBudgetTracker,
     Enforcement,
+    FileBudgetStore,
+    InMemoryBudgetStore,
     TurnBudgetConfig,
     TurnBudgetPolicy,
     TurnBudgetTracker,
@@ -499,3 +501,193 @@ class TestEndToEnd:
         assert tracker.iterations_seen == 0
         await wrapper.chat(messages=[{"role": "user", "content": "t2.1"}])
         assert await policy.should_continue(1, []) is True
+
+
+# ── BudgetStateStore — InMemory + File implementations ───────────────────
+
+
+class TestInMemoryBudgetStore:
+    def test_load_returns_none_initially(self) -> None:
+        store = InMemoryBudgetStore()
+        assert store.load() is None
+
+    def test_save_then_load_roundtrips(self) -> None:
+        store = InMemoryBudgetStore()
+        store.save({"day_key": 42, "total_tokens": 100})
+        assert store.load() == {"day_key": 42, "total_tokens": 100}
+
+    def test_clear_drops_state(self) -> None:
+        store = InMemoryBudgetStore()
+        store.save({"day_key": 42, "total_tokens": 100})
+        store.clear()
+        assert store.load() is None
+
+
+class TestFileBudgetStore:
+    def test_load_returns_none_when_file_absent(self, tmp_path) -> None:
+        store = FileBudgetStore(tmp_path / "missing.json")
+        assert store.load() is None
+
+    def test_save_creates_file_atomically(self, tmp_path) -> None:
+        target = tmp_path / "subdir" / "state.json"
+        store = FileBudgetStore(target)
+        store.save({"day_key": 42, "total_tokens": 1234})
+
+        # Real file replaces — no .tmp left over.
+        assert target.exists()
+        assert not (target.parent / (target.name + ".tmp")).exists()
+        loaded = store.load()
+        assert loaded is not None
+        assert loaded["day_key"] == 42
+        assert loaded["total_tokens"] == 1234
+
+    def test_load_handles_corrupt_file(self, tmp_path) -> None:
+        """A torn write or hand-edit shouldn't crash the agent loop —
+        load returns None and the caller starts fresh."""
+        target = tmp_path / "state.json"
+        target.write_text("not json {{{", encoding="utf-8")
+        assert FileBudgetStore(target).load() is None
+
+    def test_load_rejects_non_object_root(self, tmp_path) -> None:
+        target = tmp_path / "state.json"
+        target.write_text("[1, 2, 3]", encoding="utf-8")
+        assert FileBudgetStore(target).load() is None
+
+    def test_clear_removes_file(self, tmp_path) -> None:
+        target = tmp_path / "state.json"
+        store = FileBudgetStore(target)
+        store.save({"day_key": 1})
+        assert target.exists()
+        store.clear()
+        assert not target.exists()
+
+    def test_clear_no_op_when_file_absent(self, tmp_path) -> None:
+        FileBudgetStore(tmp_path / "missing.json").clear()  # must not raise
+
+
+# ── DailyBudgetTracker — durability via store ────────────────────────────
+
+
+class TestDailyTrackerPersistence:
+    def test_record_persists_to_store(self) -> None:
+        store = InMemoryBudgetStore()
+        tracker = DailyBudgetTracker(
+            DailyBudgetConfig(daily_budget=1000),
+            store=store,
+        )
+        tracker.record({"total_tokens": 250})
+
+        loaded = store.load()
+        assert loaded is not None
+        assert loaded["total_tokens"] == 250
+        assert "day_key" in loaded
+
+    def test_restart_recovers_token_count(self) -> None:
+        """The whole point — a container restart at 14:30 UTC after
+        spending 7M shouldn't reset the counter to zero."""
+        clock = [1_700_000_000.0]
+        store = InMemoryBudgetStore()
+        tracker = DailyBudgetTracker(
+            DailyBudgetConfig(daily_budget=10_000_000),
+            clock=lambda: clock[0],
+            store=store,
+        )
+        tracker.record({"total_tokens": 7_000_000})
+        assert tracker.total_tokens == 7_000_000
+
+        # Simulate restart — fresh tracker, same store, same wall-clock day.
+        recovered = DailyBudgetTracker(
+            DailyBudgetConfig(daily_budget=10_000_000),
+            clock=lambda: clock[0],
+            store=store,
+        )
+        assert recovered.total_tokens == 7_000_000
+
+    def test_restart_after_day_rollover_starts_fresh(self) -> None:
+        clock = [1_700_000_000.0]
+        store = InMemoryBudgetStore()
+        tracker = DailyBudgetTracker(
+            DailyBudgetConfig(daily_budget=10_000_000),
+            clock=lambda: clock[0],
+            store=store,
+        )
+        tracker.record({"total_tokens": 5_000_000})
+
+        # Advance 25 hours — the day rolled, persisted state is stale.
+        clock[0] += 25 * 3600
+        recovered = DailyBudgetTracker(
+            DailyBudgetConfig(daily_budget=10_000_000),
+            clock=lambda: clock[0],
+            store=store,
+        )
+        assert recovered.total_tokens == 0
+
+    def test_threshold_warning_state_persists(self) -> None:
+        """Warning fired before restart shouldn't refire after."""
+        clock = [1_700_000_000.0]
+        store = InMemoryBudgetStore()
+        cfg = DailyBudgetConfig(daily_budget=1000, warning_thresholds=(0.5,))
+        tracker = DailyBudgetTracker(cfg, clock=lambda: clock[0], store=store)
+        tracker.record({"total_tokens": 500})
+        first = tracker.consume_threshold_warning()
+        assert first is not None and "50%" in first
+
+        # Restart — recovered tracker should know the 50% warning fired.
+        recovered = DailyBudgetTracker(cfg, clock=lambda: clock[0], store=store)
+        assert recovered.consume_threshold_warning() is None
+
+    def test_at_limit_warning_state_persists(self) -> None:
+        clock = [1_700_000_000.0]
+        store = InMemoryBudgetStore()
+        cfg = DailyBudgetConfig(
+            daily_budget=100,
+            enforcement=Enforcement.WARN,
+        )
+        tracker = DailyBudgetTracker(cfg, clock=lambda: clock[0], store=store)
+        tracker.record({"total_tokens": 100})
+        first = tracker.consume_at_limit_warning()
+        assert first is not None  # at-limit notice fires once
+
+        recovered = DailyBudgetTracker(cfg, clock=lambda: clock[0], store=store)
+        assert recovered.is_at_limit() is True
+        assert recovered.consume_at_limit_warning() is None  # already fired
+
+    def test_corrupt_persisted_state_falls_back_to_fresh(self) -> None:
+        store = InMemoryBudgetStore()
+        # Hand-craft bogus state — wrong day key, malformed warned list.
+        store.save(
+            {
+                "day_key": "not-an-int",
+                "total_tokens": "lots",
+                "warned_thresholds": "nope",
+            }
+        )
+        tracker = DailyBudgetTracker(DailyBudgetConfig(daily_budget=1000), store=store)
+        # Garbled values should not crash; tracker starts at zero.
+        assert tracker.total_tokens == 0
+
+    def test_default_store_is_inmemory(self) -> None:
+        """Backwards-compatible — passing no store gives the original
+        non-durable behavior."""
+        tracker = DailyBudgetTracker(DailyBudgetConfig(daily_budget=1000))
+        tracker.record({"total_tokens": 500})
+        assert tracker.total_tokens == 500
+        # No store keyword set — nothing persists.
+        recovered = DailyBudgetTracker(DailyBudgetConfig(daily_budget=1000))
+        assert recovered.total_tokens == 0
+
+
+class TestDailyTrackerWithFileStore:
+    def test_end_to_end_disk_persistence(self, tmp_path) -> None:
+        path = tmp_path / "budget.json"
+        cfg = DailyBudgetConfig(daily_budget=1_000_000)
+        clock = [1_700_000_000.0]
+
+        t1 = DailyBudgetTracker(cfg, clock=lambda: clock[0], store=FileBudgetStore(path))
+        t1.record({"total_tokens": 600_000})
+        assert path.exists()
+
+        # Fresh tracker, fresh store object — only the on-disk file
+        # bridges the two.
+        t2 = DailyBudgetTracker(cfg, clock=lambda: clock[0], store=FileBudgetStore(path))
+        assert t2.total_tokens == 600_000
