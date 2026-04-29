@@ -26,6 +26,7 @@ members = [
     "exoclaw-tools-spawn",
     "exoclaw-tools-web",
     "exoclaw-tools-workspace",
+    "exoclaw-turn-budget",
 ]
 
 [manifest.dependency-groups]
@@ -1018,6 +1019,17 @@ requires-dist = [
     { name = "readability-lxml", specifier = ">=0.8.1" },
     { name = "structlog", specifier = ">=25.0.0" },
 ]
+
+[[package]]
+name = "exoclaw-turn-budget"
+version = "0.1.0"
+source = { editable = "packages/exoclaw-turn-budget" }
+dependencies = [
+    { name = "exoclaw" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "exoclaw", specifier = ">=0.7.0" }]
 
 [[package]]
 name = "fastuuid"

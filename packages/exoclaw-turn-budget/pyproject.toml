@@ -1,0 +1,27 @@
+[project]
+name = "exoclaw-turn-budget"
+version = "0.1.0"
+description = "Per-turn iteration + token budget with progressive warnings, plus a daily token-rate guard with model fallback — keeps agents from blowing through provider weekly quotas"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "exoclaw>=0.7.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["exoclaw_turn_budget"]
+
+[tool.hatch.build.targets.sdist]
+include = ["exoclaw_turn_budget/"]
+
+# Workspace MP CI gate. ``scripts/mp_test.py`` walks every package's
+# pyproject for this section and stages opted-in packages into
+# ``.mp-stage/`` to run their ``mp_tests_dir`` smoke tests on a
+# coverage-variant MicroPython binary.
+[tool.exoclaw]
+mp_compat = true
+mp_tests_dir = "tests/micro"
