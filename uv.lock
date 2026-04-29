@@ -705,7 +705,7 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-firmware"
-version = "0.8.0"
+version = "0.9.0"
 source = { editable = "packages/exoclaw-firmware" }
 dependencies = [
     { name = "exoclaw", extra = ["http"] },
@@ -716,6 +716,7 @@ dependencies = [
     { name = "exoclaw-tools-cron" },
     { name = "exoclaw-tools-web" },
     { name = "exoclaw-tools-workspace" },
+    { name = "exoclaw-turn-budget" },
 ]
 
 [package.optional-dependencies]
@@ -734,6 +735,7 @@ requires-dist = [
     { name = "exoclaw-tools-cron", editable = "packages/exoclaw-tools-cron" },
     { name = "exoclaw-tools-web", editable = "packages/exoclaw-tools-web" },
     { name = "exoclaw-tools-workspace", editable = "packages/exoclaw-tools-workspace" },
+    { name = "exoclaw-turn-budget", editable = "packages/exoclaw-turn-budget" },
 ]
 provides-extras = ["host-preview"]
 
@@ -773,7 +775,7 @@ requires-dist = [{ name = "exoclaw", specifier = ">=0.7.0" }]
 
 [[package]]
 name = "exoclaw-nanobot"
-version = "0.28.0"
+version = "0.29.0"
 source = { editable = "packages/exoclaw-nanobot" }
 dependencies = [
     { name = "exoclaw" },
@@ -789,6 +791,7 @@ dependencies = [
     { name = "exoclaw-tools-message" },
     { name = "exoclaw-tools-web" },
     { name = "exoclaw-tools-workspace" },
+    { name = "exoclaw-turn-budget" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "structlog" },
@@ -809,6 +812,7 @@ requires-dist = [
     { name = "exoclaw-tools-message", editable = "packages/exoclaw-tools-message" },
     { name = "exoclaw-tools-web", editable = "packages/exoclaw-tools-web" },
     { name = "exoclaw-tools-workspace", editable = "packages/exoclaw-tools-workspace" },
+    { name = "exoclaw-turn-budget", editable = "packages/exoclaw-turn-budget" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pydantic-settings", specifier = ">=2.0" },
     { name = "structlog", specifier = ">=25.0.0" },

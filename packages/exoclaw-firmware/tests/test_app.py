@@ -32,9 +32,9 @@ def test_serial_channel_satisfies_channel_protocol() -> None:
 
 
 def test_build_agent_constructs_pair(tmp_path: Path) -> None:
-    """Factory returns a (provider, conversation) pair the caller
-    can drive a turn through. Doesn't actually call the LLM."""
-    provider, conversation = build_agent(
+    """Factory returns a (provider, conversation, iteration_policy) tuple
+    the caller can drive a turn through. Doesn't actually call the LLM."""
+    provider, conversation, _policy = build_agent(
         workspace=tmp_path,
         api_key="sk-test",
         model="gpt-4o-mini",
@@ -67,7 +67,7 @@ def test_build_agent_extra_models_registers_second_deployment(tmp_path: Path) ->
     deployment's ``base_url + api_key``."""
     chat_model = "minimax/minimax-m2.7"
     search_model = "google/gemma-4-26b-a4b-it:online"
-    provider, _conversation = build_agent(
+    provider, _conversation, _policy = build_agent(
         workspace=tmp_path,
         api_key="sk-test",
         base_url="https://openrouter.ai/api/v1",

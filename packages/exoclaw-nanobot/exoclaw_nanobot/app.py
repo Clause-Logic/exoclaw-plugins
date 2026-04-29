@@ -47,6 +47,13 @@ from exoclaw_tools_workspace.filesystem import (
     WriteFileTool,
 )
 from exoclaw_tools_workspace.shell import ExecTool
+from exoclaw_turn_budget import (
+    BudgetWrapper,
+    DailyBudgetConfig,
+    DailyBudgetTracker,
+    TurnBudgetConfig,
+    TurnBudgetTracker,
+)
 
 from exoclaw_nanobot.config.loader import load_config
 from exoclaw_nanobot.config.schema import Config
@@ -281,6 +288,40 @@ async def create(
             router=router,
         )
 
+    # Optional budget wrappers — order is daily (innermost) → turn (outermost).
+    # Daily wraps the real provider so its model rewrite (FALLBACK) lands
+    # before any other layer sees the call. Turn wraps daily so a per-turn
+    # cutoff short-circuits before consulting the daily counter. The same
+    # wrapped ``provider`` is passed to subagents below, so all calls in a
+    # turn-tree share the trackers.
+    daily_budget = config.agents.defaults.daily_budget
+    turn_budget = config.agents.defaults.turn_budget
+    daily_tracker: DailyBudgetTracker | None = None
+    turn_tracker: TurnBudgetTracker | None = None
+    if daily_budget.enabled:
+        daily_tracker = DailyBudgetTracker(
+            DailyBudgetConfig(
+                daily_budget=daily_budget.daily_budget,
+                primary_models=tuple(daily_budget.primary_models),
+                warning_thresholds=tuple(daily_budget.warning_thresholds),
+                enforcement=daily_budget.enforcement,
+                fallback_model=daily_budget.fallback_model,
+                reset_hour_utc=daily_budget.reset_hour_utc,
+            )
+        )
+        provider = BudgetWrapper(provider, daily_tracker)
+    if turn_budget.enabled:
+        turn_tracker = TurnBudgetTracker(
+            TurnBudgetConfig(
+                iteration_budget=turn_budget.iteration_budget,
+                token_budget=turn_budget.token_budget,
+                warning_thresholds=tuple(turn_budget.warning_thresholds),
+                enforcement=turn_budget.enforcement,
+                fallback_model=turn_budget.fallback_model,
+            )
+        )
+        provider = BudgetWrapper(provider, turn_tracker)
+
     bus = MessageBus()
 
     # streaming_history=True drops the per-session unconsolidated tail
@@ -452,27 +493,39 @@ async def create(
         )
 
     # Hook: record tool calls into the iteration policy for pattern detection,
-    # and reset history at the start of each turn so prior sessions don't bleed.
+    # and reset per-turn state at the start of each top-level turn. Both
+    # ``LoopDetectionPolicy`` and ``TurnBudgetTracker`` need a per-turn reset
+    # signal — ``on_pre_context`` is the right place because subagents'
+    # ``AgentLoop`` instances don't fire it (only the top-level loop does),
+    # so the budget tracker accumulates across the whole turn-tree.
     on_tool_calls = None
-    if iteration_policy is not None:
+    needs_pre_context_reset = iteration_policy is not None or turn_tracker is not None
+    if needs_pre_context_reset:
         _policy = iteration_policy
+        _turn_tracker = turn_tracker
         _orig_pre_context = on_pre_context
 
         async def _reset_then_pre_context(
             content: str, session_key: str, channel: str, chat_id: str
         ) -> str:
-            _policy.reset()
+            if _policy is not None:
+                _policy.reset()
+            if _turn_tracker is not None:
+                _turn_tracker.reset()
             if _orig_pre_context:
                 return await _orig_pre_context(content, session_key, channel, chat_id)
             return ""
 
         on_pre_context = _reset_then_pre_context
 
-        async def _record_tool_calls(tool_calls: list[Any]) -> None:
-            for tc in tool_calls:
-                _policy.record(tc.name, tc.arguments)
+        if iteration_policy is not None:
+            _ld_policy = iteration_policy
 
-        on_tool_calls = _record_tool_calls
+            async def _record_tool_calls(tool_calls: list[Any]) -> None:
+                for tc in tool_calls:
+                    _ld_policy.record(tc.name, tc.arguments)
+
+            on_tool_calls = _record_tool_calls
 
     # Context overflow recovery — compact messages when context window is exceeded
     async def _on_context_overflow(

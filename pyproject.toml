@@ -22,6 +22,7 @@ exoclaw-loop-detection = { workspace = true }
 exoclaw-executor-dbos = { workspace = true }
 exoclaw-screen = { workspace = true }
 exoclaw-tools-web = { workspace = true }
+exoclaw-turn-budget = { workspace = true }
 
 [dependency-groups]
 dev = [

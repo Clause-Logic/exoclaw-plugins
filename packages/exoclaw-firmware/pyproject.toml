@@ -1,6 +1,6 @@
 [project]
 name = "exoclaw-firmware"
-version = "0.8.0"
+version = "0.9.0"
 description = "Deployable exoclaw image for MicroPython boards (ESP32-S3 and friends)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -19,6 +19,7 @@ dependencies = [
     "exoclaw-tools-workspace>=0.6.0",
     "exoclaw-screen>=0.1.0",
     "exoclaw-tools-web>=0.1.0",
+    "exoclaw-turn-budget",
 ]
 
 [project.optional-dependencies]
