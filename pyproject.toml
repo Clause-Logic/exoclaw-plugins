@@ -22,6 +22,7 @@ exoclaw-loop-detection = { workspace = true }
 exoclaw-executor-dbos = { workspace = true }
 exoclaw-screen = { workspace = true }
 exoclaw-tools-web = { workspace = true }
+exoclaw-tools-voice = { workspace = true }
 exoclaw-turn-budget = { workspace = true }
 
 [dependency-groups]
@@ -41,6 +42,7 @@ dev = [
     # renderer module's imports are method-local and gated.
     "pillow>=10.0.0",
     "qrcode>=7.4.0",
+    "sounddevice>=0.5.5",
 ]
 
 [tool.pytest.ini_options]

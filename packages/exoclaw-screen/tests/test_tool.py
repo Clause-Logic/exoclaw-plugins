@@ -41,6 +41,12 @@ class _FakeDisplay:
     async def clear(self) -> None:
         self.cleared = True
 
+    def set_status(self, status: str) -> None:
+        pass
+
+    def set_caption(self, text: str) -> None:
+        pass
+
 
 @pytest.mark.asyncio
 async def test_repaint_reads_file_and_pushes_to_display(tmp_path: Path) -> None:

@@ -61,6 +61,20 @@ heartbeat_interval_ms: int | None = int(_hb_env) if _hb_env.isdigit() and int(_h
 # Open the PNG in macOS Preview / any auto-refresh viewer to watch
 # the screen update across turns. Unset → no display, no
 # ``repaint_screen`` tool surface.
+# Optional voice input — when ``OPENAI_AUDIO_MODEL`` is set, the
+# unix board attaches a live-mic ``LiveMicCapture`` and wires
+# ``MicListener`` into the SerialChannel as a ``/talk``
+# interceptor. Type ``/talk`` to capture one utterance from the
+# laptop mic; the transcribed text is published as if you'd
+# typed it. Unset → no voice trigger, the channel ignores
+# ``/talk`` like any other line.
+audio_model = os.getenv("OPENAI_AUDIO_MODEL") or None
+audio_capture: object | None = None
+if audio_model:
+    from audio import LiveMicCapture  # type: ignore[import-not-found]
+
+    audio_capture = LiveMicCapture()
+
 screen_out = os.getenv("EXOCLAW_SCREEN_OUT") or None
 display: object | None = None
 if screen_out:
@@ -97,6 +111,8 @@ async def _main() -> None:
         print("main: screen preview → {}".format(screen_out))
     if search_model:
         print("main: web_search model={}".format(search_model))
+    if audio_model:
+        print("main: voice model={} (type /talk to speak)".format(audio_model))
     if heartbeat_interval_ms:
         print("main: heartbeat every {}ms".format(heartbeat_interval_ms))
     print("main: ready — type a message and press enter (Ctrl-C to exit)")
@@ -107,6 +123,9 @@ async def _main() -> None:
         model=model,
         display=display,
         web_search_model=search_model,
+        audio_capture=audio_capture,
+        audio_model=audio_model,
+        enable_subagent=False,
         heartbeat_interval_ms=heartbeat_interval_ms,
         request_timeout=request_timeout,
     )

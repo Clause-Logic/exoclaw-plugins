@@ -130,3 +130,35 @@ class Display(Protocol):
         the panel through full-refresh waveforms unnecessarily.
         """
         ...
+
+    def set_status(self, status: str) -> None:
+        """Set the status pip text. Framework-driven (not agent-
+        callable) — the agent loop sets this on turn boundaries:
+
+        - ``"ready"`` — idle, waiting for input
+        - ``"listening"`` — mic capture in progress
+        - ``"thinking"`` — LLM call in flight
+        - ``""`` — clear the pip
+
+        Rendered as a small indicator in the top-right corner of
+        the panel. On e-ink this is a partial-refresh region; on
+        the host preview it's composited into the screen image.
+        Boards that don't support partial refresh can no-op this.
+        """
+        ...
+
+    def set_caption(self, text: str) -> None:
+        """Set the captions bar text. Framework-driven — the agent
+        loop sets this to the assistant's text reply at the end
+        of each turn. Rendered as a dark bar across the bottom of
+        the panel, auto-cleared after a few seconds by the next
+        ``show_markdown`` call (or explicitly via
+        ``set_caption("")``).
+
+        On e-ink this is a partial-refresh region. On the host
+        preview it's composited into the screen image. The text
+        should be short (1-2 lines) — the system prompt instructs
+        the agent to keep text replies brief when a display is
+        attached.
+        """
+        ...

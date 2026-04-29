@@ -216,6 +216,9 @@ async def run_serial_app(
     display: "Any | None" = None,
     enable_web_tools: bool = True,
     web_search_model: str | None = None,
+    audio_capture: "Any | None" = None,
+    audio_model: str | None = None,
+    voice_trigger_token: str = "/talk",
     heartbeat_interval_ms: int | None = None,
     request_timeout: float = 60.0,
     turn_budget: "TurnBudgetConfig | None" = None,
@@ -307,6 +310,15 @@ async def run_serial_app(
     extra_models: "dict[str, str] | None" = None
     if enable_web_tools and web_search_model and web_search_model != model:
         extra_models = {web_search_model: base_url}
+    # Audio model gets registered the same way as the search
+    # model — separate deployment on the same provider so the
+    # listener can call ``provider.send_streaming_body(model=...)``
+    # without tripping the "no deployment" guard.
+    if audio_capture is not None and audio_model and audio_model != model:
+        if extra_models is None:
+            extra_models = {}
+        if audio_model not in extra_models:
+            extra_models[audio_model] = base_url
 
     provider, conversation, iteration_policy = build_agent(
         workspace=workspace,
@@ -318,7 +330,32 @@ async def run_serial_app(
         turn_budget=turn_budget,
         daily_budget=daily_budget,
     )
-    serial = SerialChannel(chat_id=chat_id, prompt=prompt, reply_prefix=reply_prefix)
+
+    # Voice as channel-trigger: the SerialChannel's
+    # ``line_interceptor`` hook turns ``/talk`` into a live mic
+    # capture + transcription. The transcribed text replaces the
+    # typed line, so the agent sees inbound messages indistinguishable
+    # from typed input. Only attaches when both the capture and
+    # the audio model are wired — leaving either unset disables
+    # voice silently.
+    line_interceptor = None
+    if audio_capture is not None and audio_model:
+        from exoclaw_tools_voice import MicListener
+
+        listener = MicListener(
+            provider=provider,
+            capture=audio_capture,
+            audio_model=audio_model,
+            trigger_token=voice_trigger_token,
+        )
+        line_interceptor = listener.intercept
+
+    serial = SerialChannel(
+        chat_id=chat_id,
+        prompt=prompt,
+        reply_prefix=reply_prefix,
+        line_interceptor=line_interceptor,
+    )
     # Avoid ``[serial, *extra]`` — MicroPython 1.27 doesn't support
     # PEP 448 list-unpacking inside list literals. Annotate the list
     # as ``list[Channel]`` so ty doesn't narrow to
@@ -395,7 +432,7 @@ async def run_serial_app(
     if enable_web_tools:
         from exoclaw_tools_web import WebFetchTool, WebSearchTool
 
-        web_fetch_tool = WebFetchTool()
+        web_fetch_tool = WebFetchTool(workspace=workspace)
         all_tools.append(web_fetch_tool)  # type: ignore[invalid-argument-type]
         if web_search_model:
             search_tool = WebSearchTool(provider=provider, model=web_search_model)

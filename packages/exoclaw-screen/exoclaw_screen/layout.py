@@ -499,12 +499,11 @@ def _estimate_height(node: Any, caps: DisplayCapabilities) -> int:
     if isinstance(node, a.Paragraph) and len(node.content) == 1:
         only = node.content[0]
         if isinstance(only, a.Image):
-            h_attr = only.attrs.get("h") or only.attrs.get("height")
-            if h_attr:
-                try:
-                    return max(1, int(str(h_attr)))
-                except ValueError:
-                    pass
+            h_resolved = _resolve_size(only.attrs, "h", caps.height, None)
+            if h_resolved is None:
+                h_resolved = _resolve_size(only.attrs, "height", caps.height, None)
+            if h_resolved is not None:
+                return max(1, h_resolved)
     if isinstance(node, a.Heading):
         # Headings get more vertical real estate proportional to
         # level — h1 biggest, h6 smallest.

@@ -370,14 +370,25 @@ class PillowRenderer:
             raster.load()
         except Exception:  # noqa: BLE001 — any PIL failure → alt fallback
             return False
-        # Aspect-preserving fit. ``thumbnail`` resizes in place
-        # only down (never up), matching e-ink intuition: small
-        # source images render at native size rather than
-        # blocky upscale.
-        raster.thumbnail((max(1, block.w), max(1, block.h)))
-        # Centre the resized image inside the block slot.
-        ox = block.x + max(0, (block.w - raster.width) // 2)
-        oy = block.y + max(0, (block.h - raster.height) // 2)
+        # Aspect-preserving fit into the slot. Scale to fill as
+        # much of the (w, h) box as possible without distortion.
+        # Unlike ``thumbnail`` (which only scales down), this
+        # also scales up — a 600x400 source into an 800x480 slot
+        # becomes 720x480 (height-constrained), centered
+        # horizontally.
+        from PIL import Image as _PILImage
+
+        sw, sh = raster.size
+        bw, bh = max(1, block.w), max(1, block.h)
+        scale = min(bw / sw, bh / sh)
+        nw, nh = max(1, int(sw * scale)), max(1, int(sh * scale))
+        if (nw, nh) != (sw, sh):
+            resample = getattr(_PILImage, "LANCZOS", None) or getattr(
+                _PILImage.Resampling, "LANCZOS", 1
+            )
+            raster = raster.resize((nw, nh), resample)
+        ox = block.x + max(0, (bw - nw) // 2)
+        oy = block.y + max(0, (bh - nh) // 2)
         # ``paste`` accepts an RGBA source onto an RGB canvas via
         # the alpha mask if present — fall back to plain paste
         # otherwise. ``getbands`` lets us check without forcing
