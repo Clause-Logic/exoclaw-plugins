@@ -51,6 +51,7 @@ from exoclaw_turn_budget import (
     BudgetWrapper,
     DailyBudgetConfig,
     DailyBudgetTracker,
+    FileBudgetStore,
     TurnBudgetConfig,
     TurnBudgetTracker,
 )
@@ -299,6 +300,18 @@ async def create(
     daily_tracker: DailyBudgetTracker | None = None
     turn_tracker: TurnBudgetTracker | None = None
     if daily_budget.enabled:
+        # Optional file-backed durability — set ``state_path`` in config
+        # for server deploys where the container restarts mid-day. The
+        # path should live OUTSIDE the agent's workspace; see schema
+        # ``DailyBudgetDefaults.state_path`` for the security note.
+        # ``expanduser`` so configs like ``~/.nanobot/budget-state.json``
+        # resolve relative to the bot's home dir instead of creating a
+        # literal ``./~/...`` directory under cwd.
+        store = (
+            FileBudgetStore(Path(daily_budget.state_path).expanduser())
+            if daily_budget.state_path
+            else None
+        )
         daily_tracker = DailyBudgetTracker(
             DailyBudgetConfig(
                 daily_budget=daily_budget.daily_budget,
@@ -307,7 +320,8 @@ async def create(
                 enforcement=daily_budget.enforcement,
                 fallback_model=daily_budget.fallback_model,
                 reset_hour_utc=daily_budget.reset_hour_utc,
-            )
+            ),
+            store=store,
         )
         provider = BudgetWrapper(provider, daily_tracker)
     if turn_budget.enabled:

@@ -24,12 +24,15 @@ from typing import TYPE_CHECKING
 
 from exoclaw_turn_budget.config import DailyBudgetConfig, TurnBudgetConfig
 from exoclaw_turn_budget.enforcement import Enforcement
+from exoclaw_turn_budget.store import InMemoryBudgetStore
 
 if TYPE_CHECKING:  # pragma: no cover (runtime)
     # ``Protocol`` and ``runtime_checkable`` aren't on MicroPython's
     # ``typing`` shim. Type-checking-only import keeps both runtimes
     # happy: ty/mypy see the protocol; MP never tries to load it.
     from typing import Protocol, runtime_checkable
+
+    from exoclaw_turn_budget.store import BudgetStateStore
 
     @runtime_checkable
     class BudgetTracker(Protocol):
@@ -208,19 +211,77 @@ class DailyBudgetTracker:
         self,
         config: DailyBudgetConfig | None = None,
         clock=None,
+        store: "BudgetStateStore | None" = None,
     ) -> None:
         # ``clock`` is a callable returning epoch seconds — tests inject a
         # deterministic one. Defaults to ``time.time``.
+        # ``store`` lets callers swap the in-memory default for a durable
+        # backing (``FileBudgetStore``, the DBOS-backed store, etc.) so a
+        # container restart at 14:30 UTC after spending 7M of 10M doesn't
+        # reset the counter back to zero. See ``store.py``.
         self._config = config if config is not None else DailyBudgetConfig()
         self._clock = clock if clock is not None else time.time
         self._day = _day_key(self._clock(), self._config.reset_hour_utc)
         self.total_tokens: int = 0
         self._warned_thresholds: set[float] = set()
         self._at_limit_warning_pending: bool = True
+        self._store: BudgetStateStore = store if store is not None else InMemoryBudgetStore()
+        self._restore()
 
     @property
     def config(self) -> DailyBudgetConfig:
         return self._config
+
+    def _restore(self) -> None:
+        """Hydrate from the store. Discards any state whose ``day_key``
+        doesn't match the current day — that's just the persisted
+        equivalent of ``maybe_auto_reset``."""
+        data = self._store.load()
+        if not data:
+            return
+        # ``data.get`` returns ``object`` from the protocol, so each
+        # field needs an isinstance check before coercion. Catching
+        # everything here is intentional: corrupt state should fall
+        # back to a fresh tracker, not crash the agent loop on every
+        # chat() call until the file is hand-fixed.
+        raw_day = data.get("day_key")
+        if not isinstance(raw_day, (int, float, str)):
+            return
+        try:
+            day_key = int(raw_day)
+        except (TypeError, ValueError):
+            return
+        if day_key != self._day:
+            # Persisted state is from a previous day — drop it (and let
+            # the next save overwrite).
+            return
+        raw_tokens = data.get("total_tokens", 0)
+        if isinstance(raw_tokens, (int, float, str)):
+            try:
+                self.total_tokens = int(raw_tokens)
+            except (TypeError, ValueError):
+                self.total_tokens = 0
+        warned = data.get("warned_thresholds")
+        if isinstance(warned, list):
+            try:
+                self._warned_thresholds = {
+                    float(x) for x in warned if isinstance(x, (int, float, str))
+                }
+            except (TypeError, ValueError):
+                self._warned_thresholds = set()
+        self._at_limit_warning_pending = bool(data.get("at_limit_warning_pending", True))
+
+    def _persist(self) -> None:
+        """Snapshot current state to the store. Called after every
+        mutation so a SIGKILL only loses the most recent record()."""
+        self._store.save(
+            {
+                "day_key": self._day,
+                "total_tokens": self.total_tokens,
+                "warned_thresholds": sorted(self._warned_thresholds),
+                "at_limit_warning_pending": self._at_limit_warning_pending,
+            }
+        )
 
     def maybe_auto_reset(self) -> None:
         current = _day_key(self._clock(), self._config.reset_hour_utc)
@@ -229,6 +290,7 @@ class DailyBudgetTracker:
             self.total_tokens = 0
             self._warned_thresholds.clear()
             self._at_limit_warning_pending = True
+            self._persist()
 
     def _counts_against_budget(self, model: str | None) -> bool:
         primaries = self._config.primary_models
@@ -242,6 +304,7 @@ class DailyBudgetTracker:
         if not self._counts_against_budget(model):
             return
         self.total_tokens += _coerce_total_tokens(usage)
+        self._persist()
 
     def utilization(self) -> float:
         budget = self._config.daily_budget
@@ -268,6 +331,7 @@ class DailyBudgetTracker:
                 for t in cfg.warning_thresholds:
                     if t <= threshold:
                         self._warned_thresholds.add(t)
+                self._persist()
                 return _format(
                     cfg.warning_template,
                     self.SCOPE,
@@ -297,5 +361,6 @@ class DailyBudgetTracker:
     def consume_at_limit_warning(self) -> str | None:
         if self._at_limit_warning_pending and self.is_at_limit():
             self._at_limit_warning_pending = False
+            self._persist()
             return self.at_limit_message()
         return None

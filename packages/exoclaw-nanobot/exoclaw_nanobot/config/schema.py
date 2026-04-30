@@ -263,6 +263,15 @@ class DailyBudgetDefaults(Base):
     enforcement: str = "fallback"  # observe | warn | cutoff | fallback
     fallback_model: str | None = None
     reset_hour_utc: int = 0
+    # Optional path to a JSON file the daily counter persists to. When
+    # set, a container restart at 14:30 UTC after spending 7M of 10M
+    # resumes from 7M instead of zeroing out. Leave unset for in-memory
+    # only (chip deploys, tests).
+    #
+    # **Security**: put this OUTSIDE the agent's workspace dir, otherwise
+    # a prompt-injected agent can edit its own quota via filesystem
+    # tools. See ``exoclaw-turn-budget/README.md``.
+    state_path: str | None = None
 
 
 class AgentDefaults(Base):

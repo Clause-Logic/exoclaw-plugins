@@ -90,6 +90,48 @@ Both budgets are consumed simultaneously — whichever exhausts first triggers e
 
 Tokens spent on the `fallback_model` do *not* count against the daily budget — when `primary_models` is set, only matches deplete it.
 
+## Durability — the `BudgetStateStore` protocol
+
+By default the daily counter lives in process memory. A container restart at 14:30 UTC after spending 7M of 10M would reset the counter to zero — bad for long-running server deploys.
+
+`DailyBudgetTracker` accepts an optional `store=` argument implementing the `BudgetStateStore` protocol:
+
+```python
+class BudgetStateStore(Protocol):
+    def load(self) -> dict | None: ...   # called once at construction
+    def save(self, state: dict) -> None: ...   # called on every record/reset
+    def clear(self) -> None: ...   # ops use only
+```
+
+Three implementations:
+
+| Class | Source | When to use |
+|---|---|---|
+| `InMemoryBudgetStore` | this package, **default** | Chip deploys, tests, anything where restart-resets-counter is fine |
+| `FileBudgetStore(path)` | this package | Server deploys — JSON file with atomic write (temp + `os.rename`); a SIGKILL mid-write leaves the previous state intact rather than corrupting the counter |
+| `DBOSBudgetStore` | `exoclaw-executor-dbos` *(planned)* | Deployments that already use DBOS for durable agent-loop state — wraps reads/writes in `@DBOS.step()` for full workflow-replay safety |
+
+```python
+from exoclaw_turn_budget import DailyBudgetTracker, FileBudgetStore
+
+tracker = DailyBudgetTracker(
+    config,
+    store=FileBudgetStore("/var/lib/luna/budget-state.json"),
+)
+```
+
+**Security**: when using `FileBudgetStore` with an agent that has filesystem tools (read/write/edit/exec), put the state path **outside** the agent's workspace. Both `WorkspaceTool`'s `allowed_dir` and `ExecTool`'s `restrict_to_workspace` block paths outside the workspace boundary, so a state file inside `workspace/` would let a prompt-injected or self-correcting agent edit its own quota counter.
+
+A typical layout:
+
+```
+/root/.nanobot/                  ← volume-mounted, durable across restarts
+├── budget-state.json            ← FileBudgetStore path (outside workspace)
+└── workspace/                   ← agent's filesystem tools allowed here
+    ├── skills/
+    └── ...
+```
+
 ## Enforcement modes
 
 | Mode | Behavior at 100% utilization |

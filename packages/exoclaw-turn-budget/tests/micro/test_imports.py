@@ -146,3 +146,57 @@ def test_policy_resets_on_iteration_zero() -> None:
     assert result is True
     assert tracker.iterations_seen == 0
     assert tracker.total_tokens == 0
+
+
+def test_in_memory_store_roundtrips() -> None:
+    """``InMemoryBudgetStore`` is the default for the daily tracker — it
+    must work on MP since chip deploys can't pull in a filesystem store."""
+    from exoclaw_turn_budget import InMemoryBudgetStore
+
+    s = InMemoryBudgetStore()
+    assert s.load() is None
+    s.save({"day_key": 1, "total_tokens": 42})
+    loaded = s.load()
+    assert loaded is not None
+    assert loaded["day_key"] == 1
+    assert loaded["total_tokens"] == 42
+    s.clear()
+    assert s.load() is None
+
+
+def test_daily_tracker_persists_to_store() -> None:
+    """Tracker calls ``store.save`` on every record so a chip restart
+    (when paired with a durable store at the host level) can recover.
+    On MP itself the in-memory store is the only viable choice — this
+    test just verifies the tracker→store wiring works without crashing
+    on the chip's typing shim."""
+    from exoclaw_turn_budget import (
+        DailyBudgetConfig,
+        DailyBudgetTracker,
+        InMemoryBudgetStore,
+    )
+
+    clock = [1_700_000_000.0]
+
+    def fake_clock() -> float:
+        return clock[0]
+
+    store = InMemoryBudgetStore()
+    t = DailyBudgetTracker(
+        DailyBudgetConfig(daily_budget=1000),
+        clock=fake_clock,
+        store=store,
+    )
+    t.record({"total_tokens": 250})
+
+    loaded = store.load()
+    assert loaded is not None
+    assert loaded["total_tokens"] == 250
+
+    # Fresh tracker hydrates from the same store.
+    recovered = DailyBudgetTracker(
+        DailyBudgetConfig(daily_budget=1000),
+        clock=fake_clock,
+        store=store,
+    )
+    assert recovered.total_tokens == 250
