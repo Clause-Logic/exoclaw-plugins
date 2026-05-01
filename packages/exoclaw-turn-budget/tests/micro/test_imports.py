@@ -44,6 +44,38 @@ def test_turn_config_constructs_with_defaults() -> None:
     assert c.warning_thresholds == (0.5, 0.8, 0.9)
     assert c.enforcement == "cutoff"
     assert c.fallback_model is None
+    # Tool-strip fields default to disabled / empty so existing deploys
+    # behave identically until they opt in.
+    assert c.tool_strip_threshold is None
+    assert c.tool_strip_disallow == ()
+
+
+def test_turn_config_accepts_tool_strip_overrides() -> None:
+    from exoclaw_turn_budget import TurnBudgetConfig
+
+    c = TurnBudgetConfig(
+        tool_strip_threshold=0.8,
+        tool_strip_disallow=("exec",),
+    )
+    assert c.tool_strip_threshold == 0.8
+    assert c.tool_strip_disallow == ("exec",)
+
+
+def test_turn_tracker_should_strip_tools() -> None:
+    from exoclaw_turn_budget import TurnBudgetConfig, TurnBudgetTracker
+
+    cfg = TurnBudgetConfig(
+        iteration_budget=10,
+        token_budget=None,
+        warning_thresholds=(),
+        tool_strip_threshold=0.5,
+    )
+    t = TurnBudgetTracker(cfg)
+    assert t.should_strip_tools() is False
+    for _ in range(5):
+        t.record({"total_tokens": 0})
+    assert t.should_strip_tools() is True
+    assert "Tools are disabled" in t.tool_strip_message()
 
 
 def test_turn_config_constructs_with_overrides() -> None:

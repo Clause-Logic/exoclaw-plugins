@@ -28,6 +28,7 @@ class FakeProvider:
     usage: dict[str, int] = field(default_factory=lambda: {"total_tokens": 100})
     seen_messages: list[list[dict[str, object]]] = field(default_factory=list)
     seen_models: list[str | None] = field(default_factory=list)
+    seen_tools: list[list[dict[str, object]] | None] = field(default_factory=list)
     content: str = "ok"
 
     def get_default_model(self) -> str:
@@ -45,6 +46,7 @@ class FakeProvider:
     ) -> LLMResponse:
         self.seen_messages.append(list(messages))
         self.seen_models.append(model)
+        self.seen_tools.append(list(tools) if tools is not None else None)
         return LLMResponse(content=self.content, usage=dict(self.usage))
 
 
@@ -309,6 +311,35 @@ class TestBudgetWrapperEnforcement:
         assert "Budget exhausted" in (response.content or "")
         assert response.has_tool_calls is False
 
+    async def test_cutoff_surfaces_stranded_threshold_warning(self) -> None:
+        """If the same call that crosses 100% also crosses 80%/90% from
+        below, the threshold notice would otherwise be stranded forever
+        — the next call's cutoff would jump straight from "you crossed
+        50%" to "exhausted". CUTOFF prepends the highest unfired threshold
+        warning to its synthetic content so the agent sees the climb."""
+        cfg = TurnBudgetConfig(
+            iteration_budget=10,
+            token_budget=1000,
+            warning_thresholds=(0.5, 0.8, 0.9),
+            enforcement=Enforcement.CUTOFF,
+        )
+        tracker = TurnBudgetTracker(cfg)
+        # Burn 50% of tokens — fires the 50% warning on the next call.
+        inner = FakeProvider(usage={"total_tokens": 500})
+        wrapper = BudgetWrapper(inner, tracker)
+        await wrapper.chat(messages=[{"role": "user", "content": "first"}])
+        # Now jump straight from 50% to 110% in a single call.
+        inner.usage = {"total_tokens": 600}
+        await wrapper.chat(messages=[{"role": "user", "content": "huge"}])
+        assert tracker.is_at_limit() is True
+        # Next call CUTOFFs. Synthetic content should contain BOTH the
+        # 90% threshold warning (highest unfired, crossed by the same
+        # call that exhausted) and the cutoff message.
+        response = await wrapper.chat(messages=[{"role": "user", "content": "more"}])
+        content = response.content or ""
+        assert "90%" in content
+        assert "Budget exhausted" in content
+
     async def test_fallback_rewrites_model(self) -> None:
         cfg = TurnBudgetConfig(
             iteration_budget=1,
@@ -406,6 +437,141 @@ class TestBudgetWrapperEnforcement:
         # ``None`` and skip the count.
         await wrapper.chat(messages=[{"role": "user", "content": "hi"}])
         assert tracker.total_tokens == 250
+
+
+class TestBudgetWrapperToolStrip:
+    """Optional escalation between warning_thresholds and the hard cutoff
+    — once utilization passes ``tool_strip_threshold`` the wrapper stops
+    forwarding (some or all) tools so the model has to text-respond
+    instead of issuing more tool_calls until the budget is exhausted.
+    """
+
+    @staticmethod
+    def _exec_tool() -> dict[str, object]:
+        # OpenAI-style nested ``function.name`` shape — exercises the
+        # _tool_name extraction path most providers use.
+        return {"type": "function", "function": {"name": "exec"}}
+
+    @staticmethod
+    def _send_tool() -> dict[str, object]:
+        # Anthropic/flat shape — verifies _tool_name handles both.
+        return {"name": "send_message"}
+
+    async def test_disabled_by_default(self) -> None:
+        """Default config has ``tool_strip_threshold=None`` — opt-in.
+        Tools always pass through, even past 90%."""
+        cfg = TurnBudgetConfig(
+            iteration_budget=10,
+            warning_thresholds=(0.5,),
+            enforcement=Enforcement.OBSERVE,
+        )
+        tracker = TurnBudgetTracker(cfg)
+        inner = FakeProvider(usage={"total_tokens": 0})
+        wrapper = BudgetWrapper(inner, tracker)
+        tools = [self._exec_tool()]
+        for _ in range(9):
+            await wrapper.chat(messages=[{"role": "user", "content": "x"}], tools=tools)
+        # All calls saw tools intact.
+        assert all(t == tools for t in inner.seen_tools)
+
+    async def test_strips_all_tools_when_disallow_empty(self) -> None:
+        cfg = TurnBudgetConfig(
+            iteration_budget=10,
+            warning_thresholds=(),  # isolate from threshold-warning injection
+            enforcement=Enforcement.OBSERVE,
+            tool_strip_threshold=0.5,
+        )
+        tracker = TurnBudgetTracker(cfg)
+        inner = FakeProvider(usage={"total_tokens": 0})
+        wrapper = BudgetWrapper(inner, tracker)
+        tools = [self._exec_tool(), self._send_tool()]
+        # Burn 5/10 iterations to reach the strip threshold.
+        for _ in range(5):
+            await wrapper.chat(messages=[{"role": "user", "content": "x"}], tools=tools)
+        # Next call is past 50% — tools should be dropped entirely.
+        await wrapper.chat(messages=[{"role": "user", "content": "x"}], tools=tools)
+        # Calls 1-5 had tools; call 6 had None.
+        assert inner.seen_tools[:5] == [tools] * 5
+        assert inner.seen_tools[5] is None
+        # And the strip notice was injected.
+        last_msgs = inner.seen_messages[5]
+        assert any("Budget critical" in str(m.get("content", "")) for m in last_msgs)
+        assert any("Tools are disabled" in str(m.get("content", "")) for m in last_msgs)
+
+    async def test_filters_only_disallowed_tools(self) -> None:
+        cfg = TurnBudgetConfig(
+            iteration_budget=10,
+            warning_thresholds=(),
+            enforcement=Enforcement.OBSERVE,
+            tool_strip_threshold=0.5,
+            tool_strip_disallow=("exec",),
+        )
+        tracker = TurnBudgetTracker(cfg)
+        inner = FakeProvider(usage={"total_tokens": 0})
+        wrapper = BudgetWrapper(inner, tracker)
+        tools = [self._exec_tool(), self._send_tool()]
+        for _ in range(5):
+            await wrapper.chat(messages=[{"role": "user", "content": "x"}], tools=tools)
+        await wrapper.chat(messages=[{"role": "user", "content": "x"}], tools=tools)
+        # Last call: exec dropped, send_message kept.
+        assert inner.seen_tools[5] == [self._send_tool()]
+        # Strip notice uses singular grammar for the one-tool case.
+        last_msgs = inner.seen_messages[5]
+        assert any("Tool exec is disabled" in str(m.get("content", "")) for m in last_msgs)
+
+    async def test_filter_to_empty_passes_none(self) -> None:
+        """If the disallow list covers every available tool, fall back to
+        passing ``tools=None`` rather than an empty list — providers
+        treat ``[]`` and ``None`` differently and an empty list can be
+        a validation error on some backends."""
+        cfg = TurnBudgetConfig(
+            iteration_budget=10,
+            warning_thresholds=(),
+            enforcement=Enforcement.OBSERVE,
+            tool_strip_threshold=0.5,
+            tool_strip_disallow=("exec", "send_message"),
+        )
+        tracker = TurnBudgetTracker(cfg)
+        inner = FakeProvider(usage={"total_tokens": 0})
+        wrapper = BudgetWrapper(inner, tracker)
+        tools = [self._exec_tool(), self._send_tool()]
+        for _ in range(5):
+            await wrapper.chat(messages=[{"role": "user", "content": "x"}], tools=tools)
+        await wrapper.chat(messages=[{"role": "user", "content": "x"}], tools=tools)
+        assert inner.seen_tools[5] is None
+
+    def test_disallow_clause_grammar(self) -> None:
+        """Strip-message phrasing should match the disallow-list size:
+        singular for one tool, ``X and Y`` for two, Oxford-comma for 3+.
+        Lock the wording so Copilot's phrasing nit doesn't regress."""
+        from exoclaw_turn_budget.tracker import _disallow_clause
+
+        assert _disallow_clause(()) == "Tools are disabled"
+        assert _disallow_clause(("exec",)) == "Tool exec is disabled"
+        assert _disallow_clause(("exec", "web")) == "Tools exec and web are disabled"
+        assert (
+            _disallow_clause(("exec", "web", "shell")) == "Tools exec, web, and shell are disabled"
+        )
+
+    async def test_strip_no_op_when_caller_passes_no_tools(self) -> None:
+        """Caller-side ``tools=None`` should pass through untouched even
+        past the strip threshold — there's nothing to strip and we
+        shouldn't synthesize a strip notice for a tool-less call."""
+        cfg = TurnBudgetConfig(
+            iteration_budget=10,
+            warning_thresholds=(),
+            enforcement=Enforcement.OBSERVE,
+            tool_strip_threshold=0.5,
+        )
+        tracker = TurnBudgetTracker(cfg)
+        inner = FakeProvider(usage={"total_tokens": 0})
+        wrapper = BudgetWrapper(inner, tracker)
+        for _ in range(5):
+            await wrapper.chat(messages=[{"role": "user", "content": "x"}])
+        await wrapper.chat(messages=[{"role": "user", "content": "x"}])
+        assert inner.seen_tools == [None] * 6
+        # No strip notice injected — would just confuse the agent.
+        assert all(len(m) == 1 for m in inner.seen_messages)
 
 
 class TestDailyBudgetWrapper:

@@ -7,6 +7,11 @@ Behavior on every ``chat()`` call:
 2. If the tracker is already at the limit before this call:
    - ``CUTOFF``    → return a synthetic LLMResponse containing the cutoff
                      message and stop, *without* calling the inner provider.
+                     If the same call that crossed 100% also crossed a
+                     warning threshold (e.g. 90%) that hadn't fired yet,
+                     prepend that notice to the synthetic content so the
+                     transcript shows the climb instead of jumping
+                     straight from 80% to "exhausted".
    - ``FALLBACK``  → rewrite the ``model`` argument to the configured
                      fallback model and forward.
    - ``WARN``      → inject the cutoff message as a one-time user notice
@@ -15,8 +20,13 @@ Behavior on every ``chat()`` call:
 3. Inject any pending threshold warning (50/80/90%) as a ``user``-role
    message at the end of ``messages``. Threshold warnings fire at most
    once per crossing.
-4. Forward to the inner provider.
-5. Record ``response.usage`` (and the *actual* model used after any
+4. If utilization is past ``tool_strip_threshold`` (turn tracker only,
+   opt-in), inject the strip notice and either drop ``tools`` entirely
+   (``tool_strip_disallow=()``) or filter it down to the tools NOT in
+   that list. Forces the model to text-respond instead of issuing more
+   tool_calls until cutoff.
+5. Forward to the inner provider.
+6. Record ``response.usage`` (and the *actual* model used after any
    fallback rewrite) into the tracker.
 
 The ``model`` rewrite + ``primary_models`` filtering on
@@ -26,7 +36,7 @@ model don't deplete the daily budget that triggered the fallback.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from exoclaw.providers.types import LLMResponse
 
@@ -37,6 +47,31 @@ if TYPE_CHECKING:  # pragma: no cover (runtime)
     from exoclaw.providers.types import ResponseFormat
 
     from exoclaw_turn_budget.tracker import BudgetTracker
+
+
+def _tool_name(tool: object) -> str | None:
+    """Best-effort tool-name extraction across provider conventions.
+
+    OpenAI-style tool dicts wrap the name under ``function.name``;
+    Anthropic-style tools (and exoclaw's flat dicts) put it at the top
+    level. Returning ``None`` for unrecognized shapes keeps
+    ``tool_strip_disallow`` filtering safe — an unknown-shape tool
+    falls through and is preserved rather than silently dropped.
+    """
+    if not isinstance(tool, dict):
+        return None
+    # ``cast`` rather than annotated assignment — ty's narrowed
+    # ``dict[Unknown, Unknown]`` isn't assignable to a more specific
+    # ``dict[str, object]`` even though the runtime check guarantees it.
+    tool_dict = cast("dict[str, object]", tool)
+    fn = tool_dict.get("function")
+    if isinstance(fn, dict):
+        fn_dict = cast("dict[str, object]", fn)
+        nested_name = fn_dict.get("name")
+        if isinstance(nested_name, str):
+            return nested_name
+    flat_name = tool_dict.get("name")
+    return flat_name if isinstance(flat_name, str) else None
 
 
 class BudgetWrapper:
@@ -109,8 +144,16 @@ class BudgetWrapper:
                 # Refuse the call. Return a synthetic response that the
                 # agent loop reads as a normal "no tool calls" finish, so
                 # the loop ends with the cutoff message as final content.
+                # ``force=True`` pulls any threshold warning that was
+                # crossed by the same call that pushed past 100% — the
+                # tracker normally suppresses threshold warnings once
+                # at_limit is true, so without the force the highest
+                # unreported threshold would get stranded forever.
+                stranded = self._tracker.consume_threshold_warning(force=True)
+                cutoff_msg = self._tracker.at_limit_message()
+                content = (stranded + "\n\n" + cutoff_msg) if stranded else cutoff_msg
                 return LLMResponse(
-                    content=self._tracker.at_limit_message(),
+                    content=content,
                     finish_reason="stop",
                     usage={},
                 )
@@ -130,10 +173,30 @@ class BudgetWrapper:
         if threshold_warning:
             messages = list(messages) + [{"role": "user", "content": threshold_warning}]
 
+        # --- Tool stripping (opt-in escalation between warning + cutoff)
+        # ``getattr`` + ``callable`` rather than a ``hasattr`` + protocol
+        # check so this is a no-op for tracker types that don't expose
+        # the turn-only API (DailyBudgetTracker today; the shared
+        # ``BudgetTracker`` protocol stays slim instead of growing
+        # methods only one tracker implements).
+        forwarded_tools = tools
+        should_strip = getattr(self._tracker, "should_strip_tools", None)
+        if tools is not None and callable(should_strip) and should_strip():
+            tracker_cfg = getattr(self._tracker, "config", None)
+            disallow = getattr(tracker_cfg, "tool_strip_disallow", ())
+            strip_message = getattr(self._tracker, "tool_strip_message", None)
+            if callable(strip_message):
+                messages = list(messages) + [{"role": "user", "content": strip_message()}]
+            if disallow:
+                kept = [t for t in tools if _tool_name(t) not in disallow]
+                forwarded_tools = kept if kept else None
+            else:
+                forwarded_tools = None
+
         # --- Forward ----------------------------------------------------
         response = await self._inner.chat(
             messages=messages,
-            tools=tools,
+            tools=forwarded_tools,
             model=used_model,
             max_tokens=max_tokens,
             temperature=temperature,

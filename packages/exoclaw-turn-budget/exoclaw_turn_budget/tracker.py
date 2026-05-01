@@ -42,7 +42,7 @@ if TYPE_CHECKING:  # pragma: no cover (runtime)
         def record(self, usage: dict[str, int] | None, model: str | None = None) -> None: ...
         def utilization(self) -> float: ...
         def is_at_limit(self) -> bool: ...
-        def consume_threshold_warning(self) -> str | None: ...
+        def consume_threshold_warning(self, force: bool = False) -> str | None: ...
         def at_limit_message(self) -> str: ...
         def consume_at_limit_warning(self) -> str | None: ...
 
@@ -61,14 +61,30 @@ def _coerce_total_tokens(usage: "dict[str, int] | None") -> int:
     return int(prompt) + int(completion)
 
 
-def _format(template: str, scope: str, pct: int, used: int, cap, unit: str) -> str:
+def _format(template: str, scope: str, pct: int, used: int, cap, unit: str, **extra) -> str:
+    # ``extra`` carries optional placeholders (e.g. ``disallow_clause``
+    # for the tool-strip template) — pass through as kwargs so callers
+    # can grow the template surface without touching every call site.
     return template.format(
         scope=scope,
         pct=pct,
         used=used,
         cap=cap if cap is not None else "∞",
         unit=unit,
+        **extra,
     )
+
+
+def _disallow_clause(disallow: "tuple[str, ...]") -> str:
+    if not disallow:
+        return "Tools are disabled"
+    if len(disallow) == 1:
+        return "Tool " + disallow[0] + " is disabled"
+    if len(disallow) == 2:
+        joined = disallow[0] + " and " + disallow[1]
+    else:
+        joined = ", ".join(disallow[:-1]) + ", and " + disallow[-1]
+    return "Tools " + joined + " are disabled"
 
 
 class TurnBudgetTracker:
@@ -124,7 +140,7 @@ class TurnBudgetTracker:
             return True
         return False
 
-    def consume_threshold_warning(self) -> str | None:
+    def consume_threshold_warning(self, force: bool = False) -> str | None:
         """Return one warning message if a new threshold was crossed.
 
         Once at the limit (``is_at_limit()`` true) threshold warnings are
@@ -134,8 +150,14 @@ class TurnBudgetTracker:
         call (e.g. ``iteration_budget=1`` going 0→1), the *highest*
         crossed threshold fires and all lower thresholds are marked as
         already-fired so they don't surface later.
+
+        ``force=True`` bypasses the at-limit suppression. The wrapper's
+        ``CUTOFF`` branch passes it so the highest threshold a turn
+        crossed (e.g. 90%) still surfaces in the synthetic cutoff
+        response — without it, when the same call that crosses 90% also
+        crosses 100%, the 90% notice gets stranded forever.
         """
-        if self.is_at_limit():
+        if not force and self.is_at_limit():
             return None
         cfg = self._config
         util = self.utilization()
@@ -156,6 +178,29 @@ class TurnBudgetTracker:
                 return self._format_at(cfg.warning_template, int(threshold * 100))
         return None
 
+    def should_strip_tools(self) -> bool:
+        """``True`` once utilization crosses ``tool_strip_threshold``.
+
+        Returns ``False`` when the threshold is unset (default — the
+        feature is opt-in). Fires every call past the threshold rather
+        than once-only because the strip needs to suppress *every*
+        subsequent tool_calls response, not just the first.
+        """
+        cfg = self._config
+        threshold = getattr(cfg, "tool_strip_threshold", None)
+        if threshold is None:
+            return False
+        return self.utilization() >= threshold
+
+    def tool_strip_message(self) -> str:
+        cfg = self._config
+        threshold = cfg.tool_strip_threshold
+        return self._format_at(
+            cfg.tool_strip_template,
+            int(threshold * 100) if threshold is not None else 0,
+            disallow_clause=_disallow_clause(cfg.tool_strip_disallow),
+        )
+
     def at_limit_message(self) -> str:
         return self._format_at(self._config.cutoff_template, 100)
 
@@ -166,7 +211,7 @@ class TurnBudgetTracker:
             return self.at_limit_message()
         return None
 
-    def _format_at(self, template: str, pct: int) -> str:
+    def _format_at(self, template: str, pct: int, **extra) -> str:
         cfg = self._config
         # Use whichever axis is closer to exhaustion for the substitution.
         iter_ratio = self.iterations_seen / cfg.iteration_budget if cfg.iteration_budget else 0.0
@@ -179,6 +224,7 @@ class TurnBudgetTracker:
                 self.iterations_seen,
                 cfg.iteration_budget,
                 "iterations",
+                **extra,
             )
         return _format(
             template,
@@ -187,6 +233,7 @@ class TurnBudgetTracker:
             self.total_tokens,
             cfg.token_budget,
             "tokens",
+            **extra,
         )
 
 
@@ -315,11 +362,11 @@ class DailyBudgetTracker:
     def is_at_limit(self) -> bool:
         return self.total_tokens >= self._config.daily_budget
 
-    def consume_threshold_warning(self) -> str | None:
+    def consume_threshold_warning(self, force: bool = False) -> str | None:
         # Highest-crossed-threshold-wins + suppress-when-at-limit logic
         # mirrors ``TurnBudgetTracker.consume_threshold_warning`` — see
-        # that docstring for rationale.
-        if self.is_at_limit():
+        # that docstring for rationale (including the ``force`` flag).
+        if not force and self.is_at_limit():
             return None
         cfg = self._config
         util = self.utilization()
