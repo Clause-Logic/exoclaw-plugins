@@ -148,7 +148,7 @@ class BudgetWrapper:
                 # crossed by the same call that pushed past 100% — the
                 # tracker normally suppresses threshold warnings once
                 # at_limit is true, so without the force the highest
-                # uncreported threshold would get stranded forever.
+                # unreported threshold would get stranded forever.
                 stranded = self._tracker.consume_threshold_warning(force=True)
                 cutoff_msg = self._tracker.at_limit_message()
                 content = (stranded + "\n\n" + cutoff_msg) if stranded else cutoff_msg

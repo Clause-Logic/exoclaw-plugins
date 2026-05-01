@@ -515,9 +515,9 @@ class TestBudgetWrapperToolStrip:
         await wrapper.chat(messages=[{"role": "user", "content": "x"}], tools=tools)
         # Last call: exec dropped, send_message kept.
         assert inner.seen_tools[5] == [self._send_tool()]
-        # Strip notice mentions the specific tool.
+        # Strip notice uses singular grammar for the one-tool case.
         last_msgs = inner.seen_messages[5]
-        assert any("exec" in str(m.get("content", "")) for m in last_msgs)
+        assert any("Tool exec is disabled" in str(m.get("content", "")) for m in last_msgs)
 
     async def test_filter_to_empty_passes_none(self) -> None:
         """If the disallow list covers every available tool, fall back to
@@ -539,6 +539,19 @@ class TestBudgetWrapperToolStrip:
             await wrapper.chat(messages=[{"role": "user", "content": "x"}], tools=tools)
         await wrapper.chat(messages=[{"role": "user", "content": "x"}], tools=tools)
         assert inner.seen_tools[5] is None
+
+    def test_disallow_clause_grammar(self) -> None:
+        """Strip-message phrasing should match the disallow-list size:
+        singular for one tool, ``X and Y`` for two, Oxford-comma for 3+.
+        Lock the wording so Copilot's phrasing nit doesn't regress."""
+        from exoclaw_turn_budget.tracker import _disallow_clause
+
+        assert _disallow_clause(()) == "Tools are disabled"
+        assert _disallow_clause(("exec",)) == "Tool exec is disabled"
+        assert _disallow_clause(("exec", "web")) == "Tools exec and web are disabled"
+        assert (
+            _disallow_clause(("exec", "web", "shell")) == "Tools exec, web, and shell are disabled"
+        )
 
     async def test_strip_no_op_when_caller_passes_no_tools(self) -> None:
         """Caller-side ``tools=None`` should pass through untouched even

@@ -78,7 +78,13 @@ def _format(template: str, scope: str, pct: int, used: int, cap, unit: str, **ex
 def _disallow_clause(disallow: "tuple[str, ...]") -> str:
     if not disallow:
         return "Tools are disabled"
-    return "Tools " + ", ".join(disallow) + " are disabled"
+    if len(disallow) == 1:
+        return "Tool " + disallow[0] + " is disabled"
+    if len(disallow) == 2:
+        joined = disallow[0] + " and " + disallow[1]
+    else:
+        joined = ", ".join(disallow[:-1]) + ", and " + disallow[-1]
+    return "Tools " + joined + " are disabled"
 
 
 class TurnBudgetTracker:
