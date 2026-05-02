@@ -681,6 +681,28 @@ class TestCronToolExecuteUpdate:
         result = await tool.execute(action="update")
         assert "Error" in result
 
+    async def test_update_cron_expr(self, tool: CronTool) -> None:
+        await tool.execute(action="add", message="old", every_seconds=60)
+        jobs = await tool._backend.list_jobs()
+        result = await tool.execute(
+            action="update", job_id=jobs[0].id, cron_expr="0 * * * *", tz="America/New_York"
+        )
+        assert "Updated" in result
+        updated = await tool._backend.get(jobs[0].id)
+        assert updated is not None
+        assert updated.schedule.kind == "cron"
+        assert updated.schedule.expr == "0 * * * *"
+        assert updated.schedule.tz == "America/New_York"
+
+    async def test_update_cron_expr_invalid_tz(self, tool: CronTool) -> None:
+        await tool.execute(action="add", message="old", every_seconds=60)
+        jobs = await tool._backend.list_jobs()
+        result = await tool.execute(
+            action="update", job_id=jobs[0].id, cron_expr="0 * * * *", tz="Not/Real"
+        )
+        assert "Error" in result
+        assert "unknown timezone" in result
+
 
 class TestCronToolExecuteEnable:
     async def test_enable_existing(self, tool: CronTool) -> None:
