@@ -703,6 +703,13 @@ class TestCronToolExecuteUpdate:
         assert "Error" in result
         assert "unknown timezone" in result
 
+    async def test_update_tz_without_cron_expr(self, tool: CronTool) -> None:
+        await tool.execute(action="add", message="old", every_seconds=60)
+        jobs = await tool._backend.list_jobs()
+        result = await tool.execute(action="update", job_id=jobs[0].id, tz="UTC")
+        assert "Error" in result
+        assert "tz can only be used with cron_expr" in result
+
 
 class TestCronToolExecuteEnable:
     async def test_enable_existing(self, tool: CronTool) -> None:

@@ -172,6 +172,8 @@ class CronTool(ToolBase):
         elif action == "remove":
             return await self._remove_job(job_id)
         elif action == "update":
+            if tz and not cron_expr:
+                return "Error: tz can only be used with cron_expr"
             schedule = None
             if cron_expr:
                 if tz:
