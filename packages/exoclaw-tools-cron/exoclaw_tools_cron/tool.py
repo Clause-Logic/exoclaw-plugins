@@ -1,6 +1,6 @@
 """Cron tool for scheduling reminders and tasks."""
 
-from typing import Any
+from typing import Any, Literal
 
 from exoclaw._compat import TaskLocal as ContextVar
 from exoclaw.agent.tools.protocol import ToolBase, ToolContext
@@ -172,8 +172,20 @@ class CronTool(ToolBase):
         elif action == "remove":
             return await self._remove_job(job_id)
         elif action == "update":
+            if tz and not cron_expr:
+                return "Error: tz can only be used with cron_expr"
+            schedule = None
+            if cron_expr:
+                if tz:
+                    from zoneinfo import ZoneInfo
+
+                    try:
+                        ZoneInfo(tz)
+                    except (KeyError, Exception):
+                        return f"Error: unknown timezone '{tz}'"
+                schedule = CronSchedule(kind="cron", expr=cron_expr, tz=tz)
             return await self._update_job(
-                job_id, message or None, deliver, to, skills, stateless, model, wake_mode
+                job_id, message or None, deliver, to, skills, stateless, model, wake_mode, schedule
             )
         elif action == "enable":
             return await self._enable_job(job_id, enabled=True)
@@ -269,16 +281,17 @@ class CronTool(ToolBase):
         stateless: bool | None = None,
         model: str | None = None,
         wake_mode: str | None = None,
+        schedule: CronSchedule | None = None,
     ) -> str:
         if not job_id:
             return "Error: job_id is required for update"
-        wm: str | None = None
+        wm: Literal["now", "next-heartbeat"] | None = None
         if wake_mode is not None:
             if wake_mode not in ("now", "next-heartbeat"):
                 return (
                     f"Error: unknown wake_mode '{wake_mode}' (expected 'now' or 'next-heartbeat')"
                 )
-            wm = wake_mode
+            wm = wake_mode  # type: ignore[assignment]
         job = await self._backend.update(
             job_id,
             message=message,
@@ -287,7 +300,8 @@ class CronTool(ToolBase):
             skills=skills,
             stateless=stateless,
             model=model,
-            wake_mode=wm,  # type: ignore[arg-type]
+            wake_mode=wm,
+            schedule=schedule,
         )
         if job:
             return f"Updated job {job_id}"
