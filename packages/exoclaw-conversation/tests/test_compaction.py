@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable
+from typing import TypeVar
 
 from exoclaw_conversation.context import (
     _COMPACTION_MARKER,
@@ -245,7 +247,10 @@ def test_truncate_returns_zero_when_nothing_eligible() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _run(coro: object) -> object:
+_T = TypeVar("_T")
+
+
+def _run(coro: Awaitable[_T]) -> _T:
     return asyncio.run(coro)  # type: ignore[arg-type]
 
 
@@ -289,7 +294,7 @@ def test_summarize_replaces_old_chunk() -> None:
         m
         for m in result
         if isinstance(m.get("content"), str) and m["content"].startswith(_RECOVERY_SUMMARY_PREFIX)
-    ]  # type: ignore[union-attr]
+    ]
     assert len(summary_msgs) == 1
     # Last 4 non-system messages preserved
     non_system = [m for m in result if m.get("role") != "system"]
