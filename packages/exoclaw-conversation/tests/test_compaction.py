@@ -285,7 +285,11 @@ def test_summarize_replaces_old_chunk() -> None:
     # System preserved
     assert result[0]["role"] == "system"
     # Summary message inserted
-    summary_msgs = [m for m in result if isinstance(m.get("content"), str) and m["content"].startswith(_RECOVERY_SUMMARY_PREFIX)]  # type: ignore[union-attr]
+    summary_msgs = [
+        m
+        for m in result
+        if isinstance(m.get("content"), str) and m["content"].startswith(_RECOVERY_SUMMARY_PREFIX)
+    ]  # type: ignore[union-attr]
     assert len(summary_msgs) == 1
     # Last 4 non-system messages preserved
     non_system = [m for m in result if m.get("role") != "system"]
@@ -303,7 +307,9 @@ def test_summarize_skips_when_only_recent_messages() -> None:
     async def summarizer(_: list[dict[str, object]]) -> str:
         raise AssertionError("should not be called when nothing is eligible")
 
-    result, did = _run(summarize_old_chunks(msgs, target_tokens=10, summarizer=summarizer, keep_recent=4))
+    result, did = _run(
+        summarize_old_chunks(msgs, target_tokens=10, summarizer=summarizer, keep_recent=4)
+    )
     assert did is False
     assert result == msgs
 
@@ -327,14 +333,18 @@ def test_summarize_repairs_orphaned_tool_results() -> None:
     async def summarizer(_: list[dict[str, object]]) -> str:
         return "summary"
 
-    result, did = _run(summarize_old_chunks(msgs, target_tokens=200, summarizer=summarizer, keep_recent=5))
+    result, did = _run(
+        summarize_old_chunks(msgs, target_tokens=200, summarizer=summarizer, keep_recent=5)
+    )
     assert did is True
     # No orphan with old-tc id
     for m in result:
         if m.get("role") == "tool":
             assert m.get("tool_call_id") != "old-tc"
     # recent-tc tool result preserved
-    recent_tool = [m for m in result if m.get("role") == "tool" and m.get("tool_call_id") == "recent-tc"]
+    recent_tool = [
+        m for m in result if m.get("role") == "tool" and m.get("tool_call_id") == "recent-tc"
+    ]
     assert len(recent_tool) == 1
 
 

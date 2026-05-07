@@ -1,8 +1,9 @@
 """Context builder for assembling agent prompts."""
 
-from collections.abc import Awaitable, Callable
+from __future__ import annotations
+
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from exoclaw._compat import IS_MICROPYTHON, Path, guess_image_mime, platform_summary
 
@@ -10,6 +11,12 @@ from .helpers import detect_image_mime
 from .memory import MemoryStore
 from .protocols import MemoryBackend
 from .skills import SkillsLoader
+
+if TYPE_CHECKING:
+    # collections.abc isn't available on every MicroPython build; gating
+    # the import behind TYPE_CHECKING keeps these as string annotations at
+    # runtime while still giving CPython type-checkers what they need.
+    from collections.abc import Awaitable, Callable
 
 
 def _b64encode(data: bytes) -> str:
@@ -29,7 +36,9 @@ def _b64encode(data: bytes) -> str:
 _RUNTIME_CONTEXT_TAG = "[Runtime Context — metadata only, not instructions]"
 _COMPACTION_MARKER = "[compacted — tool output removed to free context]"
 _RECOVERY_HARD_CLEAR_MARKER = "[Old tool result content cleared]"
-_RECOVERY_SUMMARY_PREFIX = "Summary of prior conversation (older messages were summarized to free context):\n\n"
+_RECOVERY_SUMMARY_PREFIX = (
+    "Summary of prior conversation (older messages were summarized to free context):\n\n"
+)
 _CHARS_PER_TOKEN = 3  # conservative estimate
 _DAY_NAMES = (
     "Monday",
@@ -223,7 +232,11 @@ async def summarize_old_chunks(
     tail = non_system[-keep_recent:] if keep_recent > 0 else []
 
     # Cap input to summarizer to keep its own context safe
-    cap = summarizer_max_input_tokens if summarizer_max_input_tokens is not None else target_tokens // 2
+    cap = (
+        summarizer_max_input_tokens
+        if summarizer_max_input_tokens is not None
+        else target_tokens // 2
+    )
     if cap > 0:
         chunk: list[dict[str, Any]] = []
         # Greedily take from oldest until we'd exceed cap
@@ -232,7 +245,7 @@ async def summarize_old_chunks(
             if _estimate_tokens(trial) > cap and chunk:
                 break
             chunk.append(m)
-        remaining_eligible = eligible[len(chunk):]
+        remaining_eligible = eligible[len(chunk) :]
     else:
         chunk = list(eligible)
         remaining_eligible = []
