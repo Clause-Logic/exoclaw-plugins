@@ -266,13 +266,17 @@ def test_summarize_under_budget_is_noop() -> None:
 
 
 def test_summarize_replaces_old_chunk() -> None:
-    big = "x" * 10_000
+    # Each message ~150 tokens (450 chars / 3 chars-per-token); cap defaults to
+    # target/2 = 1000 tokens, so individual messages fit. Total non-system is
+    # ~1350 tokens which exceeds target_tokens=2000? Adjust so total > target
+    # but each message <= cap.
+    big = "x" * 450  # ~150 tokens
     msgs = [
         _msg("system", "sys"),
         _msg("user", big),
         _msg("assistant", big),
-        _msg("user", "older still"),
-        _msg("assistant", "older still"),
+        _msg("user", big),
+        _msg("assistant", big),
         _msg("user", "recent 1"),
         _msg("assistant", "recent 2"),
         _msg("user", "recent 3"),
@@ -284,6 +288,9 @@ def test_summarize_replaces_old_chunk() -> None:
         calls.append(len(chunk))
         return "USER ASKED ABOUT X; ASSISTANT RESPONDED Y"
 
+    # target=500, cap=250 (~750 chars). Each big message is 450 chars/150
+    # tokens — well under cap. Total of 4 big = 600 tokens > target 500 →
+    # summarize fires.
     result, did = _run(summarize_old_chunks(msgs, target_tokens=500, summarizer=summarizer))
     assert did is True
     assert calls, "summarizer must be invoked"
@@ -351,6 +358,37 @@ def test_summarize_repairs_orphaned_tool_results() -> None:
         m for m in result if m.get("role") == "tool" and m.get("tool_call_id") == "recent-tc"
     ]
     assert len(recent_tool) == 1
+
+
+def test_summarize_bails_when_first_eligible_message_exceeds_cap() -> None:
+    """If the oldest eligible message alone is bigger than the summarizer
+    cap, summarizing it would still blow the summarizer's context — caller
+    must get (messages, False) so it can fall back to truncation.
+    """
+    huge = "x" * 100_000  # ~33k tokens at chars/3
+    msgs = [
+        _msg("system", "sys"),
+        _msg("user", huge),  # eligible, too big alone
+        _msg("user", "padding 1"),
+        _msg("user", "recent 1"),
+        _msg("user", "recent 2"),
+        _msg("user", "recent 3"),
+        _msg("user", "recent 4"),
+    ]
+
+    async def summarizer(_: list[dict[str, object]]) -> str:
+        raise AssertionError("must not be called when first message exceeds cap")
+
+    result, did = _run(
+        summarize_old_chunks(
+            msgs,
+            target_tokens=200,  # cap defaults to 100 (target // 2) — huge dwarfs it
+            summarizer=summarizer,
+            keep_recent=4,
+        )
+    )
+    assert did is False
+    assert result == msgs
 
 
 def test_summarize_returns_unchanged_when_summarizer_returns_empty() -> None:

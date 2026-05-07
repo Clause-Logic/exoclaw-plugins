@@ -242,10 +242,16 @@ async def summarize_old_chunks(
         # Greedily take from oldest until we'd exceed cap
         for m in eligible:
             trial = chunk + [m]
-            if _estimate_tokens(trial) > cap and chunk:
+            if _estimate_tokens(trial) > cap:
                 break
             chunk.append(m)
         remaining_eligible = eligible[len(chunk) :]
+        # If even the first eligible message exceeds the cap, summarizing it
+        # alone would still blow the summarizer's context — bail out so the
+        # caller can fall back to a strategy that does work on a single
+        # oversized message (e.g. truncate_oldest_tool_results).
+        if not chunk:
+            return messages, False
     else:
         chunk = list(eligible)
         remaining_eligible = []
