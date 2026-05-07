@@ -1,7 +1,9 @@
 """Context builder for assembling agent prompts."""
 
+from __future__ import annotations
+
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from exoclaw._compat import IS_MICROPYTHON, Path, guess_image_mime, platform_summary
 
@@ -9,6 +11,12 @@ from .helpers import detect_image_mime
 from .memory import MemoryStore
 from .protocols import MemoryBackend
 from .skills import SkillsLoader
+
+if TYPE_CHECKING:
+    # collections.abc isn't available on every MicroPython build; gating
+    # the import behind TYPE_CHECKING keeps these as string annotations at
+    # runtime while still giving CPython type-checkers what they need.
+    from collections.abc import Awaitable, Callable
 
 
 def _b64encode(data: bytes) -> str:
@@ -27,6 +35,10 @@ def _b64encode(data: bytes) -> str:
 
 _RUNTIME_CONTEXT_TAG = "[Runtime Context — metadata only, not instructions]"
 _COMPACTION_MARKER = "[compacted — tool output removed to free context]"
+_RECOVERY_HARD_CLEAR_MARKER = "[Old tool result content cleared]"
+_RECOVERY_SUMMARY_PREFIX = (
+    "Summary of prior conversation (older messages were summarized to free context):\n\n"
+)
 _CHARS_PER_TOKEN = 3  # conservative estimate
 _DAY_NAMES = (
     "Monday",
@@ -131,6 +143,153 @@ def drop_oldest_half(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         repaired.append(m)
 
     return system + repaired
+
+
+def truncate_oldest_tool_results(
+    messages: list[dict[str, Any]],
+    target_tokens: int,
+    *,
+    placeholder: str = _RECOVERY_HARD_CLEAR_MARKER,
+) -> tuple[list[dict[str, Any]], int]:
+    """Recovery-time tool-result hard-clear: replace oldest tool results until under budget.
+
+    Unlike ``compact_tool_results``, this does NOT protect the most recent
+    messages — it's used after a context-window-exceeded error, when the
+    preventive compaction was insufficient and we need to free space at any
+    cost. Mirrors openclaw's hard-clear recovery step.
+
+    Returns ``(new_messages, cleared_count)``. ``cleared_count`` is 0 when
+    nothing was eligible — callers can use that to detect when recovery
+    can't make further progress.
+    """
+    if _estimate_tokens(messages) <= target_tokens:
+        return messages, 0
+
+    # Eligible: any tool message with substantive content (not already cleared)
+    eligible = []
+    for i, m in enumerate(messages):
+        if m.get("role") != "tool":
+            continue
+        content = m.get("content")
+        if not isinstance(content, str):
+            continue
+        if content == placeholder or content == _COMPACTION_MARKER:
+            continue
+        if len(content) <= 100:
+            continue
+        eligible.append(i)
+
+    result = list(messages)
+    cleared = 0
+    for i in eligible:
+        if _estimate_tokens(result) <= target_tokens:
+            break
+        copy = dict(result[i])
+        copy["content"] = placeholder
+        result[i] = copy
+        cleared += 1
+
+    return result, cleared
+
+
+async def summarize_old_chunks(
+    messages: list[dict[str, Any]],
+    target_tokens: int,
+    summarizer: Callable[[list[dict[str, Any]]], Awaitable[str]],
+    *,
+    keep_recent: int = 4,
+    summarizer_max_input_tokens: int | None = None,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Recovery-time summarization: replace older history with one summary message.
+
+    Eligible messages are non-system messages excluding the last
+    ``keep_recent`` non-system messages (the active conversation that the
+    model needs to act on). The eligible block is passed to ``summarizer``
+    which returns a summary string; the block is replaced with a single
+    user-role summary message.
+
+    If the eligible block exceeds ``summarizer_max_input_tokens``, only the
+    oldest portion that fits is summarized (caller should re-invoke for
+    further reductions). Default cap is ``target_tokens // 2``.
+
+    Returns ``(new_messages, summarized)``. ``summarized=False`` means there
+    was nothing eligible (e.g. only ``keep_recent`` messages remain) — the
+    caller should fall back to a different strategy.
+
+    Repairs orphaned tool results in both the summarized chunk (their parent
+    assistant call disappears into the summary) and the kept tail.
+    """
+    if _estimate_tokens(messages) <= target_tokens:
+        return messages, False
+
+    system = [m for m in messages if m.get("role") == "system"]
+    non_system = [m for m in messages if m.get("role") != "system"]
+
+    if len(non_system) <= keep_recent:
+        return messages, False
+
+    eligible = non_system[:-keep_recent] if keep_recent > 0 else list(non_system)
+    tail = non_system[-keep_recent:] if keep_recent > 0 else []
+
+    # Cap input to summarizer to keep its own context safe
+    cap = (
+        summarizer_max_input_tokens
+        if summarizer_max_input_tokens is not None
+        else target_tokens // 2
+    )
+    if cap > 0:
+        chunk: list[dict[str, Any]] = []
+        # Greedily take from oldest until we'd exceed cap
+        for m in eligible:
+            trial = chunk + [m]
+            if _estimate_tokens(trial) > cap:
+                break
+            chunk.append(m)
+        remaining_eligible = eligible[len(chunk) :]
+        # If even the first eligible message exceeds the cap, summarizing it
+        # alone would still blow the summarizer's context — bail out so the
+        # caller can fall back to a strategy that does work on a single
+        # oversized message (e.g. truncate_oldest_tool_results).
+        if not chunk:
+            return messages, False
+    else:
+        chunk = list(eligible)
+        remaining_eligible = []
+
+    if not chunk:
+        return messages, False
+
+    summary_text = await summarizer(chunk)
+    if not summary_text:
+        return messages, False
+
+    summary_msg: dict[str, Any] = {
+        "role": "user",
+        "content": _RECOVERY_SUMMARY_PREFIX + summary_text,
+    }
+
+    rebuilt = system + [summary_msg] + remaining_eligible + tail
+
+    # Repair: drop tool results whose parent assistant tool_call was
+    # absorbed into the summary.
+    repaired: list[dict[str, Any]] = []
+    for m in rebuilt:
+        if m.get("role") == "tool":
+            tool_call_id = m.get("tool_call_id")
+            has_parent = any(
+                r.get("role") == "assistant"
+                and any(
+                    tc.get("id") == tool_call_id
+                    for tc in (r.get("tool_calls") or [])
+                    if isinstance(tc, dict)
+                )
+                for r in repaired
+            )
+            if not has_parent:
+                continue
+        repaired.append(m)
+
+    return repaired, True
 
 
 class ContextBuilder:
