@@ -3,6 +3,8 @@
 from exoclaw_conversation.context import (
     compact_tool_results,
     drop_oldest_half,
+    summarize_old_chunks,
+    truncate_oldest_tool_results,
 )
 from exoclaw_conversation.load_skill_tool import LoadSkillTool
 from exoclaw_conversation.protocols import ConsolidationPolicy
@@ -18,4 +20,6 @@ __all__ = [
     "SummarizingConsolidationPolicy",
     "compact_tool_results",
     "drop_oldest_half",
+    "summarize_old_chunks",
+    "truncate_oldest_tool_results",
 ]
