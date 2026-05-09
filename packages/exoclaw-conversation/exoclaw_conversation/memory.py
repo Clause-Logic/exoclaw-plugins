@@ -92,8 +92,6 @@ class MemoryStore:
     async def summarize(
         self,
         messages: list[dict[str, Any]],
-        *,
-        archive_all: bool = False,
     ) -> str | None:
         """Summarize ``messages`` via the configured LLM and persist
         ``MEMORY.md`` + ``HISTORY.md`` artifacts.
@@ -101,9 +99,7 @@ class MemoryStore:
         Returns the new ``history_entry`` text on success — the policy
         uses it as its rolling preamble. Returns ``None`` if the
         provider is missing, the model declines to call the tool, or
-        the call fails. ``archive_all`` is informational only (passed
-        into the prompt context); boundary management is the policy's
-        job.
+        the call fails.
         """
         if not messages:
             return ""
@@ -182,7 +178,6 @@ class MemoryStore:
                 "memory_consolidated",
                 **{
                     "message.summarized": len(messages),
-                    "archive_all": archive_all,
                     "history_entry.chars": len(history_entry),
                 },
             )

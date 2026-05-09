@@ -52,7 +52,7 @@ logger = get_logger()
 # resolve via the type-checker side. Same pattern as core's
 # ``PriorSource`` in ``exoclaw/executor.py``.
 if TYPE_CHECKING:
-    ChunkSummarizer = Callable[[list[dict[str, Any]], bool], Awaitable["str | None"]]
+    ChunkSummarizer = Callable[[list[dict[str, Any]]], Awaitable["str | None"]]
 else:
     ChunkSummarizer = object
 
@@ -91,10 +91,8 @@ class SummarizingConsolidationPolicy:
         self._memory_window = memory_window
         self._summarize_chunk: ChunkSummarizer = summarize_chunk or self._default_summarize_chunk
 
-    async def _default_summarize_chunk(
-        self, chunk: list[dict[str, Any]], archive_all: bool
-    ) -> str | None:
-        return await self._memory.summarize(chunk, archive_all=archive_all)
+    async def _default_summarize_chunk(self, chunk: list[dict[str, Any]]) -> str | None:
+        return await self._memory.summarize(chunk)
 
     # ─── ConsolidationPolicy protocol surface ───
 
@@ -187,7 +185,7 @@ class SummarizingConsolidationPolicy:
         if not chunk:
             return False
 
-        history_entry = await self._summarize_chunk(chunk, False)
+        history_entry = await self._summarize_chunk(chunk)
         if history_entry is None:
             logger.warning(
                 "consolidation_chunk_summarize_failed",
@@ -222,18 +220,27 @@ class SummarizingConsolidationPolicy:
     ) -> int:
         """Walk ``boundary`` forward past any tool_use/tool_result pair
         it would split. Bounded by ``total`` so a runaway chain can't
-        push past the end of the log."""
+        push past the end of the log.
+
+        Streams from ``boundary`` once (with a single ``at(boundary-1)``
+        peek to seed the previous-message state) rather than calling
+        ``at()`` per iteration — the file-backed reader's ``at()`` is
+        a linear scan from the start, so per-step ``at()`` would be
+        O(N²) on long sessions.
+        """
+        if boundary >= total:
+            return boundary
+        prev = await reader.at(boundary - 1) if boundary > 0 else None
         cur_idx = boundary
-        while cur_idx < total:
-            curr = await reader.at(cur_idx)
-            if curr is None:
-                break
-            if curr.get("role") == "tool":
+        async for curr in reader.stream(start=boundary, end=total):
+            role = curr.get("role")
+            if role == "tool":
                 cur_idx += 1
+                prev = curr
                 continue
-            prev = await reader.at(cur_idx - 1) if cur_idx > 0 else None
             if prev is not None and prev.get("role") == "assistant" and prev.get("tool_calls"):
                 cur_idx += 1
+                prev = curr
                 continue
             break
         return cur_idx

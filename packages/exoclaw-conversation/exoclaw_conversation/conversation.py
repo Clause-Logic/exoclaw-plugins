@@ -10,7 +10,7 @@ from exoclaw.utils import create_isolated_task
 
 from . import _consolidation_state as state_io
 from .protocols import ConsolidationPolicy, HistoryStore, MemoryBackend, PromptBuilder
-from .session.manager import Session
+from .session.manager import Session, _repair_and_project
 
 logger = get_logger()
 
@@ -58,12 +58,19 @@ class DefaultConversation:
     log into the message list, persisting its own state in a sidecar
     next to the session file.
 
-    - ``build_prompt``: ``policy.transform(reader, budget=...)`` →
-      ``PromptBuilder.build_messages``. Schedules
-      ``policy.on_turn_complete`` as background work.
+    - ``build_prompt``: ``policy.transform(reader)`` →
+      ``PromptBuilder.build_messages``.
     - ``append`` / ``record``: appends new turn messages to disk.
-    - ``clear``: deletes the session log + policy sidecar. No
-      automatic archival; archive explicitly first if needed.
+    - ``post_turn``: schedules ``policy.on_turn_complete`` as
+      background work for periodic consolidation. Callers run this
+      after each turn.
+    - ``recover_from_overflow``: reactive seam consumed by
+      ``AgentLoop`` on ``ContextWindowExceededError`` — asks the
+      policy to advance its sidecar by one chunk, then re-emits the
+      compacted view.
+    - ``clear``: resets the session log to a metadata-only header
+      and removes the policy sidecar. No automatic archival;
+      archive explicitly first if needed.
     """
 
     def __init__(
@@ -192,6 +199,13 @@ class DefaultConversation:
             history = []
             async for _m in self._consolidation_policy.transform(reader):
                 history.append(_m)
+            # Project to LLM-input shape (strip ``timestamp`` and other
+            # persistence-only fields) and repair any tool_call /
+            # tool_result orphans inside the policy's view. Don't
+            # peel leading non-user — the rolling-summary preamble
+            # the policy emits is a leading system message that must
+            # survive.
+            history = _repair_and_project(history)
 
         extra_context: str | None = None
         if plugin_context:
@@ -299,13 +313,17 @@ class DefaultConversation:
                 await self._fire_agent_hooks(session_id)
 
     async def clear(self, session_id: str) -> bool:
-        """Delete the session log and the policy sidecar. Returns True
-        on success.
+        """Reset the session log to a metadata-only header and remove
+        the policy sidecar. Returns True on success.
+
+        Note: the JSONL file is rewritten (not unlinked) — file-backed
+        ``HistoryStore`` implementations preserve the file so
+        ``list_sessions`` still surfaces the empty session.
 
         No automatic archival — if a caller wants the session
         summarized to long-term memory before it disappears, they
-        should drive that explicitly (e.g. by calling
-        ``policy.transform(reader, budget=0)``) before ``clear``.
+        must drive that explicitly via the ``MemoryBackend``
+        (``memory.summarize(messages, ...)``) before ``clear``.
         """
         session = self.history.get_or_create(session_id)
         try:
@@ -366,6 +384,10 @@ class DefaultConversation:
         recovered_view: list[dict[str, Any]] = []
         async for _m in self._consolidation_policy.transform(reader):
             recovered_view.append(_m)
+        # Same projection/repair as ``build_prompt`` — strip
+        # persistence-only fields and repair tool-pair orphans
+        # before handing the list to the executor for retry.
+        recovered_view = _repair_and_project(recovered_view)
 
         # Prepend the system prompt manually rather than going through
         # ``build_messages`` — the latter would append an empty user
@@ -514,12 +536,17 @@ class DefaultConversation:
                     entry["content"] = filtered
 
             entry.setdefault("timestamp", datetime.now().isoformat())
+            # Compute new total BEFORE appending — when ``_total_messages``
+            # is 0 (fresh session) ``total_messages`` derives from
+            # ``len(messages)``, so reading it after the append would
+            # double-count the new entry.
+            new_total = session.total_messages + 1
             # Append to in-memory tail too for non-streaming HistoryStore
             # implementations that still use ``session.messages`` for
             # bookkeeping. Streaming-aware stores opt out via the flag.
             if not getattr(self.history, "streaming_history", False):
                 session.messages.append(entry)
-            session._total_messages = session.total_messages + 1
+            session._total_messages = new_total
             prepared.append(entry)
 
         session.updated_at = datetime.now()

@@ -22,27 +22,27 @@ logger = get_logger()
 # by the active-session count, so a small leak under MP is acceptable.
 
 
-def _normalize_history(
-    messages: list[dict[str, Any]], max_messages: int | None = 500
-) -> list[dict[str, Any]]:
-    """Apply LLM-input cleanup to a slice of messages.
+def _repair_and_project(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Repair orphan tool references and project to LLM-input shape.
 
-    Pure transform: drop leading non-user messages, repair orphan tool
-    references (declared-without-response or response-without-declaration),
-    and project to the minimal LLM-input dict shape. Used by both
-    ``Session.get_history`` (in-memory path) and the streaming
-    ``SessionManager.read_history`` (on-disk path).
+    Two cleanups, in order:
+
+    * Drop ``tool`` messages whose ``tool_call_id`` has no matching
+      ``assistant.tool_calls[].id`` earlier in the list, and strip
+      ``tool_calls`` entries with no matching ``tool`` response.
+    * Project each entry to the minimal LLM-input dict — keep
+      ``role``/``content`` plus the tool-pair fields, drop
+      ``timestamp`` and any other persistence-only metadata.
+
+    Pure transform — no slicing, no leading-non-user peel. Callers
+    own those concerns. Used both by ``_normalize_history`` (full
+    in-memory path) and by ``DefaultConversation.build_prompt``
+    (policy-streamed path, which preserves the rolling-summary
+    preamble that the leading-non-user peel would otherwise drop).
     """
-    sliced = messages[-max_messages:] if max_messages else list(messages)
-
-    for i, m in enumerate(sliced):
-        if m.get("role") == "user":
-            sliced = sliced[i:]
-            break
-
     declared_ids: set[str] = set()
     responded_ids: set[str] = set()
-    for m in sliced:
+    for m in messages:
         if m.get("role") == "assistant":
             for tc in m.get("tool_calls") or []:
                 if tid := tc.get("id"):
@@ -54,7 +54,7 @@ def _normalize_history(
 
     if declared_ids != valid_ids or responded_ids != valid_ids:
         repaired: list[dict[str, Any]] = []
-        for m in sliced:
+        for m in messages:
             role = m.get("role")
             if role == "tool":
                 if m.get("tool_call_id") in valid_ids:
@@ -73,16 +73,38 @@ def _normalize_history(
                     repaired.append({k: v for k, v in m.items() if k != "tool_calls"})
             else:
                 repaired.append(m)
-        sliced = repaired
+        messages = repaired
 
     out: list[dict[str, Any]] = []
-    for m in sliced:
+    for m in messages:
         entry: dict[str, Any] = {"role": m["role"], "content": m.get("content", "")}
         for k in ("tool_calls", "tool_call_id", "name"):
             if k in m:
                 entry[k] = m[k]
         out.append(entry)
     return out
+
+
+def _normalize_history(
+    messages: list[dict[str, Any]], max_messages: int | None = 500
+) -> list[dict[str, Any]]:
+    """Apply LLM-input cleanup to a slice of messages.
+
+    Slice to ``max_messages``, drop leading non-user messages, then
+    delegate to ``_repair_and_project`` for orphan repair + dict
+    projection. Used by ``Session.get_history`` (in-memory path) and
+    the streaming ``SessionManager.read_history`` (on-disk path) —
+    both of which feed the LLM a tail-only view where leading
+    non-user messages are mid-conversation noise.
+    """
+    sliced = messages[-max_messages:] if max_messages else list(messages)
+
+    for i, m in enumerate(sliced):
+        if m.get("role") == "user":
+            sliced = sliced[i:]
+            break
+
+    return _repair_and_project(sliced)
 
 
 if not IS_MICROPYTHON:  # pragma: no cover (micropython)

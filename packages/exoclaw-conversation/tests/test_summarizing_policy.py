@@ -1,15 +1,17 @@
-"""Direct tests for ``SummarizingConsolidationPolicy`` budget mode +
-the sidecar I/O helpers + the default ``SessionReader`` fallback.
+"""Direct tests for ``SummarizingConsolidationPolicy`` + the sidecar
+I/O helpers + the default ``SessionReader`` fallback.
 
 The end-to-end test in
 ``exoclaw-nanobot/tests/test_phase_persistence_integration.py``
 exercises the policy through ``AgentLoop`` + DBOS + a real provider,
 which covers the ``on_turn_complete`` happy path. These tests cover
-the spots that path doesn't reach: the budget-mode cascade
-(preemptive overflow recovery), the ``max_overflow_attempts`` cap,
-the "nothing left to summarize" break, the migration shim, and the
-default ``HistoryStore.reader`` fallback that ships for backends
-which don't override it.
+the spots that path doesn't reach: ``recover_from_overflow`` (reactive
+seam invoked on ``ContextWindowExceededError``), the boundary repair
+that keeps tool_use/tool_result pairs intact across the
+``summarized_through`` cut, sidecar I/O failure paths, the legacy
+``last_consolidated`` migration shim, and the default
+``HistoryStore.reader`` fallback that ships for backends which don't
+override it.
 """
 
 from __future__ import annotations

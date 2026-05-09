@@ -109,8 +109,6 @@ class MemoryBackend(Protocol):
     async def summarize(
         self,
         messages: list[dict[str, Any]],
-        *,
-        archive_all: bool = False,
     ) -> str | None:
         """Summarize ``messages`` and persist the result to long-term
         memory + history artifacts. Returns the new history-log entry

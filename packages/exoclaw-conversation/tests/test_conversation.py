@@ -357,14 +357,14 @@ class TestMemoryStore:
     async def test_summarize_no_provider(self, tmp_path: Path) -> None:
         store = MemoryStore(tmp_path)
         msgs = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
-        assert await store.summarize(msgs, archive_all=True) is None
+        assert await store.summarize(msgs) is None
 
     async def test_summarize_empty(self, tmp_path: Path) -> None:
         provider = MagicMock()
         store = MemoryStore(tmp_path, provider=provider, model="test-model")
         # Empty input is a no-op success — returns "" rather than None so
         # callers can distinguish from a failed LLM call.
-        assert await store.summarize([], archive_all=False) == ""
+        assert await store.summarize([]) == ""
 
     async def test_summarize_calls_provider(self, tmp_path: Path) -> None:
         response = MagicMock()
@@ -381,7 +381,7 @@ class TestMemoryStore:
             {"role": "user", "content": "hello", "timestamp": "2024-01-01T00:00"},
             {"role": "assistant", "content": "hi", "timestamp": "2024-01-01T00:01"},
         ]
-        entry = await store.summarize(msgs, archive_all=True)
+        entry = await store.summarize(msgs)
         assert entry == "[2024-01-01] summary"
         assert "facts" in store.read_long_term()
 
@@ -394,7 +394,7 @@ class TestMemoryStore:
         store = MemoryStore(tmp_path, provider=provider, model="test-model")
 
         msgs = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
-        assert await store.summarize(msgs, archive_all=True) is None
+        assert await store.summarize(msgs) is None
 
     async def test_summarize_provider_exception(self, tmp_path: Path) -> None:
         provider = MagicMock()
@@ -402,7 +402,7 @@ class TestMemoryStore:
         store = MemoryStore(tmp_path, provider=provider, model="test-model")
 
         msgs = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
-        assert await store.summarize(msgs, archive_all=True) is None
+        assert await store.summarize(msgs) is None
 
     async def test_summarize_args_as_string(self, tmp_path: Path) -> None:
         response = MagicMock()
@@ -416,7 +416,7 @@ class TestMemoryStore:
         store = MemoryStore(tmp_path, provider=provider, model="test-model")
 
         msgs = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
-        assert await store.summarize(msgs, archive_all=True) == "entry"
+        assert await store.summarize(msgs) == "entry"
 
     async def test_summarize_args_as_list(self, tmp_path: Path) -> None:
         response = MagicMock()
@@ -430,7 +430,7 @@ class TestMemoryStore:
         store = MemoryStore(tmp_path, provider=provider, model="test-model")
 
         msgs = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
-        assert await store.summarize(msgs, archive_all=True) == "entry"
+        assert await store.summarize(msgs) == "entry"
 
     async def test_summarize_args_unexpected_type(self, tmp_path: Path) -> None:
         response = MagicMock()
@@ -444,7 +444,7 @@ class TestMemoryStore:
         store = MemoryStore(tmp_path, provider=provider, model="test-model")
 
         msgs = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
-        assert await store.summarize(msgs, archive_all=True) is None
+        assert await store.summarize(msgs) is None
 
 
 # ---------------------------------------------------------------------------
@@ -865,6 +865,41 @@ class TestDefaultConversation:
         await conv.build_prompt("test:1", "hello", plugin_context=["extra"])
         call_kwargs = conv.prompt.build_messages.call_args[1]  # type: ignore[union-attr]
         assert "extra" in call_kwargs["extra_context"]
+
+    async def test_build_prompt_strips_persistence_fields_and_repairs_orphans(
+        self,
+    ) -> None:
+        """``policy.transform(reader)`` yields raw log entries (with
+        ``timestamp`` etc.) and may include tool_call/tool_result
+        orphans within the unconsolidated tail. ``build_prompt`` must
+        project those to the LLM-input shape and repair orphans
+        before passing to ``PromptBuilder.build_messages`` — otherwise
+        strict providers reject the request shape."""
+        session = Session(key="test:1")
+        # Seed a tail that has BOTH issues: timestamps on every entry,
+        # plus an orphan tool_result whose declaring tool_call is
+        # missing (simulates a chunk boundary or a partial replay).
+        session.messages = [
+            {"role": "user", "content": "go", "timestamp": "2026-01-01T00:00:00"},
+            {"role": "tool", "content": "orphan", "tool_call_id": "T_dead"},
+            {
+                "role": "assistant",
+                "content": "ok",
+                "timestamp": "2026-01-01T00:00:01",
+            },
+        ]
+        conv = DefaultConversation(
+            history=_make_mock_history(session),
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+        )
+        await conv.build_prompt("test:1", "next")
+        history_arg = conv.prompt.build_messages.call_args[1]["history"]  # type: ignore[union-attr]
+        # No timestamps survive into the LLM-input shape.
+        assert all("timestamp" not in m for m in history_arg)
+        # Orphan tool_result was dropped.
+        tool_msgs = [m for m in history_arg if m.get("role") == "tool"]
+        assert tool_msgs == []
 
     async def test_build_prompt_isolated_rejects_non_bool(self) -> None:
         """``isolated`` must be a real bool — ``bool("false")`` is True, so
@@ -1316,7 +1351,7 @@ class TestMemoryStoreEdgeCases:
                 "tools_used": ["exec"],
             },
         ]
-        assert await store.summarize(msgs, archive_all=True) == "entry"
+        assert await store.summarize(msgs) == "entry"
 
     async def test_summarize_non_string_history_entry(self, tmp_path: Path) -> None:
         response = MagicMock()
@@ -1330,7 +1365,7 @@ class TestMemoryStoreEdgeCases:
         provider.chat = AsyncMock(return_value=response)
         store = MemoryStore(tmp_path, provider=provider, model="m")
         msgs = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
-        entry = await store.summarize(msgs, archive_all=True)
+        entry = await store.summarize(msgs)
         assert entry is not None
         assert "nested" in entry
 
@@ -1344,7 +1379,7 @@ class TestMemoryStoreEdgeCases:
         provider.chat = AsyncMock(return_value=response)
         store = MemoryStore(tmp_path, provider=provider, model="m")
         msgs = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
-        assert await store.summarize(msgs, archive_all=True) is None
+        assert await store.summarize(msgs) is None
 
     async def test_policy_advances_boundary_past_tool_pair(self, tmp_path: Path) -> None:
         """Regression: consolidation boundary must not leave orphan tool_results.

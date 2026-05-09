@@ -544,12 +544,14 @@ async def create(
 
             on_tool_calls = _record_tool_calls
 
-    # Context overflow is handled by the consolidation policy via
-    # ``transform(reader, budget=target_context_tokens)`` before each
-    # LLM call (configured via ``config.agents.defaults.target_context_tokens``).
-    # No reactive ``on_context_overflow`` hook — dropping messages from
-    # the in-flight prompt would silently desynchronize the policy's
-    # sidecar from what the LLM saw.
+    # Context overflow recovery is reactive: ``AgentLoop`` catches
+    # ``ContextWindowExceededError``, calls the executor's
+    # ``recover_from_overflow`` (forwarded to
+    # ``DefaultConversation.recover_from_overflow``), which asks the
+    # consolidation policy to advance its sidecar by one chunk and
+    # re-emits the compacted view for retry. No legacy
+    # ``on_context_overflow`` callback — the recover-from-overflow
+    # path keeps the policy's sidecar in sync with what the LLM sees.
 
     # Durable executor — every LLM call and tool execution is checkpointed
     executor = DBOSExecutor()
