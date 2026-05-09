@@ -35,6 +35,7 @@ against each other inside a real DBOS workflow.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -43,8 +44,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from dbos import DBOS, DBOSConfig
+from exoclaw_conversation import _consolidation_state as ss
 from exoclaw_conversation.conversation import DefaultConversation
+from exoclaw_conversation.memory import MemoryStore
 from exoclaw_conversation.session.manager import SessionManager
+from exoclaw_conversation.summarizing_policy import SummarizingConsolidationPolicy
 from exoclaw_executor_dbos import DBOSExecutor
 
 _DB_PATH = f"/tmp/dbos_phase_integration_test_{os.getpid()}.sqlite"
@@ -200,115 +204,12 @@ class TestPhase1PerMessageJSONLAppend:
         assert [m["content"] for m in messages] == ["start", "partial response"]
 
 
-@pytest.mark.asyncio(loop_scope="session")
-class TestPhase2DiskBackedPriorAutoWire:
-    """Phase 2: ``DBOSExecutor.build_prompt`` auto-installs a
-    ``PriorSource`` closure when ``Conversation`` exposes
-    ``load_persisted_history``. Successive ``load_messages`` re-read
-    the history slice from session state rather than holding a
-    per-turn list copy."""
-
-    async def test_prior_var_holds_callable_not_list(
-        self, tmp_path: Path, dbos_instance: Any
-    ) -> None:
-        """After ``build_prompt``, the executor's ``_prior_var`` should
-        hold a callable source — not a list snapshot. This is the
-        signal that the auto-wire took the disk-backed path vs. the
-        ``set_messages``-with-list fallback."""
-        conv = _make_conversation(tmp_path)
-        # Seed session so load_persisted_history has something to
-        # return — empty-history would take the snapshot fallback.
-        session = conv.history.get_or_create("sess:autowire")
-        session.messages.extend(
-            [
-                {"role": "user", "content": "h1"},
-                {"role": "assistant", "content": "h2"},
-            ]
-        )
-        conv.history.save(session)
-
-        executor = DBOSExecutor()
-        await executor.build_prompt(conv, "sess:autowire", "new message")
-
-        stored = executor._prior_var.get()
-        assert callable(stored), (
-            "phase 2 auto-wire didn't fire — ``_prior_var`` holds a "
-            "list snapshot rather than a lazy source"
-        )
-
-    async def test_load_messages_reflects_mid_turn_appends(
-        self, tmp_path: Path, dbos_instance: Any
-    ) -> None:
-        """The load-bearing phase 2 assertion: once auto-wire is
-        installed, ``load_messages`` re-reads ``load_persisted_history``
-        on each call. So a mid-turn ``conversation.append`` (the phase
-        1 path) shows up on the next ``load_messages`` without
-        rebuilding the prompt.
-
-        This is the integration point where phase 1 and phase 2 meet —
-        phase 1 writes each message as it's produced, phase 2's source
-        re-reads the session state so the next iteration's prompt
-        reflects the new messages.
-        """
-        conv = _make_conversation(tmp_path)
-        session = conv.history.get_or_create("sess:combined")
-        session.messages.extend(
-            [
-                {"role": "user", "content": "h1"},
-                {"role": "assistant", "content": "h2"},
-            ]
-        )
-        conv.history.save(session)
-
-        executor = DBOSExecutor()
-        await executor.build_prompt(conv, "sess:combined", "new message")
-
-        before = executor.load_messages()
-        assert any(m["content"] == "h1" for m in before)
-        assert any(m["content"] == "h2" for m in before)
-
-        # Mid-turn: simulate an assistant response being flushed via
-        # the phase 1 path.
-        await conv.append(
-            "sess:combined",
-            {"role": "assistant", "content": "h3-new-via-append"},
-        )
-
-        after = executor.load_messages()
-        contents = [m["content"] for m in after]
-        assert "h3-new-via-append" in contents, (
-            "phase 2 source didn't pick up the phase 1 append — either "
-            "the auto-wire regressed to snapshot mode or the source "
-            "isn't invoking load_persisted_history per call"
-        )
-
-    async def test_empty_history_falls_back_to_snapshot(
-        self, tmp_path: Path, dbos_instance: Any
-    ) -> None:
-        """Fresh sessions (no history) take the snapshot fallback —
-        there's nothing to disk-back. Assert this doesn't accidentally
-        install a lazy source that returns an empty list forever."""
-        conv = _make_conversation(tmp_path)
-
-        executor = DBOSExecutor()
-        await executor.build_prompt(conv, "sess:fresh", "first message")
-
-        # Still callable (set_messages installs a snapshot closure,
-        # which is also callable) — check by signature instead. The
-        # snapshot closure ignores session state; the disk-backed one
-        # would pick up mutations.
-        await conv.append(
-            "sess:fresh",
-            {"role": "assistant", "content": "response"},
-        )
-
-        # load_messages is the stable observable. Snapshot path means
-        # we see the initial build_prompt return only — no leak of
-        # the new append.
-        loaded = executor.load_messages()
-        assert all(m.get("content") != "response" for m in loaded), (
-            "empty-history fallback must not read fresh appends"
-        )
+# Phase 2 disk-backed prior auto-wire was tied to
+# ``DefaultConversation.load_persisted_history``, which is removed in
+# the v0.23 policy-as-transform refactor. Executors that still want a
+# refreshing prior source now reach into ``conversation.history.reader(key)``
+# directly. The corresponding tests live in the executor package once
+# that integration is rewritten — they no longer belong here.
 
 
 @pytest.mark.asyncio(loop_scope="session")
@@ -458,3 +359,213 @@ class TestPhase1And2ThroughFullAgentLoop:
         # actually survives through to ``load_messages`` calls during
         # the turn. Once that's in, this test can assert phase 2
         # behaviour end-to-end as well.
+
+
+def _make_conversation_with_real_policy(
+    workspace: Path,
+    *,
+    provider: Any,
+    memory_window: int,
+    captured_history: list[list[dict[str, Any]]] | None = None,
+) -> DefaultConversation:
+    """``DefaultConversation`` wired with the real
+    ``SummarizingConsolidationPolicy`` and a real ``MemoryStore``,
+    backed by a stub prompt that records each ``build_messages`` call
+    so tests can inspect what entered the LLM input.
+
+    The ``provider`` mock must dispatch on whether ``tools`` contains
+    the ``save_memory`` schema — that's how it tells agent calls
+    apart from the policy's chunk-summarization calls (the policy
+    routes those through ``MemoryStore.summarize`` → ``provider.chat``
+    with the ``_SAVE_MEMORY_TOOL`` schema).
+    """
+    sessions = SessionManager(workspace)
+    memory = MemoryStore(workspace, provider=provider, model="test-model")
+    policy = SummarizingConsolidationPolicy(
+        memory=memory,
+        state_dir=workspace / "sessions",
+        memory_window=memory_window,
+    )
+
+    prompt = MagicMock()
+
+    def _build_messages(
+        *,
+        history: list[dict[str, Any]],
+        current_message: str,
+        **_kwargs: Any,
+    ) -> list[dict[str, Any]]:
+        if captured_history is not None:
+            captured_history.append(list(history))
+        return [
+            {"role": "system", "content": "test-system"},
+            *history,
+            {"role": "user", "content": current_message},
+        ]
+
+    prompt.build_messages = _build_messages
+    prompt.get_active_optional_tools = MagicMock(return_value=set())
+    prompt.skills = MagicMock()
+    prompt.skills.get_always_skills = MagicMock(return_value=[])
+
+    return DefaultConversation(
+        history=sessions,
+        memory=memory,
+        prompt=prompt,
+        memory_window=memory_window,
+        consolidation_policy=policy,
+    )
+
+
+def _build_dispatching_provider() -> tuple[Any, dict[str, int]]:
+    """Provider mock that dispatches ``chat`` calls based on whether
+    the request carries the ``save_memory`` tool schema.
+
+    * Memory-summarize calls (``tools`` contains ``save_memory``)
+      return a synthetic ``save_memory`` tool call so the policy's
+      ``MemoryStore.summarize`` succeeds and ``on_turn_complete``
+      advances the sidecar.
+    * Agent calls return a one-shot ``answer-N`` final message — no
+      tool calls — so each turn is a single LLM round.
+    """
+    from exoclaw.providers.types import LLMResponse, ToolCallRequest
+
+    counters = {"agent": 0, "memory": 0}
+
+    async def _chat(**kwargs: Any) -> LLMResponse:
+        tools = kwargs.get("tools") or []
+        tool_names: set[str] = set()
+        for t in tools:
+            if isinstance(t, dict):
+                fn = t.get("function") or {}
+                if name := fn.get("name"):
+                    tool_names.add(name)
+        if "save_memory" in tool_names:
+            counters["memory"] += 1
+            return LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCallRequest(
+                        id=f"sm-{counters['memory']}",
+                        name="save_memory",
+                        arguments={
+                            "history_entry": (f"[summary-{counters['memory']}] earlier exchange"),
+                            "memory_update": "fact: integration test running",
+                        },
+                    )
+                ],
+                finish_reason="tool_calls",
+            )
+        counters["agent"] += 1
+        return LLMResponse(
+            content=f"answer-{counters['agent']}",
+            finish_reason="stop",
+        )
+
+    provider = MagicMock()
+    provider.get_default_model = MagicMock(return_value="test-model")
+    provider.chat = AsyncMock(side_effect=_chat)
+    return provider, counters
+
+
+@pytest.mark.asyncio(loop_scope="session")
+class TestConsolidationCascadeThroughFullAgentLoop:
+    """End-to-end: run multiple turns through real
+    ``AgentLoop`` + ``DBOSExecutor`` + ``DefaultConversation`` +
+    real ``SummarizingConsolidationPolicy``. Verify that
+    ``post_turn`` → ``policy.on_turn_complete`` actually fires the
+    memory backend, advances the sidecar, and that subsequent turns
+    pick up the rolling summary preamble in the prompt history.
+
+    This is the load-bearing assertion for the v0.23 refactor:
+    consolidation works end-to-end through the production composition,
+    not just in isolated unit tests against ``policy.transform``.
+    """
+
+    async def test_consolidation_advances_sidecar_and_emits_preamble(
+        self, tmp_path: Path, dbos_instance: Any
+    ) -> None:
+        from exoclaw.agent.loop import AgentLoop
+        from exoclaw.bus.queue import MessageBus
+        from exoclaw_executor_dbos import run_durable_turn, set_loop_context
+
+        provider, _counters = _build_dispatching_provider()
+        captured_history: list[list[dict[str, Any]]] = []
+        # ``memory_window=4`` keeps the test fast: each turn appends 2
+        # messages (user + assistant), so by turn 2 the unconsolidated
+        # tail has crossed the threshold and ``on_turn_complete`` fires
+        # a summarize pass.
+        conv = _make_conversation_with_real_policy(
+            tmp_path,
+            provider=provider,
+            memory_window=4,
+            captured_history=captured_history,
+        )
+
+        bus = MessageBus()
+        executor = DBOSExecutor()
+        loop = AgentLoop(
+            bus=bus,
+            provider=provider,
+            conversation=conv,
+            model="test-model",
+            tools=[],
+            executor=executor,  # type: ignore[invalid-argument-type]
+            max_iterations=3,
+        )
+        set_loop_context(loop)
+
+        session_id = "cli:cascade"
+
+        # Drive 4 turns. By the time the loop finishes turn ≥3, the
+        # background ``on_turn_complete`` task has had enough log
+        # entries to summarize one chunk and update the sidecar.
+        for n in range(4):
+            await run_durable_turn(session_id, f"q{n}", channel="cli", chat_id="u")
+            # Wait for any background maintenance tasks spawned by
+            # post_turn so the assertions below see a settled sidecar.
+            pending = list(conv._consolidation_tasks)
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+
+        # ── Sidecar advanced ─────────────────────────────────────────
+        sidecar = ss.load_state(tmp_path / "sessions", session_id)
+        assert sidecar.summarized_through > 0, (
+            "consolidation didn't advance the sidecar pointer; "
+            f"summarized_through={sidecar.summarized_through}"
+        )
+        assert sidecar.summary, "sidecar carries no summary text after consolidation"
+        assert "[summary" in sidecar.summary, (
+            f"summary text missing the synthetic marker: {sidecar.summary!r}"
+        )
+
+        # ── MemoryStore wrote artifacts ──────────────────────────────
+        # ``conv.memory`` is typed as the ``MemoryBackend`` protocol
+        # which doesn't surface ``history_file``; narrow to the
+        # concrete impl for the artifact assertions.
+        memory = conv.memory
+        assert isinstance(memory, MemoryStore)
+        assert memory.history_file.exists(), "HISTORY.md was never written"
+        assert "[summary" in memory.history_file.read_text(), (
+            "HISTORY.md doesn't contain the policy's summary entry"
+        )
+
+        # ── One more turn — its prompt history must lead with the
+        #    rolling summary preamble emitted by ``policy.transform``.
+        captured_history.clear()
+        await run_durable_turn(session_id, "q-after", channel="cli", chat_id="u")
+        pending = list(conv._consolidation_tasks)
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
+        assert captured_history, "build_messages never ran on the post-consolidation turn"
+        latest = captured_history[-1]
+        assert latest, "post-consolidation turn assembled an empty history"
+        first = latest[0]
+        assert first.get("role") == "system", (
+            f"expected first history entry to be the summary preamble (role=system); "
+            f"got role={first.get('role')!r}"
+        )
+        assert "[summary" in first.get("content", ""), (
+            f"first history entry isn't the summary preamble; content={first.get('content')!r}"
+        )

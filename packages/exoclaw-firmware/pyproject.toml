@@ -12,7 +12,7 @@ dependencies = [
     # state, OpenAI-compat provider, and cron self-scheduling.
     # Extra plugins can be staged on top of the firmware tree
     # before flashing.
-    "exoclaw-conversation>=0.21.0",
+    "exoclaw-conversation>=0.24.0",
     "exoclaw-provider-openai>=0.4.2",
     "exoclaw-tools-cron>=0.9.0",
     "exoclaw-subagent>=0.15.0",

@@ -603,14 +603,14 @@ wheels = [
 
 [[package]]
 name = "exoclaw"
-version = "0.26.5"
+version = "0.27.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "structlog" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/31/59/d457474cad7c8a428b89e8e5e244bb57d13cd6cac3e7831e5c303ddeffe1/exoclaw-0.26.5.tar.gz", hash = "sha256:b943e38f673b12c6b1794bb01db4889e1240925e2d4fcbc488e64deea0b9c246", size = 77947, upload-time = "2026-04-28T13:06:28.71Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/71/2d/de8bbb6cc1e685ee0693dfeed9e3b046af603745bfd9128d2a0999168165/exoclaw-0.27.0.tar.gz", hash = "sha256:23ff9d0dfb655ca977637ed6dd7f957a5272dcf816219c386f2bb3117e318e18", size = 80346, upload-time = "2026-05-09T15:18:30.711Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/39/dd/fae40c4a5744dbca502e42ee4d477db72520a47d72672799d62fad9f5e4f/exoclaw-0.26.5-py3-none-any.whl", hash = "sha256:2377ab060d07361b89f4063da07028f537dcfde167222203dce18d2a22942970", size = 81572, upload-time = "2026-04-28T13:06:27.411Z" },
+    { url = "https://files.pythonhosted.org/packages/9f/3c/f8c0f6da9c50b45041b8ce9430d9d4458de606ea05a55c8df8ac5f7035ec/exoclaw-0.27.0-py3-none-any.whl", hash = "sha256:f508f44e3691e7701201cdff2b838f05c9613cff0a231cd91cc954ad411b101b", size = 84118, upload-time = "2026-05-09T15:18:29.567Z" },
 ]
 
 [package.optional-dependencies]
@@ -669,7 +669,7 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-conversation"
-version = "0.21.0"
+version = "0.24.0"
 source = { editable = "packages/exoclaw-conversation" }
 dependencies = [
     { name = "exoclaw" },
@@ -679,7 +679,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", specifier = ">=0.26.0" },
+    { name = "exoclaw", specifier = ">=0.27.0" },
     { name = "rich", specifier = ">=14.0.0,<15.0.0" },
     { name = "structlog", specifier = ">=25.0.0" },
 ]
@@ -943,7 +943,7 @@ requires-dist = [{ name = "exoclaw", specifier = ">=0.15.2" }]
 
 [[package]]
 name = "exoclaw-tools-cron"
-version = "0.9.0"
+version = "0.9.1"
 source = { editable = "packages/exoclaw-tools-cron" }
 dependencies = [
     { name = "croniter" },

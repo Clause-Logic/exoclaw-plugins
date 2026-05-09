@@ -137,18 +137,20 @@ def build_agent(
             provider = BudgetWrapper(provider, turn_tracker)
             iteration_policy = TurnBudgetPolicy(turn_tracker)
 
-    # SummarizingConsolidationPolicy preserves a per-session
-    # ``summary`` in session metadata across compactions so the
-    # agent retains "what was I doing" continuity. Without this
-    # the chip loses that continuity every time the JSONL is
-    # truncated. The policy wraps the same MemoryStore the basic
-    # path uses — extra ergonomic, no extra LLM call.
+    # SummarizingConsolidationPolicy maintains a rolling summary
+    # in a per-session sidecar so the agent retains "what was I
+    # doing" continuity after older messages have been folded into
+    # long-term memory. Sidecars sit next to session JSONL files in
+    # ``workspace/sessions``.
     memory = MemoryStore(workspace, provider, model)
     conversation = DefaultConversation.create(
         workspace=workspace,
         provider=provider,
         model=model,
-        consolidation_policy=SummarizingConsolidationPolicy(memory=memory),
+        consolidation_policy=SummarizingConsolidationPolicy(
+            memory=memory,
+            state_dir=workspace / "sessions",
+        ),
         builtin_skills_dir=_builtin_skills_dir(),
     )
     return provider, conversation, iteration_policy

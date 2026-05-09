@@ -345,8 +345,11 @@ async def create(
     # blows the cgroup as session length grows. See
     # docs/memory-model.md Step C.
     history_store = SessionManager(workspace, streaming_history=True)
-    memory_store = MemoryStore(workspace, provider, model, history=history_store)
-    consolidation_policy = SummarizingConsolidationPolicy(memory=memory_store)
+    memory_store = MemoryStore(workspace, provider, model)
+    consolidation_policy = SummarizingConsolidationPolicy(
+        memory=memory_store,
+        state_dir=workspace / "sessions",
+    )
     conversation = DefaultConversation(
         history=history_store,
         memory=memory_store,
@@ -541,20 +544,14 @@ async def create(
 
             on_tool_calls = _record_tool_calls
 
-    # Context overflow recovery — compact messages when context window is exceeded
-    async def _on_context_overflow(
-        messages: list[dict[str, Any]],
-    ) -> list[dict[str, Any]] | None:
-        from exoclaw_conversation.context import drop_oldest_half
-
-        compacted = drop_oldest_half(messages)
-        if len(compacted) < len(messages):
-            logger.info(
-                "context_overflow_compacted",
-                **{"message.count.before": len(messages), "message.count.after": len(compacted)},
-            )
-            return compacted
-        return None
+    # Context overflow recovery is reactive: ``AgentLoop`` catches
+    # ``ContextWindowExceededError``, calls the executor's
+    # ``recover_from_overflow`` (forwarded to
+    # ``DefaultConversation.recover_from_overflow``), which asks the
+    # consolidation policy to advance its sidecar by one chunk and
+    # re-emits the compacted view for retry. No legacy
+    # ``on_context_overflow`` callback — the recover-from-overflow
+    # path keeps the policy's sidecar in sync with what the LLM sees.
 
     # Durable executor — every LLM call and tool execution is checkpointed
     executor = DBOSExecutor()
@@ -582,7 +579,6 @@ async def create(
         on_post_turn=on_post_turn,
         on_max_iterations=on_max_iterations,
         on_tool_calls=on_tool_calls,
-        on_context_overflow=_on_context_overflow,
     )
 
     # Wire cron jobs to run silently via process_direct.
