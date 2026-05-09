@@ -97,7 +97,7 @@ async def run(
     # unconsolidated tail lives only on disk and ``session.messages``
     # stays empty across turns, capping per-session RAM.
     history_store = SessionManager(workspace, streaming_history=streaming)
-    memory_store = MemoryStore(workspace, provider, "fake-model", history=history_store)
+    memory_store = MemoryStore(workspace, provider, "fake-model")
     # memory_window very large so SummarizingConsolidationPolicy never fires —
     # otherwise the curve gets stairstepped by background consolidation tasks
     # mutating the session out from under the measurement loop.

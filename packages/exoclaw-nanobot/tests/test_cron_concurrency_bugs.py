@@ -188,27 +188,31 @@ async def _bg_inner_workflow(label: str) -> str:
 
 
 @DBOS.step()
-async def _consolidation_trigger_step(memory_holder_key: str) -> None:
-    """Drive ``DefaultConversation.build_prompt`` from inside a DBOS
-    step so the conversation's background ``asyncio.create_task``
-    fires while a real workflow context is on the stack.
+async def _post_turn_trigger_step(memory_holder_key: str) -> None:
+    """Drive ``DefaultConversation.post_turn`` from inside a DBOS step
+    so the conversation's background ``asyncio.create_task`` for
+    ``policy.on_turn_complete`` fires while a real workflow context is
+    on the stack.
 
     Looks the conversation up by key for the same picklability reason
     as ``_add_cron_step``."""
     conv: DefaultConversation = _SERVICES[memory_holder_key]  # type: ignore[assignment]
-    await conv.build_prompt("test-session", "hi", channel="zulip", chat_id="topic-A")
+    conv._turn_session_id = "test-session"
+    conv._turn_channel = "zulip"
+    conv._turn_chat_id = "topic-A"
+    await conv.post_turn("test-session")
 
 
 @DBOS.workflow()
 async def _consolidation_parent_workflow(memory_holder_key: str) -> None:
     """Mirror of ``_scheduling_parent_workflow`` for the consolidation
     leak. Leading no-ops advance function_id so the spawned
-    consolidation task — if it inherits the workflow context — would
+    maintenance task — if it inherits the workflow context — would
     collide on ``_bg_inner_workflow`` against an already-journaled
     step."""
     await _noop_step()
     await _noop_step()
-    await _consolidation_trigger_step(memory_holder_key)
+    await _post_turn_trigger_step(memory_holder_key)
     await _noop_step()
     await _noop_step()
 
@@ -574,61 +578,64 @@ class TestCronToolDestinationLeaksWhenCtxAbsent:
 
 @pytest.mark.asyncio(loop_scope="session")
 class TestConversationConsolidationInheritsDBOSContext:
-    """Test 5 — ``DefaultConversation.build_prompt`` spawns a
-    background consolidation task via ``asyncio.create_task``
-    (``conversation.py:169``). The task copies the calling
-    contextvars, including DBOS's ``_dbos_context_var`` when
-    ``build_prompt`` is reached from inside a workflow body.
+    """Test 5 — ``DefaultConversation.post_turn`` spawns a background
+    maintenance task via ``create_isolated_task`` (``conversation.py:
+    _schedule_maintenance``). The task is required to run with a fresh
+    ``contextvars.Context()`` so DBOS's ``_dbos_context_var`` from the
+    calling workflow body doesn't leak in.
 
-    The leak is currently *dormant* in production —
-    ``memory.consolidate_messages`` calls a provider directly, not a
-    DBOS step — but the inherited context is still there, ready to
-    misclassify any future workflow-aware call inside the
-    consolidation path as a child step of the parent.
+    The leak is currently *dormant* in production — the policy's
+    ``on_turn_complete`` calls a provider directly, not a DBOS step —
+    but the inherited context would be there, ready to misclassify any
+    future workflow-aware call inside the maintenance path as a child
+    step of the parent.
 
-    The test forces the latent leak: it patches
-    ``memory.consolidate_messages`` to attempt a fresh top-level
-    workflow. With context inheritance, that becomes a child-step
-    attempt against the parent and fails with
+    The test forces the latent leak: a stub policy's ``on_turn_complete``
+    attempts a fresh top-level workflow. With context inheritance, that
+    becomes a child-step attempt against the parent and fails with
     ``DBOSUnexpectedStepError``.
     """
 
-    async def test_consolidation_task_runs_as_top_level_workflow(self, dbos_instance: Any) -> None:
-        consolidate_done = asyncio.Event()
-        consolidate_error: list[BaseException] = []
+    async def test_maintenance_task_runs_as_top_level_workflow(self, dbos_instance: Any) -> None:
+        maintenance_done = asyncio.Event()
+        maintenance_error: list[BaseException] = []
 
-        async def consolidate(*_: Any, **__: Any) -> bool:
-            try:
-                wfid = f"consolidate-{uuid.uuid4().hex[:8]}"
-                with SetWorkflowID(wfid):
-                    await _bg_inner_workflow("consolidate")
-            except BaseException as e:
-                consolidate_error.append(e)
-            finally:
-                consolidate_done.set()
-            return True
+        class _IsolationProbePolicy:
+            def transform(self, reader, *, budget=None):  # type: ignore[no-untyped-def]
+                async def _gen():  # type: ignore[no-untyped-def]
+                    async for m in reader.stream():
+                        yield m
+
+                return _gen()
+
+            async def on_turn_complete(self, reader) -> None:  # type: ignore[no-untyped-def]
+                try:
+                    wfid = f"maintenance-{uuid.uuid4().hex[:8]}"
+                    with SetWorkflowID(wfid):
+                        await _bg_inner_workflow("maintenance")
+                except BaseException as e:
+                    maintenance_error.append(e)
+                finally:
+                    maintenance_done.set()
 
         memory = MagicMock()
-        memory.consolidate_messages = AsyncMock(side_effect=consolidate)
         memory.system_context = MagicMock(return_value=None)
 
-        # Build a HistoryStore stand-in whose session reports
-        # unconsolidated > memory_window so consolidation fires.
-        session = MagicMock()
-        session.total_messages = 200
-        session.last_consolidated = 0
-        session.metadata = {}
-        session.get_history = MagicMock(return_value=[])
-        session.key = "test-session"
+        # Minimal history stand-in: ``post_turn`` only needs ``reader``
+        # (handed to ``on_turn_complete``); the probe policy ignores it.
         history = MagicMock()
-        history.get_or_create.return_value = session
-        history.load_range = MagicMock(return_value=[{"role": "user", "content": "old"}])
-        history.save_metadata = MagicMock()
+        history.reader = MagicMock(return_value=MagicMock())
 
         prompt = MagicMock()
         prompt.build = AsyncMock(return_value=[{"role": "system", "content": ""}])
 
-        conv = DefaultConversation(history=history, memory=memory, prompt=prompt, memory_window=10)
+        conv = DefaultConversation(
+            history=history,
+            memory=memory,
+            prompt=prompt,
+            memory_window=10,
+            consolidation_policy=_IsolationProbePolicy(),  # type: ignore[arg-type]
+        )
 
         key = f"conv-{uuid.uuid4().hex[:8]}"
         _SERVICES[key] = conv  # type: ignore[assignment]
@@ -636,32 +643,28 @@ class TestConversationConsolidationInheritsDBOSContext:
             with SetWorkflowID(f"parent-{uuid.uuid4().hex[:8]}"):
                 await _consolidation_parent_workflow(key)
 
-            # The parent has finished. The consolidation task spawned
-            # inside build_prompt is still running with a copy of the
-            # parent's contextvars (including DBOSContext).
-            await asyncio.wait_for(consolidate_done.wait(), timeout=5.0)
+            # The parent has finished. The maintenance task spawned
+            # inside post_turn is still running; it must have a fresh
+            # context so ``_bg_inner_workflow`` runs as top-level.
+            await asyncio.wait_for(maintenance_done.wait(), timeout=5.0)
         finally:
             _SERVICES.pop(key, None)
-            # Drain any other consolidation tasks the conversation may
-            # have left around (e.g. on a different session) so they
-            # don't bleed into other tests.
             for t in list(conv._consolidation_tasks):
                 t.cancel()
 
-        assert not consolidate_error, (
-            f"Consolidation failed with "
-            f"{type(consolidate_error[0]).__name__}: "
-            f"{consolidate_error[0]!r}.\n"
-            f"DefaultConversation's background consolidation task "
-            f"inherited the parent workflow's DBOSContext via the "
-            f"asyncio.create_task contextvars copy at "
-            f"conversation.py:169. The error may surface as "
-            f"DBOSUnexpectedStepError (stale context once the parent "
-            f"finishes) or as a bare ``AssertionError`` from "
-            f"dbos/_context.py (live step context — DBOS asserts you "
-            f"can't start a workflow from inside a step). Both have "
-            f"the same root cause: the spawned task should run with "
-            f"a fresh ``contextvars.Context()``."
+        assert not maintenance_error, (
+            f"Maintenance failed with "
+            f"{type(maintenance_error[0]).__name__}: "
+            f"{maintenance_error[0]!r}.\n"
+            f"DefaultConversation's background maintenance task "
+            f"inherited the parent workflow's DBOSContext. The error "
+            f"may surface as DBOSUnexpectedStepError (stale context "
+            f"once the parent finishes) or as a bare ``AssertionError`` "
+            f"from dbos/_context.py (live step context — DBOS asserts "
+            f"you can't start a workflow from inside a step). Both have "
+            f"the same root cause: the spawned task should run with a "
+            f"fresh ``contextvars.Context()`` (which "
+            f"``create_isolated_task`` provides)."
         )
 
 

@@ -351,21 +351,19 @@ class TestMemoryStore:
         assert "I know things" in ctx
         assert "Long-term Memory" in ctx
 
-    async def test_consolidate_no_provider(self, tmp_path: Path) -> None:
+    async def test_summarize_no_provider(self, tmp_path: Path) -> None:
         store = MemoryStore(tmp_path)
-        session = Session(key="test")
-        session.messages = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
-        result = await store.consolidate(session, archive_all=True)
-        assert result is False
+        msgs = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
+        assert await store.summarize(msgs, archive_all=True) is None
 
-    async def test_consolidate_empty_session(self, tmp_path: Path) -> None:
+    async def test_summarize_empty(self, tmp_path: Path) -> None:
         provider = MagicMock()
         store = MemoryStore(tmp_path, provider=provider, model="test-model")
-        session = Session(key="test")
-        result = await store.consolidate(session, archive_all=False)
-        assert result is True
+        # Empty input is a no-op success — returns "" rather than None so
+        # callers can distinguish from a failed LLM call.
+        assert await store.summarize([], archive_all=False) == ""
 
-    async def test_consolidate_calls_provider(self, tmp_path: Path) -> None:
+    async def test_summarize_calls_provider(self, tmp_path: Path) -> None:
         response = MagicMock()
         response.has_tool_calls = True
         tc = MagicMock()
@@ -376,16 +374,15 @@ class TestMemoryStore:
         provider.chat = AsyncMock(return_value=response)
         store = MemoryStore(tmp_path, provider=provider, model="test-model")
 
-        session = Session(key="test")
-        session.messages = [
+        msgs = [
             {"role": "user", "content": "hello", "timestamp": "2024-01-01T00:00"},
             {"role": "assistant", "content": "hi", "timestamp": "2024-01-01T00:01"},
         ]
-        result = await store.consolidate(session, archive_all=True)
-        assert result is True
+        entry = await store.summarize(msgs, archive_all=True)
+        assert entry == "[2024-01-01] summary"
         assert "facts" in store.read_long_term()
 
-    async def test_consolidate_no_tool_call(self, tmp_path: Path) -> None:
+    async def test_summarize_no_tool_call(self, tmp_path: Path) -> None:
         response = MagicMock()
         response.has_tool_calls = False
 
@@ -393,22 +390,18 @@ class TestMemoryStore:
         provider.chat = AsyncMock(return_value=response)
         store = MemoryStore(tmp_path, provider=provider, model="test-model")
 
-        session = Session(key="test")
-        session.messages = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
-        result = await store.consolidate(session, archive_all=True)
-        assert result is False
+        msgs = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
+        assert await store.summarize(msgs, archive_all=True) is None
 
-    async def test_consolidate_provider_exception(self, tmp_path: Path) -> None:
+    async def test_summarize_provider_exception(self, tmp_path: Path) -> None:
         provider = MagicMock()
         provider.chat = AsyncMock(side_effect=Exception("boom"))
         store = MemoryStore(tmp_path, provider=provider, model="test-model")
 
-        session = Session(key="test")
-        session.messages = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
-        result = await store.consolidate(session, archive_all=True)
-        assert result is False
+        msgs = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
+        assert await store.summarize(msgs, archive_all=True) is None
 
-    async def test_consolidate_args_as_string(self, tmp_path: Path) -> None:
+    async def test_summarize_args_as_string(self, tmp_path: Path) -> None:
         response = MagicMock()
         response.has_tool_calls = True
         tc = MagicMock()
@@ -419,12 +412,10 @@ class TestMemoryStore:
         provider.chat = AsyncMock(return_value=response)
         store = MemoryStore(tmp_path, provider=provider, model="test-model")
 
-        session = Session(key="test")
-        session.messages = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
-        result = await store.consolidate(session, archive_all=True)
-        assert result is True
+        msgs = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
+        assert await store.summarize(msgs, archive_all=True) == "entry"
 
-    async def test_consolidate_args_as_list(self, tmp_path: Path) -> None:
+    async def test_summarize_args_as_list(self, tmp_path: Path) -> None:
         response = MagicMock()
         response.has_tool_calls = True
         tc = MagicMock()
@@ -435,12 +426,10 @@ class TestMemoryStore:
         provider.chat = AsyncMock(return_value=response)
         store = MemoryStore(tmp_path, provider=provider, model="test-model")
 
-        session = Session(key="test")
-        session.messages = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
-        result = await store.consolidate(session, archive_all=True)
-        assert result is True
+        msgs = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
+        assert await store.summarize(msgs, archive_all=True) == "entry"
 
-    async def test_consolidate_args_unexpected_type(self, tmp_path: Path) -> None:
+    async def test_summarize_args_unexpected_type(self, tmp_path: Path) -> None:
         response = MagicMock()
         response.has_tool_calls = True
         tc = MagicMock()
@@ -451,10 +440,8 @@ class TestMemoryStore:
         provider.chat = AsyncMock(return_value=response)
         store = MemoryStore(tmp_path, provider=provider, model="test-model")
 
-        session = Session(key="test")
-        session.messages = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
-        result = await store.consolidate(session, archive_all=True)
-        assert result is False
+        msgs = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
+        assert await store.summarize(msgs, archive_all=True) is None
 
 
 # ---------------------------------------------------------------------------
@@ -783,6 +770,36 @@ class TestProtocols:
 # ---------------------------------------------------------------------------
 
 
+class _MockReader:
+    """Minimal in-memory ``SessionReader`` for unit tests. Streams from
+    a list — fine for tests, not for production paths that need disk
+    streaming."""
+
+    def __init__(self, key: str, source: list[dict[str, Any]]) -> None:
+        self._key = key
+        self._source = source
+
+    @property
+    def key(self) -> str:
+        return self._key
+
+    async def count(self) -> int:
+        return len(self._source)
+
+    def stream(self, *, start: int = 0, end: int | None = None):
+        async def _gen():
+            stop = end if end is not None else len(self._source)
+            for msg in self._source[start:stop]:
+                yield msg
+
+        return _gen()
+
+    async def at(self, index: int):
+        if 0 <= index < len(self._source):
+            return self._source[index]
+        return None
+
+
 def _make_mock_history(session: Session | None = None) -> MagicMock:
     s = session or Session(key="test:1")
     h = MagicMock(
@@ -790,32 +807,30 @@ def _make_mock_history(session: Session | None = None) -> MagicMock:
             "get_or_create",
             "save",
             "save_append",
-            "save_metadata",
             "load_range",
-            "read_history",
+            "reader",
             "invalidate",
             "list_sessions",
+            "sessions_dir",
         ]
     )
     h.get_or_create.return_value = s
     h.list_sessions.return_value = [{"key": "test:1"}]
     h.load_range.return_value = []
-    # Match the protocol's default impl: delegate to session.get_history so
-    # tests that seed session.messages keep working without needing to
-    # configure read_history separately. ``max_messages=None`` is passed
-    # through unchanged so the unbounded-tail contract on read_history is
-    # preserved.
-    h.read_history.side_effect = lambda key, max_messages=None: s.get_history(
-        max_messages=max_messages
-    )
+    # Reader streams from session.messages — keeps tests that seed the
+    # in-memory list working without per-test reader wiring.
+    h.reader.side_effect = lambda key: _MockReader(key, list(s.messages))
+    # Default to no on-disk sidecar location so clear() doesn't try to
+    # delete files. Tests that exercise sidecar interaction set this
+    # explicitly.
+    h.sessions_dir = None
     return h
 
 
 def _make_mock_memory() -> MagicMock:
-    m = MagicMock(spec=["get_memory_context", "consolidate", "consolidate_messages"])
+    m = MagicMock(spec=["get_memory_context", "summarize"])
     m.get_memory_context.return_value = ""
-    m.consolidate = AsyncMock(return_value=True)
-    m.consolidate_messages = AsyncMock(return_value=True)
+    m.summarize = AsyncMock(return_value="[summary]")
     return m
 
 
@@ -872,23 +887,43 @@ class TestDefaultConversation:
         call_kwargs = conv.prompt.build_messages.call_args[1]  # type: ignore[union-attr]
         assert call_kwargs["isolated"] is True
 
-    async def test_build_prompt_triggers_consolidation(self) -> None:
+    async def test_post_turn_runs_policy_maintenance(self) -> None:
+        """Maintenance moved from ``build_prompt`` to ``post_turn`` —
+        the policy's ``on_turn_complete`` runs in a background task
+        after each turn, not during prompt assembly. ``build_prompt``
+        is now strictly read."""
         session = Session(key="test:1")
-        session.messages = [{"role": "user", "content": str(i)} for i in range(110)]
-        session.last_consolidated = 0
 
-        memory = _make_mock_memory()
+        class _SpyPolicy:
+            def __init__(self) -> None:
+                self.on_turn_complete_calls = 0
+
+            def transform(self, reader, *, budget=None):
+                async def _gen():
+                    async for m in reader.stream():
+                        yield m
+
+                return _gen()
+
+            async def on_turn_complete(self, reader) -> None:
+                self.on_turn_complete_calls += 1
+
+        policy = _SpyPolicy()
         conv = DefaultConversation(
             history=_make_mock_history(session),
-            memory=memory,
+            memory=_make_mock_memory(),
             prompt=_make_mock_prompt(),
+            consolidation_policy=policy,  # type: ignore[arg-type]
             memory_window=100,
         )
+        # build_prompt does not run on_turn_complete.
         await conv.build_prompt("test:1", "hello")
         await asyncio.sleep(0.05)
-        # consolidation now goes through consolidate_messages (disk-backed path)
-        # or consolidate (legacy path via ConsolidationPolicy)
-        assert memory.consolidate_messages.called or memory.consolidate.called
+        assert policy.on_turn_complete_calls == 0
+        # post_turn schedules maintenance.
+        await conv.post_turn("test:1")
+        await asyncio.sleep(0.05)
+        assert policy.on_turn_complete_calls == 1
 
     async def test_record_saves_turn(self) -> None:
         session = Session(key="test:1")
@@ -982,104 +1017,18 @@ class TestDefaultConversation:
         saved = session.messages[0]["content"]
         assert all(c["text"] != f"{CONV_TAG}\nmetadata" for c in saved)
 
-    # ------------------------------------------------------------------
-    # load_persisted_history — sync reader used by phase 2b PriorSource
-    # (added for exoclaw>=0.20.0)
-    # ------------------------------------------------------------------
-
-    def test_load_persisted_history_returns_session_messages(self) -> None:
-        """Baseline: ``load_persisted_history`` returns whatever
-        ``session.get_history(max_messages=memory_window)`` returns —
-        the same path ``build_prompt`` uses to assemble its history
-        slice, minus the system prompt / runtime context / new user
-        message that wrap it.
-        """
-        session = Session(key="test:1")
-        session.messages = [
-            {"role": "user", "content": "msg-1"},
-            {"role": "assistant", "content": "reply-1"},
-        ]
+    def test_no_load_persisted_history(self) -> None:
+        """``load_persisted_history`` is removed — the executor's
+        prior-source pattern reaches into ``conversation.history.reader``
+        directly now, so the sync convenience method on ``DefaultConversation``
+        no longer exists. The executor's ``getattr(... None)`` lookup
+        already handles its absence."""
         conv = DefaultConversation(
-            history=_make_mock_history(session),
+            history=_make_mock_history(),
             memory=_make_mock_memory(),
             prompt=_make_mock_prompt(),
         )
-
-        result = conv.load_persisted_history("test:1")
-
-        assert result == [
-            {"role": "user", "content": "msg-1"},
-            {"role": "assistant", "content": "reply-1"},
-        ]
-
-    def test_load_persisted_history_is_sync(self) -> None:
-        """Phase 2b's executor ``PriorSource`` closure invokes this
-        method synchronously from inside an already-running event
-        loop (the agent loop's iteration). It must not be a
-        coroutine — a coroutine return would bypass the event loop
-        machinery and leak an un-awaited warning at best, or return
-        a coroutine object instead of a list at worst.
-        """
-        import asyncio
-
-        session = Session(key="test:1")
-        conv = DefaultConversation(
-            history=_make_mock_history(session),
-            memory=_make_mock_memory(),
-            prompt=_make_mock_prompt(),
-        )
-
-        # Direct call returns a list, not a coroutine.
-        result = conv.load_persisted_history("test:1")
-        assert not asyncio.iscoroutine(result)
-        assert isinstance(result, list)
-
-    def test_load_persisted_history_does_not_trigger_consolidation(self) -> None:
-        """Unlike ``build_prompt``, this method is meant to be called
-        on every LLM iteration as part of the PriorSource closure.
-        Triggering consolidation per iteration would DoS the memory
-        backend and stall the loop — the contract is strictly read."""
-        session = Session(key="test:1")
-        memory = _make_mock_memory()
-        conv = DefaultConversation(
-            history=_make_mock_history(session),
-            memory=memory,
-            prompt=_make_mock_prompt(),
-        )
-
-        for _ in range(5):
-            conv.load_persisted_history("test:1")
-
-        # None of the consolidation entry points fired.
-        assert memory.consolidate.call_count == 0
-        assert memory.consolidate_messages.call_count == 0
-
-    def test_load_persisted_history_respects_memory_window(self) -> None:
-        """``session.get_history`` trims to ``memory_window`` (and
-        aligns the start to a user turn so tool-result messages don't
-        get orphaned at the prefix). ``load_persisted_history``
-        inherits that — otherwise callers would pass a different-size
-        list to the LLM than ``build_prompt`` did on the initial turn.
-        """
-        session = Session(key="test:1")
-        # 10 messages; memory_window will be set to 4. Tail-4 starts
-        # at msg-6 (user), which already satisfies the
-        # "first msg is user" alignment — so get_history returns all 4.
-        session.messages = [
-            {"role": "user" if i % 2 == 0 else "assistant", "content": f"msg-{i}"}
-            for i in range(10)
-        ]
-        conv = DefaultConversation(
-            history=_make_mock_history(session),
-            memory=_make_mock_memory(),
-            prompt=_make_mock_prompt(),
-            memory_window=4,
-        )
-
-        result = conv.load_persisted_history("test:1")
-        assert len(result) == 4
-        assert result[0]["content"] == "msg-6"  # user
-        assert result[-1]["content"] == "msg-9"  # assistant — most recent
+        assert not hasattr(conv, "load_persisted_history")
 
     # ------------------------------------------------------------------
     # AppendableConversation surface (added for exoclaw>=0.19.0)
@@ -1221,11 +1170,9 @@ class TestDefaultConversation:
     async def test_clear_success(self) -> None:
         session = Session(key="test:1")
         session.messages = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
-        memory = _make_mock_memory()
-        memory.consolidate = AsyncMock(return_value=True)
         conv = DefaultConversation(
             history=_make_mock_history(session),
-            memory=memory,
+            memory=_make_mock_memory(),
             prompt=_make_mock_prompt(),
         )
         result = await conv.clear("test:1")
@@ -1241,19 +1188,21 @@ class TestDefaultConversation:
         result = await conv.clear("test:1")
         assert result is True
 
-    async def test_clear_consolidation_failure(self) -> None:
+    async def test_clear_does_not_archive(self) -> None:
+        """``clear`` no longer auto-summarizes the session into
+        long-term memory before deleting it. Archival is the caller's
+        responsibility — call ``policy.transform(reader, budget=0)`` (or
+        ``memory.summarize`` directly) before ``clear`` if needed."""
         session = Session(key="test:1")
-        session.messages = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
+        session.messages = [{"role": "user", "content": "hi"}]
         memory = _make_mock_memory()
-        memory.consolidate = AsyncMock(return_value=False)
-        memory.consolidate_messages = AsyncMock(return_value=False)
         conv = DefaultConversation(
             history=_make_mock_history(session),
             memory=memory,
             prompt=_make_mock_prompt(),
         )
-        result = await conv.clear("test:1")
-        assert result is False
+        await conv.clear("test:1")
+        memory.summarize.assert_not_called()
 
     def test_list_sessions(self) -> None:
         conv = DefaultConversation(
@@ -1347,29 +1296,7 @@ class TestSkillsLoaderBuiltin:
 
 
 class TestMemoryStoreEdgeCases:
-    async def test_consolidate_already_consolidated(self, tmp_path: Path) -> None:
-        """all messages already consolidated (last_consolidated == len)"""
-        provider = MagicMock()
-        store = MemoryStore(tmp_path, provider=provider, model="m")
-        session = Session(key="test")
-        session.messages = [{"role": "user", "content": "hi"}]
-        session.last_consolidated = 1
-        result = await store.consolidate(session, archive_all=False, memory_window=10)
-        assert result is True
-        provider.chat.assert_not_called()
-
-    async def test_consolidate_old_messages_empty_after_slice(self, tmp_path: Path) -> None:
-        """slice produces empty old_messages"""
-        provider = MagicMock()
-        store = MemoryStore(tmp_path, provider=provider, model="m")
-        session = Session(key="test")
-        # 4 messages, keep_count = 5 (window//2=5), so slice is empty
-        session.messages = [{"role": "user", "content": str(i)} for i in range(4)]
-        session.last_consolidated = 0
-        result = await store.consolidate(session, archive_all=False, memory_window=10)
-        assert result is True
-
-    async def test_consolidate_non_archive_updates_last_consolidated(self, tmp_path: Path) -> None:
+    async def test_summarize_message_with_tools_used(self, tmp_path: Path) -> None:
         response = MagicMock()
         response.has_tool_calls = True
         tc = MagicMock()
@@ -1378,26 +1305,7 @@ class TestMemoryStoreEdgeCases:
         provider = MagicMock()
         provider.chat = AsyncMock(return_value=response)
         store = MemoryStore(tmp_path, provider=provider, model="m")
-        session = Session(key="test")
-        session.messages = [
-            {"role": "user", "content": str(i), "timestamp": "2024-01-01T00:00"} for i in range(20)
-        ]
-        session.last_consolidated = 0
-        result = await store.consolidate(session, archive_all=False, memory_window=10)
-        assert result is True
-        assert session.last_consolidated > 0
-
-    async def test_consolidate_message_with_tools_used(self, tmp_path: Path) -> None:
-        response = MagicMock()
-        response.has_tool_calls = True
-        tc = MagicMock()
-        tc.arguments = {"history_entry": "entry", "memory_update": "update"}
-        response.tool_calls = [tc]
-        provider = MagicMock()
-        provider.chat = AsyncMock(return_value=response)
-        store = MemoryStore(tmp_path, provider=provider, model="m")
-        session = Session(key="test")
-        session.messages = [
+        msgs = [
             {
                 "role": "user",
                 "content": "run it",
@@ -1405,24 +1313,25 @@ class TestMemoryStoreEdgeCases:
                 "tools_used": ["exec"],
             },
         ]
-        result = await store.consolidate(session, archive_all=True)
-        assert result is True
+        assert await store.summarize(msgs, archive_all=True) == "entry"
 
-    async def test_consolidate_non_string_history_entry(self, tmp_path: Path) -> None:
+    async def test_summarize_non_string_history_entry(self, tmp_path: Path) -> None:
         response = MagicMock()
         response.has_tool_calls = True
         tc = MagicMock()
+        # Non-string history_entry — backend coerces via json.dumps before
+        # writing, so summarize still succeeds.
         tc.arguments = {"history_entry": {"nested": "dict"}, "memory_update": "update"}
         response.tool_calls = [tc]
         provider = MagicMock()
         provider.chat = AsyncMock(return_value=response)
         store = MemoryStore(tmp_path, provider=provider, model="m")
-        session = Session(key="test")
-        session.messages = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
-        result = await store.consolidate(session, archive_all=True)
-        assert result is True
+        msgs = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
+        entry = await store.summarize(msgs, archive_all=True)
+        assert entry is not None
+        assert "nested" in entry
 
-    async def test_consolidate_empty_list_args(self, tmp_path: Path) -> None:
+    async def test_summarize_empty_list_args(self, tmp_path: Path) -> None:
         response = MagicMock()
         response.has_tool_calls = True
         tc = MagicMock()
@@ -1431,12 +1340,10 @@ class TestMemoryStoreEdgeCases:
         provider = MagicMock()
         provider.chat = AsyncMock(return_value=response)
         store = MemoryStore(tmp_path, provider=provider, model="m")
-        session = Session(key="test")
-        session.messages = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
-        result = await store.consolidate(session, archive_all=True)
-        assert result is False
+        msgs = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
+        assert await store.summarize(msgs, archive_all=True) is None
 
-    async def test_consolidate_does_not_split_tool_pair(self, tmp_path: Path) -> None:
+    async def test_policy_advances_boundary_past_tool_pair(self, tmp_path: Path) -> None:
         """Regression: consolidation boundary must not leave orphan tool_results.
 
         Reproduces the MiniMax "tool result's tool id(...) not found" 400 seen
@@ -1449,6 +1356,8 @@ class TestMemoryStoreEdgeCases:
         existing in the tail — it doesn't fire here, so the orphan passes
         through to the provider.
         """
+        from exoclaw_conversation.summarizing_policy import SummarizingConsolidationPolicy
+
         response = MagicMock()
         response.has_tool_calls = True
         tc = MagicMock()
@@ -1459,12 +1368,12 @@ class TestMemoryStoreEdgeCases:
         store = MemoryStore(tmp_path, provider=provider, model="m")
 
         # 20 messages: 1 user at start, then 9 asst/tool pairs, then asst "done".
-        # With memory_window=12, keep_count=6, last_consolidated lands at 14 —
-        # between the asst at idx 13 and its tool result at idx 14.
+        # With memory_window=14, the next-chunk slice ends mid-pair if the
+        # policy doesn't repair the boundary.
         messages: list[dict[str, Any]] = [
             {"role": "user", "content": "start", "timestamp": "2024-01-01T00:00"},
         ]
-        for n in range(1, 10):  # pairs 1..9 → indices 1..18
+        for n in range(1, 10):
             messages.append(
                 {
                     "role": "assistant",
@@ -1489,23 +1398,24 @@ class TestMemoryStoreEdgeCases:
             )
         messages.append({"role": "assistant", "content": "done", "timestamp": "2024-01-01T00:19"})
 
-        session = Session(key="test")
-        session.messages = messages
-        session.last_consolidated = 0
+        # Drive the policy directly with a list-backed reader so the test
+        # exercises the boundary-repair logic without a full
+        # SessionManager round-trip.
+        policy = SummarizingConsolidationPolicy(
+            memory=store, state_dir=tmp_path, memory_window=14
+        )
+        reader = _MockReader("ut:test", messages)
+        await policy.on_turn_complete(reader)
 
-        result = await store.consolidate(session, archive_all=False, memory_window=12)
-        assert result is True
-        # Naive boundary would be total-keep_count = 20-6 = 14, splitting the
-        # asst(tool_calls=T7) at idx 13 from its tool(T7) at idx 14. The fix
-        # advances the boundary past the orphan so the kept tail starts at 15.
-        assert session.last_consolidated >= 15
-
-        # Every tool message returned must have its tool_call_id introduced
-        # earlier in the returned history by an assistant message's tool_calls.
-        history = session.get_history(max_messages=500)
+        # The naive boundary would land mid-pair, splitting an
+        # asst(tool_calls=Tn) from its tool(Tn). The repair pass must
+        # advance past the orphan; verify the resulting view contains
+        # no tool_results whose tool_call_id appears only in the
+        # archived prefix.
+        view = [m async for m in policy.transform(reader)]
         seen_tool_ids: set[str] = set()
         orphans: list[str] = []
-        for m in history:
+        for m in view:
             if m.get("role") == "assistant":
                 for tc_entry in m.get("tool_calls") or []:
                     if tid := tc_entry.get("id"):
@@ -1515,7 +1425,7 @@ class TestMemoryStoreEdgeCases:
                 if tid and tid not in seen_tool_ids:
                     orphans.append(tid)
         assert not orphans, (
-            f"get_history leaked orphan tool_call_ids {orphans} — "
+            f"transform leaked orphan tool_call_ids {orphans} — "
             f"consolidation boundary split a tool_use/tool_result pair. "
             f"This is what makes MiniMax return 400 invalid_params."
         )
@@ -1576,12 +1486,12 @@ class TestDefaultConversationExtra:
     async def test_clear_exception_returns_false(self) -> None:
         session = Session(key="test:1")
         session.messages = [{"role": "user", "content": "hi", "timestamp": "2024-01-01T00:00"}]
-        memory = _make_mock_memory()
-        memory.consolidate = AsyncMock(side_effect=Exception("boom"))
-        memory.consolidate_messages = AsyncMock(side_effect=Exception("boom"))
+        history = _make_mock_history(session)
+        # Make ``save`` raise so ``clear`` exits via the except branch.
+        history.save.side_effect = Exception("boom")
         conv = DefaultConversation(
-            history=_make_mock_history(session),
-            memory=memory,
+            history=history,
+            memory=_make_mock_memory(),
             prompt=_make_mock_prompt(),
         )
         result = await conv.clear("test:1")

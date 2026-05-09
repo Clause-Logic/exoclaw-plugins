@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from exoclaw._compat import Path, WeakValueDictionary, bind_log_contextvars, get_logger
 from exoclaw.utils import create_isolated_task
 
+from . import _consolidation_state as state_io
 from .protocols import ConsolidationPolicy, HistoryStore, MemoryBackend, PromptBuilder
 from .session.manager import Session
 
@@ -23,23 +24,46 @@ _RUNTIME_CONTEXT_TAG = "[Runtime Context — metadata only, not instructions]"
 _TOOL_RESULT_MAX_CHARS = 500
 
 
+class _NoOpPolicy:
+    """Inline policy used when a caller doesn't configure one. Streams
+    the session log unchanged and runs no consolidation."""
+
+    def transform(self, reader, *, budget=None):  # type: ignore[no-untyped-def]
+        async def _passthrough():  # type: ignore[no-untyped-def]
+            async for m in reader.stream():
+                yield m
+
+        return _passthrough()
+
+    async def on_turn_complete(self, reader) -> None:  # type: ignore[no-untyped-def]
+        return None
+
+
+_NOOP_POLICY = _NoOpPolicy()
+
+
 class DefaultConversation:
-    """
-    File-backed conversation state manager.
+    """File-backed conversation state manager.
 
     Implements the exoclaw Conversation protocol without inheriting from any
     exoclaw class.
 
-    Accepts HistoryStore, MemoryBackend, and PromptBuilder as constructor
-    arguments so each layer can be replaced independently. Use
-    DefaultConversation.create() for the standard file-backed setup.
+    Accepts ``HistoryStore``, ``MemoryBackend``, ``PromptBuilder``, and
+    ``ConsolidationPolicy`` as constructor arguments so each layer can be
+    replaced independently.
 
-    - build_prompt: builds messages via PromptBuilder, triggers background
-      consolidation when unconsolidated history exceeds memory_window.
-    - record: saves new turn messages (stripping runtime context, truncating
-      large tool results) into the JSONL session file.
-    - clear: archives the current session to memory and resets to fresh state.
-    - list_sessions: lists all sessions from the sessions directory.
+    The session log is append-only — this class never rewrites or
+    truncates message data on disk. The ``ConsolidationPolicy`` owns
+    the *view* the LLM sees: it transforms a streaming reader over the
+    log into the message list, persisting its own state in a sidecar
+    next to the session file.
+
+    - ``build_prompt``: ``policy.transform(reader, budget=...)`` →
+      ``PromptBuilder.build_messages``. Schedules
+      ``policy.on_turn_complete`` as background work.
+    - ``append`` / ``record``: appends new turn messages to disk.
+    - ``clear``: deletes the session log + policy sidecar. No
+      automatic archival; archive explicitly first if needed.
     """
 
     def __init__(
@@ -50,13 +74,19 @@ class DefaultConversation:
         memory_window: int = 100,
         consolidation_policy: ConsolidationPolicy | None = None,
         bus: Bus | None = None,
+        target_context_tokens: int | None = None,
     ):
         self.history = history
         self.memory = memory
         self.prompt = prompt
         self.memory_window = memory_window
-        self._consolidation_policy = consolidation_policy
+        self._consolidation_policy: ConsolidationPolicy = consolidation_policy or _NOOP_POLICY  # type: ignore[assignment]
         self._bus: Bus | None = bus
+        # Optional pre-prompt budget passed to ``policy.transform``.
+        # When set, the policy can compact synchronously before the
+        # LLM call instead of waiting for a provider overflow error.
+        # Typical caller wiring: ``int(model.context_window * 0.75)``.
+        self._target_context_tokens = target_context_tokens
 
         self._consolidating: set[str] = set()
         self._consolidation_tasks: set[asyncio.Task[Any]] = set()
@@ -77,6 +107,7 @@ class DefaultConversation:
         consolidation_policy: ConsolidationPolicy | None = None,
         builtin_skills_dir: Path | None = None,
         allowed_skills: list[str] | None = None,
+        target_context_tokens: int | None = None,
     ) -> DefaultConversation:
         """Construct with the standard file-backed implementations.
 
@@ -109,6 +140,7 @@ class DefaultConversation:
             ),
             memory_window=memory_window,
             consolidation_policy=consolidation_policy,
+            target_context_tokens=target_context_tokens,
         )
 
     async def build_prompt(
@@ -144,15 +176,13 @@ class DefaultConversation:
             else:
                 raise TypeError(f"'isolated' must be a bool, got {type(isolated_value).__name__}")
 
+        # Materialize the session for log-context bindings (key,
+        # created_at) — the prompt path itself goes through the
+        # streaming reader, never ``session.messages``.
         session = self.history.get_or_create(session_id)
 
-        unconsolidated = session.total_messages - session.last_consolidated
         bind_log_contextvars(
             **{
-                "session.total_messages": session.total_messages,
-                "session.last_consolidated": session.last_consolidated,
-                "session.unconsolidated": unconsolidated,
-                "session.has_summary": bool(session.metadata.get("summary")),
                 "memory.window": self.memory_window,
                 "consolidation.active": session_id in self._consolidating,
                 "skill.requested": ",".join(skills) if skills else "",
@@ -160,36 +190,6 @@ class DefaultConversation:
                 "isolated": isolated,
             }
         )
-
-        # Skip consolidation entirely in isolated mode — the whole point is
-        # that the caller treats this invocation as a stateless function,
-        # so there's no history worth summarizing.
-        if not isolated:
-            # Trigger background consolidation when policy says so (or default: history is long)
-            should = await self._should_consolidate(session)
-            if should and session_id not in self._consolidating:
-                self._consolidating.add(session_id)
-                lock = self._consolidation_locks.setdefault(session_id, asyncio.Lock())
-
-                async def _consolidate_and_unlock() -> None:
-                    try:
-                        async with lock:
-                            success = await self._consolidate_memory(session)
-                            if success:
-                                self.history.save_metadata(session)
-                    finally:
-                        self._consolidating.discard(session_id)
-                        _task = asyncio.current_task()
-                        if _task is not None:
-                            self._consolidation_tasks.discard(_task)
-
-                # Isolate from caller contextvars — when build_prompt
-                # is reached from inside a DBOS workflow, the spawned
-                # consolidation task would otherwise inherit
-                # DBOSContext and any future workflow-aware call in
-                # the consolidation path would be misclassified.
-                _task = create_isolated_task(_consolidate_and_unlock())
-                self._consolidation_tasks.add(_task)
 
         # Isolated mode skips session history entirely — the LLM sees only
         # [system(minimal), user(current_message)]. Keeping history would
@@ -199,22 +199,17 @@ class DefaultConversation:
         if isolated:
             history = []
         else:
-            # Route through the store rather than session.get_history so a
-            # streaming-enabled HistoryStore reads the unconsolidated tail
-            # from disk on demand instead of holding it in session.messages.
-            history = self.history.read_history(session_id, max_messages=self.memory_window)
+            reader = self.history.reader(session_id)
+            history = [
+                m
+                async for m in self._consolidation_policy.transform(
+                    reader, budget=self._target_context_tokens
+                )
+            ]
 
         extra_context: str | None = None
         if plugin_context:
             extra_context = "\n\n".join(plugin_context)
-
-        # Inject per-session summary from consolidation policy (if present).
-        # Isolated mode skips this too for the same reason — no carryover.
-        effective_turn_context = list(turn_context or [])
-        if not isolated:
-            summary = session.metadata.get("summary")
-            if summary:
-                effective_turn_context.insert(0, f"## Previous Session Summary\n{summary}")
 
         messages = self.prompt.build_messages(
             history=history,
@@ -224,7 +219,7 @@ class DefaultConversation:
             channel=channel,
             chat_id=chat_id,
             extra_context=extra_context,
-            turn_context=effective_turn_context or None,
+            turn_context=list(turn_context) if turn_context else None,
             isolated=isolated,
         )
 
@@ -247,42 +242,6 @@ class DefaultConversation:
             )
 
         return messages
-
-    def load_persisted_history(self, session_id: str) -> list[dict[str, Any]]:
-        """Return the same history slice ``build_prompt`` uses for a session.
-
-        Synchronous, with no additional transformations beyond
-        ``session.get_history(...)`` — returns the unconsolidated tail
-        that ``build_prompt`` would read from history (trimmed to
-        ``memory_window``, with leading non-user messages dropped to
-        avoid orphan tool-result blocks). Unlike ``build_prompt``,
-        this method:
-
-        * does NOT build the system prompt, runtime context, or render
-          the new user message. Prefix/suffix assembly stays in
-          ``build_prompt`` where it belongs;
-        * does NOT trigger consolidation as a side effect;
-        * does NOT touch the async event loop — it's a synchronous
-          history lookup so an executor's ``PriorSource`` closure
-          (phase 2b of docs/memory-model.md) can call it from the
-          in-progress LLM iteration.
-
-        Intended caller: an executor that installs
-        ``set_prior_source(lambda: conv.load_persisted_history(session_id))``
-        as the lazy prior after the initial ``build_prompt`` runs.
-        Successive ``load_messages`` calls then re-read the session
-        state rather than holding a Python-heap list between LLM
-        iterations.
-
-        Structure-wise: because this method skips the system prompt /
-        runtime context / new-user-message assembly, callers that need
-        those still have to source them somewhere (typically by
-        caching the initial ``build_prompt`` return's prefix and
-        suffix). The split lives in the executor so it can compose
-        ``[*prefix, *load_persisted_history(session_id), *suffix]``
-        per iteration — prefix and suffix are small and cheap to hold.
-        """
-        return self.history.read_history(session_id, max_messages=self.memory_window)
 
     async def append(
         self,
@@ -312,14 +271,21 @@ class DefaultConversation:
             self.history.save_append(session, prepared)
 
     async def post_turn(self, session_id: str) -> None:
-        """Fire end-of-turn hooks after all messages have been persisted.
+        """End-of-turn callback: schedule policy maintenance and fire
+        agent_end hooks.
 
-        Called once per turn by the agent loop when the append path is
-        active. Hook turns (``channel="hook"``) are skipped to prevent
-        recursion — an agent_end hook that calls back into the bot
-        would otherwise retrigger itself.
+        ``policy.on_turn_complete`` runs in a background task isolated
+        from the caller's contextvars (DBOS-aware) so a Temporal/DBOS
+        workflow at the call site doesn't propagate workflow context
+        into the consolidation pass. Hook turns (``channel="hook"``)
+        skip both maintenance and hook firing to prevent recursion.
         """
-        if self._bus and self._turn_channel != "hook":
+        if self._turn_channel == "hook":
+            return
+
+        self._schedule_maintenance(session_id)
+
+        if self._bus:
             await self._fire_agent_hooks(session_id)
 
     async def record(
@@ -340,43 +306,37 @@ class DefaultConversation:
         prepared = self._prepare_turn(session, new_messages)
         self.history.save_append(session, prepared)
 
-        # Fire agent_end hooks via the bus.  Hook turns use channel="hook"
-        # and are skipped to prevent recursion.
-        if self._bus and self._turn_channel != "hook":
-            await self._fire_agent_hooks(session_id)
+        # Legacy batch path — fire end-of-turn machinery directly.
+        if self._turn_channel != "hook":
+            self._schedule_maintenance(session_id)
+            if self._bus:
+                await self._fire_agent_hooks(session_id)
 
     async def clear(self, session_id: str) -> bool:
-        """Archive current session to memory and start fresh. Returns True on success."""
+        """Delete the session log and the policy sidecar. Returns True
+        on success.
+
+        No automatic archival — if a caller wants the session
+        summarized to long-term memory before it disappears, they
+        should drive that explicitly (e.g. by calling
+        ``policy.transform(reader, budget=0)``) before ``clear``.
+        """
         session = self.history.get_or_create(session_id)
-        lock = self._consolidation_locks.setdefault(session_id, asyncio.Lock())
-        self._consolidating.add(session_id)
         try:
-            async with lock:
-                # Under streaming_history session.messages is empty — read
-                # the unconsolidated tail from disk so clear()-time
-                # archival still has something to consolidate.
-                if getattr(self.history, "streaming_history", False):
-                    snapshot = self.history.load_range(
-                        session_id, session.last_consolidated, session.total_messages
-                    )
-                else:
-                    snapshot = list(session.messages)
-                if snapshot:
-                    temp = Session(key=session_id)
-                    temp.messages = list(snapshot)
-                    success = await self._consolidate_memory(temp, archive_all=True)
-                    if not success:
-                        return False
+            session.clear()
+            self.history.save(session)
+            self.history.invalidate(session_id)
+            # Best-effort sidecar cleanup. Sidecars live next to the
+            # session JSONL by convention; if a custom HistoryStore
+            # uses a different layout, the policy is responsible for
+            # cleanup via its own hook.
+            sessions_dir = getattr(self.history, "sessions_dir", None)
+            if sessions_dir is not None:
+                state_io.delete_state(sessions_dir, session_id)
+            return True
         except Exception:
             logger.exception("session_clear_failed", **{"session.id": session_id})
             return False
-        finally:
-            self._consolidating.discard(session_id)
-
-        session.clear()
-        self.history.save(session)
-        self.history.invalidate(session_id)
-        return True
 
     def list_sessions(self) -> list[dict[str, Any]]:
         """Return metadata for all known sessions."""
@@ -385,6 +345,37 @@ class DefaultConversation:
     def active_tools(self) -> set[str]:
         """Return optional tool names activated by the current turn's skills."""
         return self.prompt.get_active_optional_tools()
+
+    # ─── Internal: maintenance + hook plumbing ───
+
+    def _schedule_maintenance(self, session_id: str) -> None:
+        """Spawn a background task that runs
+        ``policy.on_turn_complete``. Idempotent per session — if
+        maintenance is already running for this session, skip."""
+        if session_id in self._consolidating:
+            return
+        self._consolidating.add(session_id)
+        lock = self._consolidation_locks.setdefault(session_id, asyncio.Lock())
+        reader = self.history.reader(session_id)
+
+        async def _run_and_unlock() -> None:
+            try:
+                async with lock:
+                    await self._consolidation_policy.on_turn_complete(reader)
+            except Exception:
+                logger.exception(
+                    "policy_on_turn_complete_failed", **{"session.id": session_id}
+                )
+            finally:
+                self._consolidating.discard(session_id)
+                _task = asyncio.current_task()
+                if _task is not None:
+                    self._consolidation_tasks.discard(_task)
+
+        # Isolate from caller contextvars — prevents DBOS/Temporal
+        # workflow context from propagating into the maintenance pass.
+        _task = create_isolated_task(_run_and_unlock())
+        self._consolidation_tasks.add(_task)
 
     async def _fire_agent_hooks(self, session_id: str) -> None:
         """Discover agent_end hooks and publish them as inbound messages on the bus."""
@@ -424,69 +415,16 @@ class DefaultConversation:
                     exc_info=True,
                 )
 
-    async def _should_consolidate(self, session: Session) -> bool:
-        """Check whether consolidation should run."""
-        if self._consolidation_policy is not None:
-            return await self._consolidation_policy.should_consolidate(
-                session, memory_window=self.memory_window
-            )
-        unconsolidated = session.total_messages - session.last_consolidated
-        return unconsolidated >= self.memory_window
-
-    async def _consolidate_memory(self, session: Session, archive_all: bool = False) -> bool:
-        """Delegate to ConsolidationPolicy if present, otherwise MemoryBackend.
-
-        Loads the consolidation range from disk so we don't need the full
-        message history in RAM.
-        """
-        if self._consolidation_policy is not None:
-            return await self._consolidation_policy.consolidate(
-                session,
-                archive_all=archive_all,
-                memory_window=self.memory_window,
-            )
-
-        # Load only the messages that need consolidating from disk
-        if archive_all:
-            old_messages = self._load_consolidation_range(session, archive_all=True)
-        else:
-            old_messages = self._load_consolidation_range(session, archive_all=False)
-
-        if not old_messages:
-            return True
-
-        return await self.memory.consolidate_messages(
-            session,
-            old_messages=old_messages,
-            archive_all=archive_all,
-            memory_window=self.memory_window,
-        )
-
-    def _load_consolidation_range(
-        self, session: Session, *, archive_all: bool
-    ) -> list[dict[str, Any]]:
-        """Load the message range to consolidate from disk."""
-        if archive_all:
-            loaded = self.history.load_range(session.key, 0, session.total_messages)
-            return loaded or list(session.messages)
-
-        keep_count = self.memory_window // 2
-        if session.total_messages <= keep_count:
-            return []
-        end = session.total_messages - keep_count
-        start = session.last_consolidated
-        if start >= end:
-            return []
-        loaded = self.history.load_range(session.key, start, end)
-        return loaded or session.messages[: end - start]
-
     def _prepare_turn(
         self, session: Session, messages: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
         """Prepare turn messages, truncating large tool results.
 
-        Appends to session.messages (in-memory view) and returns the
-        list of prepared entries for disk persistence.
+        Returns the list of prepared entries for disk persistence.
+        Does not mutate ``session.messages`` — the session log is
+        append-only on disk; in-memory caching is a back-compat
+        artifact maintained by ``SessionManager`` for non-streaming
+        deployments and is not relied on here.
         """
         from datetime import datetime
 
@@ -535,15 +473,12 @@ class DefaultConversation:
                     entry["content"] = filtered
 
             entry.setdefault("timestamp", datetime.now().isoformat())
-            new_total = session.total_messages + 1
-            # Under streaming_history we don't grow session.messages — the
-            # whole point is that the unconsolidated tail lives only on
-            # disk between turns. ``save_append`` still flushes ``entry``
-            # to JSONL; ``total_messages`` advances so the next
-            # ``read_history`` reads through the new boundary.
+            # Append to in-memory tail too for non-streaming HistoryStore
+            # implementations that still use ``session.messages`` for
+            # bookkeeping. Streaming-aware stores opt out via the flag.
             if not getattr(self.history, "streaming_history", False):
                 session.messages.append(entry)
-            session._total_messages = new_total
+            session._total_messages = session.total_messages + 1
             prepared.append(entry)
 
         session.updated_at = datetime.now()

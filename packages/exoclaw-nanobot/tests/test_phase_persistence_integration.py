@@ -200,115 +200,12 @@ class TestPhase1PerMessageJSONLAppend:
         assert [m["content"] for m in messages] == ["start", "partial response"]
 
 
-@pytest.mark.asyncio(loop_scope="session")
-class TestPhase2DiskBackedPriorAutoWire:
-    """Phase 2: ``DBOSExecutor.build_prompt`` auto-installs a
-    ``PriorSource`` closure when ``Conversation`` exposes
-    ``load_persisted_history``. Successive ``load_messages`` re-read
-    the history slice from session state rather than holding a
-    per-turn list copy."""
-
-    async def test_prior_var_holds_callable_not_list(
-        self, tmp_path: Path, dbos_instance: Any
-    ) -> None:
-        """After ``build_prompt``, the executor's ``_prior_var`` should
-        hold a callable source — not a list snapshot. This is the
-        signal that the auto-wire took the disk-backed path vs. the
-        ``set_messages``-with-list fallback."""
-        conv = _make_conversation(tmp_path)
-        # Seed session so load_persisted_history has something to
-        # return — empty-history would take the snapshot fallback.
-        session = conv.history.get_or_create("sess:autowire")
-        session.messages.extend(
-            [
-                {"role": "user", "content": "h1"},
-                {"role": "assistant", "content": "h2"},
-            ]
-        )
-        conv.history.save(session)
-
-        executor = DBOSExecutor()
-        await executor.build_prompt(conv, "sess:autowire", "new message")
-
-        stored = executor._prior_var.get()
-        assert callable(stored), (
-            "phase 2 auto-wire didn't fire — ``_prior_var`` holds a "
-            "list snapshot rather than a lazy source"
-        )
-
-    async def test_load_messages_reflects_mid_turn_appends(
-        self, tmp_path: Path, dbos_instance: Any
-    ) -> None:
-        """The load-bearing phase 2 assertion: once auto-wire is
-        installed, ``load_messages`` re-reads ``load_persisted_history``
-        on each call. So a mid-turn ``conversation.append`` (the phase
-        1 path) shows up on the next ``load_messages`` without
-        rebuilding the prompt.
-
-        This is the integration point where phase 1 and phase 2 meet —
-        phase 1 writes each message as it's produced, phase 2's source
-        re-reads the session state so the next iteration's prompt
-        reflects the new messages.
-        """
-        conv = _make_conversation(tmp_path)
-        session = conv.history.get_or_create("sess:combined")
-        session.messages.extend(
-            [
-                {"role": "user", "content": "h1"},
-                {"role": "assistant", "content": "h2"},
-            ]
-        )
-        conv.history.save(session)
-
-        executor = DBOSExecutor()
-        await executor.build_prompt(conv, "sess:combined", "new message")
-
-        before = executor.load_messages()
-        assert any(m["content"] == "h1" for m in before)
-        assert any(m["content"] == "h2" for m in before)
-
-        # Mid-turn: simulate an assistant response being flushed via
-        # the phase 1 path.
-        await conv.append(
-            "sess:combined",
-            {"role": "assistant", "content": "h3-new-via-append"},
-        )
-
-        after = executor.load_messages()
-        contents = [m["content"] for m in after]
-        assert "h3-new-via-append" in contents, (
-            "phase 2 source didn't pick up the phase 1 append — either "
-            "the auto-wire regressed to snapshot mode or the source "
-            "isn't invoking load_persisted_history per call"
-        )
-
-    async def test_empty_history_falls_back_to_snapshot(
-        self, tmp_path: Path, dbos_instance: Any
-    ) -> None:
-        """Fresh sessions (no history) take the snapshot fallback —
-        there's nothing to disk-back. Assert this doesn't accidentally
-        install a lazy source that returns an empty list forever."""
-        conv = _make_conversation(tmp_path)
-
-        executor = DBOSExecutor()
-        await executor.build_prompt(conv, "sess:fresh", "first message")
-
-        # Still callable (set_messages installs a snapshot closure,
-        # which is also callable) — check by signature instead. The
-        # snapshot closure ignores session state; the disk-backed one
-        # would pick up mutations.
-        await conv.append(
-            "sess:fresh",
-            {"role": "assistant", "content": "response"},
-        )
-
-        # load_messages is the stable observable. Snapshot path means
-        # we see the initial build_prompt return only — no leak of
-        # the new append.
-        loaded = executor.load_messages()
-        assert all(m.get("content") != "response" for m in loaded), (
-            "empty-history fallback must not read fresh appends"
-        )
+# Phase 2 disk-backed prior auto-wire was tied to
+# ``DefaultConversation.load_persisted_history``, which is removed in
+# the v0.23 policy-as-transform refactor. Executors that still want a
+# refreshing prior source now reach into ``conversation.history.reader(key)``
+# directly. The corresponding tests live in the executor package once
+# that integration is rewritten — they no longer belong here.
 
 
 @pytest.mark.asyncio(loop_scope="session")

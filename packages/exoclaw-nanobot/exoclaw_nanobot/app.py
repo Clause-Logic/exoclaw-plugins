@@ -345,8 +345,11 @@ async def create(
     # blows the cgroup as session length grows. See
     # docs/memory-model.md Step C.
     history_store = SessionManager(workspace, streaming_history=True)
-    memory_store = MemoryStore(workspace, provider, model, history=history_store)
-    consolidation_policy = SummarizingConsolidationPolicy(memory=memory_store)
+    memory_store = MemoryStore(workspace, provider, model)
+    consolidation_policy = SummarizingConsolidationPolicy(
+        memory=memory_store,
+        state_dir=workspace / "sessions",
+    )
     conversation = DefaultConversation(
         history=history_store,
         memory=memory_store,

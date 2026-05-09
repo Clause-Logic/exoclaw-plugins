@@ -180,7 +180,7 @@ async def _run_mode(
     provider = BarrierProvider(default_model="fake-model", reply_bytes=reply_bytes)
 
     history_store = SessionManager(workspace, streaming_history=streaming)
-    memory_store = MemoryStore(workspace, provider, "fake-model", history=history_store)
+    memory_store = MemoryStore(workspace, provider, "fake-model")
     conversation = DefaultConversation(
         history=history_store,
         memory=memory_store,

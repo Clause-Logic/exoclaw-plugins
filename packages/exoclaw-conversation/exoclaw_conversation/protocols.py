@@ -96,27 +96,37 @@ class HistoryStore(Protocol):
 
 @runtime_checkable
 class MemoryBackend(Protocol):
-    """Protocol for long-term memory storage and consolidation."""
+    """Protocol for long-term memory storage and summarization.
 
-    def get_memory_context(self) -> str: ...
-    async def consolidate(
+    The backend's job is to produce two artifacts from a list of
+    messages: a long-term memory document (e.g. ``MEMORY.md``) and a
+    grep-searchable history log entry (e.g. ``HISTORY.md``). It does
+    not own session state — boundaries, summaries, and view assembly
+    belong to ``ConsolidationPolicy``.
+    """
+
+    def get_memory_context(self) -> str:
+        """Return text to inject into the system prompt as long-term
+        memory context. Empty string when no memory has been accumulated."""
+        ...
+
+    async def summarize(
         self,
-        session: "Session",
+        messages: list[dict[str, Any]],
         *,
         archive_all: bool = False,
-        memory_window: int = 50,
-    ) -> bool: ...
+    ) -> str | None:
+        """Summarize ``messages`` and persist the result to long-term
+        memory + history artifacts. Returns the new history-log entry
+        text on success (the policy uses it as its rolling preamble),
+        or ``None`` on failure.
 
-    async def consolidate_messages(
-        self,
-        session: "Session",
-        *,
-        old_messages: list[dict[str, Any]],
-        archive_all: bool = False,
-        memory_window: int = 50,
-    ) -> bool:
-        """Consolidate pre-loaded messages. Falls back to consolidate()."""
-        return await self.consolidate(session, archive_all=archive_all, memory_window=memory_window)
+        Pure with respect to session state — this method must not
+        read or mutate any session/policy state. The caller (the
+        consolidation policy) owns boundary advancement and sidecar
+        persistence.
+        """
+        ...
 
 
 @runtime_checkable
