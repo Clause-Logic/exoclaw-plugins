@@ -90,18 +90,14 @@ if not IS_MICROPYTHON:  # pragma: no cover (micropython)
 
     @dataclass
     class Session:
-        """A conversation session.
+        """A conversation session — handle to an append-only message log.
 
-        Stores messages in JSONL format for easy reading and persistence.
-
-        Only the tail of the message history (unconsolidated messages) is
-        kept in RAM. Older messages remain on disk and are never loaded
-        unless explicitly requested (e.g. for consolidation).
-
-        Important: messages are append-only for LLM cache efficiency.
-        The consolidation process writes summaries to MEMORY.md /
-        HISTORY.md but does NOT modify the messages list or
-        ``get_history()`` output.
+        ``messages`` mirrors the on-disk JSONL log when
+        ``streaming_history=False`` (the default). Streaming-aware
+        ``HistoryStore`` backends keep ``messages`` empty and serve
+        reads from disk via ``HistoryStore.reader``. The consolidation
+        policy owns boundary state in its own per-session sidecar
+        (``_consolidation_state.py``) and is not represented here.
         """
 
         key: str  # channel:chat_id
@@ -109,15 +105,13 @@ if not IS_MICROPYTHON:  # pragma: no cover (micropython)
         created_at: datetime = field(default_factory=datetime.now)
         updated_at: datetime = field(default_factory=datetime.now)
         metadata: dict[str, Any] = field(default_factory=dict)
-        last_consolidated: int = 0  # Absolute index of consolidated messages
         _total_messages: int = 0  # Explicit total; 0 = derive from messages
-        _messages_offset: int = 0  # Absolute index of first entry in self.messages
 
         @property
         def total_messages(self) -> int:
             if self._total_messages > 0:
                 return self._total_messages
-            return self._messages_offset + len(self.messages)
+            return len(self.messages)
 
         @total_messages.setter
         def total_messages(self, value: int) -> None:
@@ -139,15 +133,11 @@ if not IS_MICROPYTHON:  # pragma: no cover (micropython)
             self.updated_at = datetime.now()
 
         def get_history(self, max_messages: int | None = 500) -> list[dict[str, Any]]:
-            relative_consolidated = max(0, self.last_consolidated - self._messages_offset)
-            unconsolidated = self.messages[relative_consolidated:]
-            return _normalize_history(unconsolidated, max_messages=max_messages)
+            return _normalize_history(self.messages, max_messages=max_messages)
 
         def clear(self) -> None:
             self.messages = []
-            self.last_consolidated = 0
             self._total_messages = 0
-            self._messages_offset = 0
             self.updated_at = datetime.now()
 
 else:  # pragma: no cover (cpython)
@@ -166,24 +156,20 @@ else:  # pragma: no cover (cpython)
             created_at: datetime | None = None,
             updated_at: datetime | None = None,
             metadata: dict[str, Any] | None = None,
-            last_consolidated: int = 0,
             _total_messages: int = 0,
-            _messages_offset: int = 0,
         ) -> None:
             self.key = key
             self.messages = messages if messages is not None else []
             self.created_at = created_at if created_at is not None else datetime.now()
             self.updated_at = updated_at if updated_at is not None else datetime.now()
             self.metadata = metadata if metadata is not None else {}
-            self.last_consolidated = last_consolidated
             self._total_messages = _total_messages
-            self._messages_offset = _messages_offset
 
         @property
         def total_messages(self) -> int:
             if self._total_messages > 0:
                 return self._total_messages
-            return self._messages_offset + len(self.messages)
+            return len(self.messages)
 
         @total_messages.setter
         def total_messages(self, value: int) -> None:
@@ -203,15 +189,11 @@ else:  # pragma: no cover (cpython)
             self.updated_at = datetime.now()
 
         def get_history(self, max_messages: int | None = 500) -> list[dict[str, Any]]:
-            relative_consolidated = max(0, self.last_consolidated - self._messages_offset)
-            unconsolidated = self.messages[relative_consolidated:]
-            return _normalize_history(unconsolidated, max_messages=max_messages)
+            return _normalize_history(self.messages, max_messages=max_messages)
 
         def clear(self) -> None:
             self.messages = []
-            self.last_consolidated = 0
             self._total_messages = 0
-            self._messages_offset = 0
             self.updated_at = datetime.now()
 
 
@@ -274,7 +256,13 @@ class SessionManager:
     def _load(self, key: str) -> Session | None:
         """Load a session from disk.
 
-        Only keeps unconsolidated messages (after last_consolidated) in RAM.
+        Reads the metadata header, then either materializes the full
+        message log into ``session.messages`` (default) or just counts
+        lines for the streaming path. The ``last_consolidated`` field
+        in legacy headers is ignored here — the
+        ``ConsolidationPolicy`` reads it directly from the JSONL on
+        first use to seed its sidecar (see
+        ``_consolidation_state.load_state``).
         """
         path = self._get_session_path(key)
 
@@ -284,9 +272,8 @@ class SessionManager:
         try:
             metadata: dict[str, Any] = {}
             created_at = None
-            last_consolidated = 0
             total_messages = 0
-            tail_lines: list[str] = []
+            buffered_lines: list[str] = []
 
             with open(str(path)) as f:
                 for line in f:
@@ -304,54 +291,42 @@ class SessionManager:
                                 if data.get("created_at")
                                 else None
                             )
-                            last_consolidated = data.get("last_consolidated", 0)
                             continue
 
-                    # Skip consolidated messages. Under streaming_history we
-                    # don't even buffer the tail lines — read_history pulls
-                    # them from disk on demand. Without streaming the tail
-                    # lives in session.messages, which means the unconsolidated
-                    # history is RAM-resident for the lifetime of the
-                    # cached Session.
-                    if not self.streaming_history and total_messages >= last_consolidated:
-                        tail_lines.append(line)
+                    # Streaming-aware backends keep ``messages`` empty —
+                    # callers go through ``reader()`` for on-demand disk
+                    # reads. Non-streaming keeps the full log in RAM as
+                    # an in-memory cache.
+                    if not self.streaming_history:
+                        buffered_lines.append(line)
                     total_messages += 1
 
-            messages = [json.loads(line) for line in tail_lines]
+            messages = [json.loads(line) for line in buffered_lines]
 
             session = Session(
                 key=key,
                 messages=messages,
                 created_at=created_at or datetime.now(),
                 metadata=metadata,
-                last_consolidated=last_consolidated,
             )
             session._total_messages = total_messages
-            session._messages_offset = last_consolidated
             return session
         except Exception as e:
             logger.warning("session_load_failed", **{"session.key": key}, error=e)
             return None
 
     def read_history(self, key: str, max_messages: int | None = None) -> list[dict[str, Any]]:
-        """Read the unconsolidated tail from disk and apply LLM-input cleanup.
+        """Read the message log from disk and apply LLM-input cleanup.
 
-        Bypasses ``session.messages`` entirely — ``streaming_history=True``
-        callers get a fresh read on every call, no per-session RAM tail.
-        With ``streaming_history=False`` we still call this on demand
-        (cheap: ``session.messages`` is already in RAM, the only cost is
-        the orphan-repair pass).
-
-        ``max_messages=None`` returns the entire unconsolidated tail. The
-        usual caller (``DefaultConversation.load_persisted_history``)
-        passes ``memory_window``; tests / debugging may pass None.
+        Convenience wrapper retained for tests / external callers that
+        still want a synchronous list. The new prompt path goes through
+        ``reader()`` and the consolidation policy's ``transform``.
         """
-        session = self.get_or_create(key)
         if self.streaming_history:
-            tail = self.load_range(key, session.last_consolidated, session.total_messages)
+            tail = self.load_range(key, 0, 1 << 30)
         else:
-            relative = max(0, session.last_consolidated - session._messages_offset)
-            tail = session.messages[relative:]
+            session = self.get_or_create(key)
+            tail = list(session.messages)
         return _normalize_history(tail, max_messages=max_messages)
 
     def load_range(self, key: str, start: int, end: int) -> list[dict[str, Any]]:
@@ -401,24 +376,18 @@ class SessionManager:
     def save(self, session: Session) -> None:
         """Rewrite the full session to disk.
 
-        Used after clear() or consolidation — operations that change
-        metadata or restructure the file.  For normal turn recording,
-        prefer save_append() which only writes new messages.
+        Used after ``clear()`` or any operation that restructures the
+        file. For normal turn recording, prefer ``save_append`` which
+        only writes new messages.
 
         Under ``streaming_history`` the in-memory ``session.messages``
-        list is empty, so naive iteration would wipe the JSONL on every
-        save. To preserve the persisted tail we re-read it from disk
-        before rewriting. Empty-after-clear() sessions skip this read
-        because ``last_consolidated`` and ``total_messages`` are both 0.
+        list is empty, so we re-read from disk before rewriting to
+        preserve the persisted log. Empty-after-clear() sessions skip
+        the re-read because ``total_messages`` is 0.
         """
         path = self._get_session_path(session.key)
 
-        if self.streaming_history and (session.total_messages > 0 or session.last_consolidated > 0):
-            # session.messages is intentionally empty — fetch from disk so
-            # the rewrite preserves the tail. Consolidated lines are
-            # below ``last_consolidated`` and we keep them too because
-            # ``save`` is a *full* rewrite (clear() resets everything,
-            # other callers want the full file recomposed).
+        if self.streaming_history and session.total_messages > 0:
             messages = self.load_range(session.key, 0, session.total_messages)
         else:
             messages = list(session.messages)
@@ -430,7 +399,6 @@ class SessionManager:
                 "created_at": session.created_at.isoformat(),
                 "updated_at": session.updated_at.isoformat(),
                 "metadata": session.metadata,
-                "last_consolidated": session.last_consolidated,
             }
             f.write(json.dumps(metadata_line) + "\n")
             for msg in messages:
@@ -441,12 +409,10 @@ class SessionManager:
 
         O(new_messages) — does not read or rewrite existing content.
         Creates the file with a metadata header if it doesn't exist.
-        Metadata is updated separately via save_metadata().
         """
         path = self._get_session_path(session.key)
 
         if not path.exists():
-            # New file — write metadata header first
             with open(str(path), "w") as f:
                 meta = {
                     "_type": "metadata",
@@ -454,47 +420,14 @@ class SessionManager:
                     "created_at": session.created_at.isoformat(),
                     "updated_at": session.updated_at.isoformat(),
                     "metadata": session.metadata,
-                    "last_consolidated": session.last_consolidated,
                 }
                 f.write(json.dumps(meta) + "\n")
                 for msg in new_messages:
                     f.write(json.dumps(msg) + "\n")
         else:
-            # Append only — no rewrite
             with open(str(path), "a") as f:
                 for msg in new_messages:
                     f.write(json.dumps(msg) + "\n")
-
-    def save_metadata(self, session: Session) -> None:
-        """Update only the metadata line (first line) of the JSONL file.
-
-        Used after consolidation updates last_consolidated without
-        changing messages.
-        """
-        path = self._get_session_path(session.key)
-        if not path.exists():
-            return
-
-        metadata_line = {
-            "_type": "metadata",
-            "key": session.key,
-            "created_at": session.created_at.isoformat(),
-            "updated_at": session.updated_at.isoformat(),
-            "metadata": session.metadata,
-            "last_consolidated": session.last_consolidated,
-        }
-
-        with open(str(path)) as f:
-            lines = f.readlines()
-
-        meta_str = json.dumps(metadata_line) + "\n"
-        if lines and "_type" in lines[0]:
-            lines[0] = meta_str
-        else:
-            lines.insert(0, meta_str)
-
-        with open(str(path), "w") as f:
-            f.writelines(lines)
 
     def invalidate(self, key: str) -> None:
         """Remove a session from the weak cache."""

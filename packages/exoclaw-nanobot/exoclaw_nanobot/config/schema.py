@@ -282,6 +282,15 @@ class AgentDefaults(Base):
     temperature: float = 0.1
     max_tool_iterations: int = 40
     memory_window: int = 100
+    # Pre-prompt budget passed to the consolidation policy's
+    # ``transform(reader, budget=...)``. When set, the policy
+    # synchronously summarizes older history before each LLM call so
+    # the assembled prompt fits within ``target_context_tokens``.
+    # Recommended: ``int(model.context_window * 0.75)``. Unset
+    # (``None``) disables preemptive overflow recovery — the policy
+    # only emits its current view and any overflow surfaces as a
+    # provider error caught by ``on_context_overflow``.
+    target_context_tokens: int | None = None
     reasoning_effort: str | None = None
     web_search_options: dict[str, str] | None = None
     search_model: str | None = None

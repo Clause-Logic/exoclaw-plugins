@@ -358,6 +358,7 @@ async def create(
         ),
         memory_window=config.agents.defaults.memory_window,
         consolidation_policy=consolidation_policy,
+        target_context_tokens=config.agents.defaults.target_context_tokens,
     )
 
     # Load skill tool — lets the agent activate skills on demand
@@ -544,20 +545,12 @@ async def create(
 
             on_tool_calls = _record_tool_calls
 
-    # Context overflow recovery — compact messages when context window is exceeded
-    async def _on_context_overflow(
-        messages: list[dict[str, Any]],
-    ) -> list[dict[str, Any]] | None:
-        from exoclaw_conversation.context import drop_oldest_half
-
-        compacted = drop_oldest_half(messages)
-        if len(compacted) < len(messages):
-            logger.info(
-                "context_overflow_compacted",
-                **{"message.count.before": len(messages), "message.count.after": len(compacted)},
-            )
-            return compacted
-        return None
+    # Context overflow is handled by the consolidation policy via
+    # ``transform(reader, budget=target_context_tokens)`` before each
+    # LLM call (configured via ``config.agents.defaults.target_context_tokens``).
+    # No reactive ``on_context_overflow`` hook — dropping messages from
+    # the in-flight prompt would silently desynchronize the policy's
+    # sidecar from what the LLM saw.
 
     # Durable executor — every LLM call and tool execution is checkpointed
     executor = DBOSExecutor()
@@ -585,7 +578,6 @@ async def create(
         on_post_turn=on_post_turn,
         on_max_iterations=on_max_iterations,
         on_tool_calls=on_tool_calls,
-        on_context_overflow=_on_context_overflow,
     )
 
     # Wire cron jobs to run silently via process_direct.

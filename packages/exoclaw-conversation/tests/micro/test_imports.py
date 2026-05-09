@@ -28,8 +28,8 @@ def test_session_manager_imports():
     # produce a constructable type.
     s = Session(key="ut:test")
     assert s.key == "ut:test"
-    assert s.last_consolidated == 0
     assert s.total_messages == 0
+    assert s.messages == []
 
     # SessionManager is the file-backed history store.
     assert callable(SessionManager)

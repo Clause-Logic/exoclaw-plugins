@@ -61,10 +61,6 @@ class HistoryStore(Protocol):
         """Append new messages to disk. Falls back to full save()."""
         self.save(session)
 
-    def save_metadata(self, session: "Session") -> None:
-        """Update metadata without rewriting messages. Falls back to full save()."""
-        self.save(session)
-
     def load_range(self, key: str, start: int, end: int) -> list[dict[str, Any]]:
         """Load a range of messages from disk by index. Returns empty list by default."""
         return []

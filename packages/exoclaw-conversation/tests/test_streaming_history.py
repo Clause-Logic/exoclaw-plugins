@@ -1,13 +1,12 @@
 """End-to-end coverage for ``SessionManager(streaming_history=True)``.
 
 The deployed multi-tenant bot can't afford to hold N concurrent
-sessions × per-session unconsolidated tail in RAM. ``streaming_history``
-(memory-model.md Step C) makes the unconsolidated tail live only on
-disk between turns; ``read_history`` reads it on demand. These tests
-pin the contract: ``session.messages`` stays empty across N turns,
-``read_history`` still returns the correct slice, and the
-``total_messages`` / ``last_consolidated`` bookkeeping advances
-identically to the cached path.
+sessions × per-session message log in RAM. ``streaming_history``
+(memory-model.md Step C) keeps the log only on disk between turns;
+``reader()`` / ``read_history`` read on demand. These tests pin the
+contract: ``session.messages`` stays empty across N turns,
+``read_history`` still returns the full log from disk, and
+``total_messages`` advances identically to the cached path.
 """
 
 from __future__ import annotations
@@ -35,22 +34,21 @@ class TestStreamingHistoryFlag:
         # But the metadata still loaded — total_messages / offsets are intact.
         assert s2.total_messages == 20
 
-    def test_read_history_returns_tail_from_disk(self, tmp_path: Path) -> None:
-        """With session.messages empty, read_history reads the
-        unconsolidated tail directly from JSONL."""
+    def test_read_history_returns_full_log_from_disk(self, tmp_path: Path) -> None:
+        """With ``session.messages`` empty, ``read_history`` streams
+        the entire log from JSONL. View-windowing is now the
+        consolidation policy's job (applied via ``transform``), not the
+        session manager's."""
         seed_mgr = SessionManager(tmp_path, streaming_history=False)
         s = seed_mgr.get_or_create("ch:1")
         for i in range(10):
             s.add_message("user" if i % 2 == 0 else "assistant", f"msg-{i}")
-        s.last_consolidated = 4
         seed_mgr.save(s)
 
         streaming_mgr = SessionManager(tmp_path, streaming_history=True)
         history = streaming_mgr.read_history("ch:1", max_messages=500)
-        # last_consolidated=4 → tail starts at msg-4 (a user message,
-        # so the leading-non-user drop is a no-op).
-        assert len(history) == 6
-        assert history[0]["content"] == "msg-4"
+        assert len(history) == 10
+        assert history[0]["content"] == "msg-0"
         assert history[-1]["content"] == "msg-9"
 
     def test_session_messages_stays_empty_across_many_turns(self, tmp_path: Path) -> None:

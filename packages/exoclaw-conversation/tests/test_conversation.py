@@ -112,13 +112,15 @@ class TestSession:
         history = s.get_history()
         assert history[0]["role"] == "user"
 
-    def test_get_history_respects_last_consolidated(self) -> None:
+    def test_get_history_returns_full_log(self) -> None:
+        """``Session.get_history`` returns the entire message log now;
+        view-windowing belongs to the consolidation policy via its
+        sidecar, not to ``Session``."""
         s = Session(key="test")
         for i in range(10):
             s.messages.append({"role": "user" if i % 2 == 0 else "assistant", "content": str(i)})
-        s.last_consolidated = 6
         history = s.get_history()
-        assert all(m["content"] in [str(i) for i in range(6, 10)] for m in history)
+        assert [m["content"] for m in history] == [str(i) for i in range(10)]
 
     def test_get_history_strips_extra_keys(self) -> None:
         s = Session(key="test")
@@ -195,10 +197,9 @@ class TestSession:
     def test_clear(self) -> None:
         s = Session(key="test")
         s.add_message("user", "hi")
-        s.last_consolidated = 1
         s.clear()
         assert s.messages == []
-        assert s.last_consolidated == 0
+        assert s.total_messages == 0
 
 
 class TestSessionManager:
@@ -222,27 +223,25 @@ class TestSessionManager:
         mgr2 = SessionManager(tmp_path)
         s2 = mgr2.get_or_create("ch:123")
         assert s2.total_messages == 1
-        assert len(s2.messages) == 1  # unconsolidated
+        assert len(s2.messages) == 1
         assert s2.messages[0]["content"] == "hello"
-        assert s2.last_consolidated == 0
 
-    def test_save_and_load_consolidated_not_in_ram(self, tmp_path: Path) -> None:
-        """Consolidated messages stay on disk, not loaded into RAM."""
+    def test_load_keeps_full_log_in_ram(self, tmp_path: Path) -> None:
+        """Non-streaming mode loads the entire log into ``session.messages``.
+        Consolidation no longer windows the in-RAM tail — that's the
+        policy's job, applied via ``transform``."""
         mgr = SessionManager(tmp_path)
         s = mgr.get_or_create("ch:123")
         s.add_message("user", "old")
         s.add_message("assistant", "old reply")
         s.add_message("user", "new")
-        s.last_consolidated = 2
-        s.total_messages = 3
         mgr.save(s)
 
         mgr2 = SessionManager(tmp_path)
         s2 = mgr2.get_or_create("ch:123")
         assert s2.total_messages == 3
-        assert s2.last_consolidated == 2
-        assert len(s2.messages) == 1  # only unconsolidated tail
-        assert s2.messages[0]["content"] == "new"
+        assert len(s2.messages) == 3
+        assert s2.messages[2]["content"] == "new"
 
     def test_load_range(self, tmp_path: Path) -> None:
         """load_range reads specific message ranges from disk."""
@@ -276,21 +275,26 @@ class TestSessionManager:
         assert s2.messages[0]["content"] == "first"
         assert s2.messages[1]["content"] == "second"
 
-    def test_load_skips_consolidated_lines(self, tmp_path: Path) -> None:
-        """_load must not hold consolidated messages in memory."""
+    def test_streaming_load_keeps_messages_empty(self, tmp_path: Path) -> None:
+        """``streaming_history=True`` deliberately keeps
+        ``session.messages`` empty — callers go through ``reader()``
+        for on-demand disk reads. Non-streaming keeps the full log in
+        memory; streaming doesn't."""
         mgr = SessionManager(tmp_path)
         s = mgr.get_or_create("ch:big")
         for i in range(100):
             s.add_message("user" if i % 2 == 0 else "assistant", f"msg-{i}")
-        s.last_consolidated = 90
         mgr.save(s)
 
-        mgr2 = SessionManager(tmp_path)
-        s2 = mgr2.get_or_create("ch:big")
-        # Only 10 unconsolidated messages in RAM
-        assert len(s2.messages) == 10
-        assert s2.messages[0]["content"] == "msg-90"
+        streaming = SessionManager(tmp_path, streaming_history=True)
+        s2 = streaming.get_or_create("ch:big")
         assert s2.total_messages == 100
+        assert len(s2.messages) == 0  # streaming holds nothing in RAM
+        # But the reader streams the full log on demand.
+        msgs = streaming.load_range("ch:big", 0, 100)
+        assert len(msgs) == 100
+        assert msgs[0]["content"] == "msg-0"
+        assert msgs[-1]["content"] == "msg-99"
 
     def test_invalidate(self, tmp_path: Path) -> None:
         mgr = SessionManager(tmp_path)
