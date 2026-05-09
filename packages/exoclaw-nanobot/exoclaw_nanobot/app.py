@@ -358,7 +358,6 @@ async def create(
         ),
         memory_window=config.agents.defaults.memory_window,
         consolidation_policy=consolidation_policy,
-        target_context_tokens=config.agents.defaults.target_context_tokens,
     )
 
     # Load skill tool — lets the agent activate skills on demand

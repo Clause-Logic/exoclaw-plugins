@@ -74,113 +74,88 @@ def _summarize_fails() -> Any:
 
 
 @pytest.mark.asyncio
-class TestBudgetModeCascade:
-    async def test_under_budget_is_noop(self, tmp_path: Path) -> None:
-        """When the estimated tail already fits, the cascade does
-        nothing — no summarize calls, no sidecar advance."""
-        memory = _summarize_succeeds()
-        policy = SummarizingConsolidationPolicy(
-            memory=memory, state_dir=tmp_path, memory_window=4
-        )
-        # 2 small messages — under any reasonable budget.
-        reader = _ListReader("ut:fits", [
-            {"role": "user", "content": "hi"},
-            {"role": "assistant", "content": "hello"},
-        ])
-        out = [m async for m in policy.transform(reader, budget=10_000)]
-        assert [m["role"] for m in out] == ["user", "assistant"]
-        memory.summarize.assert_not_called()
-        sidecar = ss.load_state(tmp_path, "ut:fits")
-        assert sidecar.summarized_through == 0
+class TestRecoverFromOverflow:
+    """``recover_from_overflow`` is the reactive seam called by
+    ``DefaultConversation.recover_from_overflow`` (which the agent
+    loop reaches via ``Executor.recover_from_overflow`` on
+    ``ContextWindowExceededError``). Per call: summarize one chunk
+    and advance the sidecar. The agent loop's ``max_recovery_attempts``
+    cap drives multiple invocations if a single chunk isn't enough."""
 
-    async def test_cascade_advances_until_fits(self, tmp_path: Path) -> None:
-        """Budget below the unconsolidated tail estimate triggers the
-        cascade. Each iteration summarizes one chunk and advances the
-        sidecar pointer; the loop stops once the remaining tail fits."""
+    async def test_summarizes_one_chunk_and_advances(self, tmp_path: Path) -> None:
+        """A successful summarize call advances the sidecar and
+        returns ``True`` so the caller knows to retry."""
         memory = _summarize_succeeds("[archived]")
         policy = SummarizingConsolidationPolicy(
             memory=memory, state_dir=tmp_path, memory_window=2
         )
-        # 8 messages, each ~25 chars = ~6 tokens estimated. Total
-        # ~48 tokens. budget=20 forces ~5 chunks of 2 to be archived
-        # before the tail fits.
-        msgs = [{"role": "user", "content": f"message-{i}"} for i in range(8)]
-        reader = _ListReader("ut:cascade", msgs)
-        out = [m async for m in policy.transform(reader, budget=20)]
-        # Cascade ran at least once.
-        assert memory.summarize.await_count >= 1
-        sidecar = ss.load_state(tmp_path, "ut:cascade")
+        msgs = [{"role": "user", "content": f"message-{i}"} for i in range(6)]
+        reader = _ListReader("ut:recover", msgs)
+        advanced = await policy.recover_from_overflow(reader)
+        assert advanced is True
+        assert memory.summarize.await_count == 1
+        sidecar = ss.load_state(tmp_path, "ut:recover")
         assert sidecar.summarized_through > 0
         assert "[archived]" in sidecar.summary
-        # Output starts with the summary preamble.
-        assert out[0]["role"] == "system"
-        assert "[archived]" in out[0]["content"]
 
-    async def test_cascade_caps_at_max_attempts(self, tmp_path: Path) -> None:
-        """If the budget is so tight that even max_overflow_attempts
-        archival passes can't shrink the tail enough, the policy gives
-        up rather than looping forever. The caller sees a still-too-big
-        stream and surfaces it as an honest overflow."""
-        memory = _summarize_succeeds("[chunk]")
+    async def test_returns_false_when_nothing_to_summarize(self, tmp_path: Path) -> None:
+        """A session that's already fully consolidated through the end
+        of the log returns ``False`` — caller surfaces the original
+        overflow error rather than spinning."""
+        memory = _summarize_succeeds()
         policy = SummarizingConsolidationPolicy(
-            memory=memory,
-            state_dir=tmp_path,
-            memory_window=1,
-            max_overflow_attempts=2,
+            memory=memory, state_dir=tmp_path, memory_window=2
         )
-        msgs = [{"role": "user", "content": f"message-{i}" * 5} for i in range(10)]
-        reader = _ListReader("ut:cap", msgs)
-        # Tiny budget — won't be reachable.
-        _ = [m async for m in policy.transform(reader, budget=1)]
-        assert memory.summarize.await_count == 2, (
-            "expected exactly max_overflow_attempts summarize calls; "
-            f"got {memory.summarize.await_count}"
+        # Pre-seed sidecar so summarized_through is already at the tail.
+        ss.save_state(
+            tmp_path,
+            "ut:done",
+            ss.ConsolidationState(summarized_through=2, summary="prior"),
         )
+        reader = _ListReader("ut:done", [
+            {"role": "user", "content": "a"},
+            {"role": "assistant", "content": "b"},
+        ])
+        advanced = await policy.recover_from_overflow(reader)
+        assert advanced is False
+        memory.summarize.assert_not_called()
 
-    async def test_cascade_breaks_when_summarize_fails(self, tmp_path: Path) -> None:
+    async def test_returns_false_when_summarize_fails(self, tmp_path: Path) -> None:
         """If the LLM declines to summarize (returns None), the
-        cascade can't make progress — the pointer doesn't advance,
-        ``_summarize_one_chunk`` returns False, and the loop breaks
-        rather than spinning."""
+        pointer doesn't advance and the method returns False — caller
+        surfaces the original overflow."""
         memory = _summarize_fails()
         policy = SummarizingConsolidationPolicy(
-            memory=memory,
-            state_dir=tmp_path,
-            memory_window=2,
-            max_overflow_attempts=5,
+            memory=memory, state_dir=tmp_path, memory_window=2
         )
         msgs = [{"role": "user", "content": f"big-{i}" * 20} for i in range(6)]
         reader = _ListReader("ut:fail", msgs)
-        _ = [m async for m in policy.transform(reader, budget=10)]
-        # Tried once, failed, broke. Did NOT spin to max_overflow_attempts.
-        assert memory.summarize.await_count == 1
+        advanced = await policy.recover_from_overflow(reader)
+        assert advanced is False
         sidecar = ss.load_state(tmp_path, "ut:fail")
         assert sidecar.summarized_through == 0
         assert sidecar.summary == ""
 
-    async def test_cascade_persists_progress_each_iteration(
-        self, tmp_path: Path
-    ) -> None:
-        """The sidecar is written after every successful chunk —
-        partial progress survives a crash mid-cascade."""
+    async def test_persists_sidecar_on_success(self, tmp_path: Path) -> None:
+        """The sidecar is written before recover_from_overflow returns —
+        partial progress survives a crash before the next retry."""
         memory = _summarize_succeeds("[partial]")
         policy = SummarizingConsolidationPolicy(
             memory=memory, state_dir=tmp_path, memory_window=2
         )
         msgs = [{"role": "user", "content": f"msg-{i}"} for i in range(6)]
         reader = _ListReader("ut:persist", msgs)
-        _ = [m async for m in policy.transform(reader, budget=5)]
-        # Reload the sidecar from disk — verify it matches in-memory state.
+        await policy.recover_from_overflow(reader)
         from_disk = ss.load_state(tmp_path, "ut:persist")
         assert from_disk.summarized_through > 0
+        assert "[partial]" in from_disk.summary
 
 
 @pytest.mark.asyncio
 class TestOnTurnCompleteThreshold:
-    async def test_below_window_only_refreshes_estimate(self, tmp_path: Path) -> None:
-        """Under the memory_window threshold, on_turn_complete
-        refreshes the running token estimate but doesn't summarize.
-        The estimate matters because budget-mode reads it first."""
+    async def test_below_window_does_nothing(self, tmp_path: Path) -> None:
+        """Under the ``memory_window`` threshold ``on_turn_complete``
+        is a no-op — no summarize calls, no sidecar writes."""
         memory = _summarize_succeeds()
         policy = SummarizingConsolidationPolicy(
             memory=memory, state_dir=tmp_path, memory_window=10
@@ -191,9 +166,6 @@ class TestOnTurnCompleteThreshold:
         ])
         await policy.on_turn_complete(reader)
         memory.summarize.assert_not_called()
-        sidecar = ss.load_state(tmp_path, "ut:idle")
-        assert sidecar.summarized_through == 0
-        assert sidecar.unconsolidated_token_estimate > 0
 
     async def test_above_window_summarizes_one_chunk(self, tmp_path: Path) -> None:
         """At/above the threshold, on_turn_complete summarizes ONE

@@ -1486,6 +1486,125 @@ class TestContextBuilderExtra:
         assert msgs[0]["thinking_blocks"] is not None
 
 
+class TestDefaultConversationRecoverFromOverflow:
+    """``DefaultConversation.recover_from_overflow`` is the
+    Conversation-side seam consumed by AgentLoop (via
+    ``Executor.recover_from_overflow``) on
+    ``ContextWindowExceededError``. It delegates to the
+    consolidation policy and re-assembles the prompt from the
+    post-recovery view."""
+
+    async def test_returns_none_when_policy_lacks_method(self) -> None:
+        """A policy that doesn't implement ``recover_from_overflow``
+        (e.g. the inline ``_NoOpPolicy``) makes the conversation give
+        up — there's no way to make progress."""
+        conv = DefaultConversation(
+            history=_make_mock_history(),
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+        )
+        result = await conv.recover_from_overflow("test:1")
+        assert result is None
+
+    async def test_returns_none_when_policy_cant_advance(self) -> None:
+        """Policy returns ``False`` (nothing left to summarize) →
+        conversation surfaces ``None`` to the loop."""
+
+        class _StuckPolicy:
+            def transform(self, reader, *, budget=None):  # type: ignore[no-untyped-def]
+                async def _gen():  # type: ignore[no-untyped-def]
+                    return
+                    yield  # unreachable; satisfies async-generator shape
+
+                return _gen()
+
+            async def on_turn_complete(self, reader) -> None:  # type: ignore[no-untyped-def]
+                return None
+
+            async def recover_from_overflow(self, reader) -> bool:  # type: ignore[no-untyped-def]
+                return False
+
+        conv = DefaultConversation(
+            history=_make_mock_history(),
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+            consolidation_policy=_StuckPolicy(),  # type: ignore[arg-type]
+        )
+        result = await conv.recover_from_overflow("test:1")
+        assert result is None
+
+    async def test_returns_assembled_prompt_on_success(self) -> None:
+        """When the policy advances, the conversation re-materializes
+        the view and prepends the system prompt. Returns the new
+        message list — caller passes to ``executor.set_messages``."""
+
+        class _RecoveringPolicy:
+            def transform(self, reader, *, budget=None):  # type: ignore[no-untyped-def]
+                async def _gen():  # type: ignore[no-untyped-def]
+                    yield {"role": "system", "content": "## Previous Session Summary\nold"}
+                    yield {"role": "user", "content": "in-flight question"}
+
+                return _gen()
+
+            async def on_turn_complete(self, reader) -> None:  # type: ignore[no-untyped-def]
+                return None
+
+            async def recover_from_overflow(self, reader) -> bool:  # type: ignore[no-untyped-def]
+                return True
+
+        prompt = MagicMock(spec=["build_messages", "build_system_prompt", "get_active_optional_tools"])
+        prompt.build_system_prompt = MagicMock(return_value="SYSTEM PROMPT")
+        prompt.get_active_optional_tools = MagicMock(return_value=set())
+
+        conv = DefaultConversation(
+            history=_make_mock_history(),
+            memory=_make_mock_memory(),
+            prompt=prompt,
+            consolidation_policy=_RecoveringPolicy(),  # type: ignore[arg-type]
+        )
+        result = await conv.recover_from_overflow("test:1")
+        assert result is not None
+        # First message is the system prompt the conversation prepended.
+        assert result[0] == {"role": "system", "content": "SYSTEM PROMPT"}
+        # Followed by whatever the policy emitted via transform.
+        assert result[1] == {
+            "role": "system",
+            "content": "## Previous Session Summary\nold",
+        }
+        assert result[-1] == {"role": "user", "content": "in-flight question"}
+
+    async def test_returns_view_only_when_prompt_lacks_build_system_prompt(self) -> None:
+        """Custom PromptBuilder that doesn't implement
+        ``build_system_prompt`` falls through to a no-system-prompt
+        path. The result is still a valid (leaner) prompt list."""
+
+        class _RecoveringPolicy:
+            def transform(self, reader, *, budget=None):  # type: ignore[no-untyped-def]
+                async def _gen():  # type: ignore[no-untyped-def]
+                    yield {"role": "user", "content": "carryover"}
+
+                return _gen()
+
+            async def on_turn_complete(self, reader) -> None:  # type: ignore[no-untyped-def]
+                return None
+
+            async def recover_from_overflow(self, reader) -> bool:  # type: ignore[no-untyped-def]
+                return True
+
+        # spec'd MagicMock with build_messages but no build_system_prompt.
+        prompt = MagicMock(spec=["build_messages", "get_active_optional_tools"])
+        prompt.get_active_optional_tools = MagicMock(return_value=set())
+
+        conv = DefaultConversation(
+            history=_make_mock_history(),
+            memory=_make_mock_memory(),
+            prompt=prompt,
+            consolidation_policy=_RecoveringPolicy(),  # type: ignore[arg-type]
+        )
+        result = await conv.recover_from_overflow("test:1")
+        assert result == [{"role": "user", "content": "carryover"}]
+
+
 class TestDefaultConversationExtra:
     async def test_clear_exception_returns_false(self) -> None:
         session = Session(key="test:1")

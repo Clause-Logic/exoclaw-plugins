@@ -1,13 +1,13 @@
 [project]
 name = "exoclaw-conversation"
-version = "0.23.0"
+version = "0.24.0"
 description = "File-backed conversation implementation for exoclaw, runs on CPython + MicroPython"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    # 0.26.0 ships the shared MP compat layer (Path, WeakValueDictionary,
-    # which, is_executable, etc.) this package now imports.
-    "exoclaw>=0.26.0",
+    # 0.27.0 adds Conversation.recover_from_overflow seam used by
+    # DefaultConversation for reactive overflow recovery.
+    "exoclaw>=0.27.0",
     "structlog>=25.0.0",
     "rich>=14.0.0,<15.0.0",
 ]

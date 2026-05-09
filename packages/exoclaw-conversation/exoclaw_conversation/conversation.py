@@ -74,7 +74,6 @@ class DefaultConversation:
         memory_window: int = 100,
         consolidation_policy: ConsolidationPolicy | None = None,
         bus: Bus | None = None,
-        target_context_tokens: int | None = None,
     ):
         self.history = history
         self.memory = memory
@@ -82,11 +81,6 @@ class DefaultConversation:
         self.memory_window = memory_window
         self._consolidation_policy: ConsolidationPolicy = consolidation_policy or _NOOP_POLICY  # type: ignore[assignment]
         self._bus: Bus | None = bus
-        # Optional pre-prompt budget passed to ``policy.transform``.
-        # When set, the policy can compact synchronously before the
-        # LLM call instead of waiting for a provider overflow error.
-        # Typical caller wiring: ``int(model.context_window * 0.75)``.
-        self._target_context_tokens = target_context_tokens
 
         self._consolidating: set[str] = set()
         self._consolidation_tasks: set[asyncio.Task[Any]] = set()
@@ -107,7 +101,6 @@ class DefaultConversation:
         consolidation_policy: ConsolidationPolicy | None = None,
         builtin_skills_dir: Path | None = None,
         allowed_skills: list[str] | None = None,
-        target_context_tokens: int | None = None,
     ) -> DefaultConversation:
         """Construct with the standard file-backed implementations.
 
@@ -140,7 +133,6 @@ class DefaultConversation:
             ),
             memory_window=memory_window,
             consolidation_policy=consolidation_policy,
-            target_context_tokens=target_context_tokens,
         )
 
     async def build_prompt(
@@ -200,12 +192,7 @@ class DefaultConversation:
             history = []
         else:
             reader = self.history.reader(session_id)
-            history = [
-                m
-                async for m in self._consolidation_policy.transform(
-                    reader, budget=self._target_context_tokens
-                )
-            ]
+            history = [m async for m in self._consolidation_policy.transform(reader)]
 
         extra_context: str | None = None
         if plugin_context:
@@ -345,6 +332,58 @@ class DefaultConversation:
     def active_tools(self) -> set[str]:
         """Return optional tool names activated by the current turn's skills."""
         return self.prompt.get_active_optional_tools()
+
+    async def recover_from_overflow(
+        self, session_id: str
+    ) -> list[dict[str, Any]] | None:
+        """Reactive overflow-recovery seam consumed by ``AgentLoop``
+        (via ``Executor.recover_from_overflow``) on
+        ``ContextWindowExceededError``.
+
+        Asks the consolidation policy to advance its sidecar by one
+        chunk, then re-assembles the prompt from the post-recovery
+        view. Returns the new message list (caller passes to
+        ``executor.set_messages`` and retries) or ``None`` when the
+        policy can't make progress.
+
+        The returned list is ``[system_prompt, *recovered_view]`` —
+        no new user message is appended. The in-flight turn's
+        messages are already in the active log (persisted via
+        ``append`` as the turn produced them) and surface naturally
+        through the policy's transform.
+        """
+        recover = getattr(self._consolidation_policy, "recover_from_overflow", None)
+        if recover is None:
+            return None
+
+        reader = self.history.reader(session_id)
+        advanced = await recover(reader)
+        if not advanced:
+            return None
+
+        # Re-materialize the active view through the policy. Includes
+        # the rolling summary preamble (if any) plus the tail past
+        # the freshly-advanced ``summarized_through`` pointer.
+        recovered_view = [m async for m in self._consolidation_policy.transform(reader)]
+
+        # Prepend the system prompt manually rather than going through
+        # ``build_messages`` — the latter would append an empty user
+        # message at the end (its current_message argument). For
+        # recovery there's no fresh user input; the active log already
+        # carries the in-flight turn's user message and any
+        # tool-call/result messages produced so far.
+        #
+        # ``build_system_prompt`` lives on the default ``ContextBuilder``
+        # but isn't on the ``PromptBuilder`` protocol — feature-detect
+        # via getattr so custom builders that don't expose it fall
+        # through to the no-system-prompt path. The resulting prompt
+        # is still valid (just leaner); custom builders that care
+        # should add the method.
+        get_sys_prompt = getattr(self.prompt, "build_system_prompt", None)
+        if get_sys_prompt is not None:
+            system_content = get_sys_prompt()
+            return [{"role": "system", "content": system_content}, *recovered_view]
+        return list(recovered_view)
 
     # ─── Internal: maintenance + hook plumbing ───
 
