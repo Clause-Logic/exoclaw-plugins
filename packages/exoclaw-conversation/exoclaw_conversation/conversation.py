@@ -168,11 +168,6 @@ class DefaultConversation:
             else:
                 raise TypeError(f"'isolated' must be a bool, got {type(isolated_value).__name__}")
 
-        # Materialize the session for log-context bindings (key,
-        # created_at) — the prompt path itself goes through the
-        # streaming reader, never ``session.messages``.
-        session = self.history.get_or_create(session_id)
-
         bind_log_contextvars(
             **{
                 "memory.window": self.memory_window,
@@ -380,7 +375,10 @@ class DefaultConversation:
         get_sys_prompt = getattr(self.prompt, "build_system_prompt", None)
         if get_sys_prompt is not None:
             system_content = get_sys_prompt()
-            return [{"role": "system", "content": system_content}, *recovered_view]
+            # PEP 448 list-unpack ``[a, *xs]`` doesn't parse on
+            # MicroPython 1.27. Build via list concat instead — same
+            # result, runs cross-runtime.
+            return [{"role": "system", "content": system_content}] + list(recovered_view)
         return list(recovered_view)
 
     # ─── Internal: maintenance + hook plumbing ───

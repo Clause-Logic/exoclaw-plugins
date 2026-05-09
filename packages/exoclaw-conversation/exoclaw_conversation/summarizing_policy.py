@@ -25,7 +25,6 @@ There is no preemptive routing — overflow recovery is reactive only.
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable
 
 from exoclaw._compat import get_logger
