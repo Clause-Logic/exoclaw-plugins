@@ -1501,6 +1501,212 @@ class TestDefaultConversationExtra:
         result = await conv.clear("test:1")
         assert result is False
 
+    async def test_clear_deletes_sidecar_when_history_exposes_dir(
+        self, tmp_path: Path
+    ) -> None:
+        """If the ``HistoryStore`` exposes a ``sessions_dir``, ``clear``
+        also deletes the policy sidecar that lives next to the session
+        JSONL. Without this, a sidecar from a deleted session would
+        re-seed itself on the next ``transform`` call."""
+        from exoclaw_conversation import _consolidation_state as ss
+        from exoclaw_conversation.session.manager import SessionManager
+
+        sessions = SessionManager(tmp_path)
+        sess = sessions.get_or_create("ut:bye")
+        sess.add_message("user", "hi")
+        sessions.save(sess)
+        # Seed a sidecar so ``clear`` has something to delete.
+        ss.save_state(
+            tmp_path / "sessions",
+            "ut:bye",
+            ss.ConsolidationState(summarized_through=1, summary="x"),
+        )
+        sidecar = tmp_path / "sessions" / "ut_bye.consolidation.json"
+        assert sidecar.exists()
+
+        conv = DefaultConversation(
+            history=sessions,
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+        )
+        assert await conv.clear("ut:bye") is True
+        assert not sidecar.exists()
+
+    async def test_schedule_maintenance_is_idempotent(self) -> None:
+        """If maintenance is already running for a session, a second
+        ``post_turn`` doesn't spawn a duplicate task — the policy
+        runs once per session at a time."""
+
+        class _GatedPolicy:
+            def __init__(self) -> None:
+                self.gate = asyncio.Event()
+                self.calls = 0
+
+            def transform(self, reader, *, budget=None):  # type: ignore[no-untyped-def]
+                async def _gen():  # type: ignore[no-untyped-def]
+                    async for m in reader.stream():
+                        yield m
+
+                return _gen()
+
+            async def on_turn_complete(self, reader) -> None:  # type: ignore[no-untyped-def]
+                self.calls += 1
+                await self.gate.wait()
+
+        policy = _GatedPolicy()
+        conv = DefaultConversation(
+            history=_make_mock_history(),
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+            consolidation_policy=policy,  # type: ignore[arg-type]
+        )
+        await conv.post_turn("test:1")
+        await conv.post_turn("test:1")  # second post_turn — should be a no-op
+        await asyncio.sleep(0.01)
+        assert policy.calls == 1
+        # Release the gate so the task finishes cleanly.
+        policy.gate.set()
+        await asyncio.gather(*list(conv._consolidation_tasks), return_exceptions=True)
+
+    async def test_maintenance_swallows_policy_exception(self) -> None:
+        """A policy that raises during ``on_turn_complete`` must not
+        bubble out and crash the next turn — the task logs and
+        unregisters itself so the session lock releases."""
+
+        class _CrashyPolicy:
+            def transform(self, reader, *, budget=None):  # type: ignore[no-untyped-def]
+                async def _gen():  # type: ignore[no-untyped-def]
+                    async for m in reader.stream():
+                        yield m
+
+                return _gen()
+
+            async def on_turn_complete(self, reader) -> None:  # type: ignore[no-untyped-def]
+                raise RuntimeError("policy blew up")
+
+        conv = DefaultConversation(
+            history=_make_mock_history(),
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+            consolidation_policy=_CrashyPolicy(),  # type: ignore[arg-type]
+        )
+        await conv.post_turn("test:1")
+        await asyncio.gather(*list(conv._consolidation_tasks), return_exceptions=True)
+        # Session lock released — a second post_turn re-spawns cleanly.
+        assert "test:1" not in conv._consolidating
+
+    async def test_record_fires_hooks_when_bus_present(self) -> None:
+        """Legacy batch ``record`` fires end-of-turn hooks itself
+        (the post_turn path runs only under the append surface).
+        Verify the hook-fire delegation when a bus is configured."""
+
+        bus = MagicMock()
+        bus.publish_inbound = AsyncMock()
+        conv = DefaultConversation(
+            history=_make_mock_history(),
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+            bus=bus,
+        )
+        hooks = AsyncMock()
+        conv._fire_agent_hooks = hooks  # type: ignore[method-assign]
+        await conv.record("test:1", [{"role": "user", "content": "hi"}])
+        hooks.assert_awaited_once_with("test:1")
+
+    async def test_fire_agent_hooks_publishes_inbound(self) -> None:
+        """``_fire_agent_hooks`` reaches into the prompt's skills loader,
+        finds ``agent_end`` hooks, and publishes one ``InboundMessage``
+        per hook on the bus. Failures on a single publish are logged
+        but don't stop subsequent hooks from firing."""
+
+        bus = MagicMock()
+        bus.publish_inbound = AsyncMock()
+
+        # Two hooks: first publishes fine, second raises — both must
+        # be attempted (failure logged, loop continues).
+        hook_a = MagicMock(skill_name="a", prompt="run-a", tools=["t1"], skills=["s1"])
+        hook_b = MagicMock(skill_name="b", prompt="run-b", tools=[], skills=[])
+
+        skills_loader = MagicMock()
+        skills_loader.get_agent_hooks = MagicMock(return_value=[hook_a, hook_b])
+
+        prompt = _make_mock_prompt()
+        prompt.skills = skills_loader
+
+        # Second publish raises so we exercise the except branch.
+        bus.publish_inbound = AsyncMock(side_effect=[None, RuntimeError("downstream")])
+
+        conv = DefaultConversation(
+            history=_make_mock_history(),
+            memory=_make_mock_memory(),
+            prompt=prompt,
+            bus=bus,
+        )
+        conv._turn_chat_id = "topic-x"
+        await conv._fire_agent_hooks("test:1")
+
+        assert bus.publish_inbound.await_count == 2
+        first_msg = bus.publish_inbound.await_args_list[0].args[0]
+        assert first_msg.channel == "hook"
+        assert first_msg.chat_id == "topic-x"
+        assert first_msg.metadata["hook_skill"] == "a"
+
+    async def test_fire_agent_hooks_skips_when_no_skills_loader(self) -> None:
+        """A prompt builder without a ``skills`` attribute (e.g. a stub)
+        short-circuits early — no bus calls."""
+
+        bus = MagicMock()
+        bus.publish_inbound = AsyncMock()
+        prompt = MagicMock(spec=["build_messages"])
+        # spec excludes ``skills`` so getattr returns None.
+        conv = DefaultConversation(
+            history=_make_mock_history(),
+            memory=_make_mock_memory(),
+            prompt=prompt,
+            bus=bus,
+        )
+        await conv._fire_agent_hooks("test:1")
+        bus.publish_inbound.assert_not_called()
+
+    async def test_fire_agent_hooks_skips_when_no_hooks(self) -> None:
+        """Skills loader present but no ``agent_end`` hooks registered
+        — the empty-hooks early-return."""
+
+        bus = MagicMock()
+        bus.publish_inbound = AsyncMock()
+        skills_loader = MagicMock()
+        skills_loader.get_agent_hooks = MagicMock(return_value=[])
+        prompt = _make_mock_prompt()
+        prompt.skills = skills_loader
+        conv = DefaultConversation(
+            history=_make_mock_history(),
+            memory=_make_mock_memory(),
+            prompt=prompt,
+            bus=bus,
+        )
+        await conv._fire_agent_hooks("test:1")
+        bus.publish_inbound.assert_not_called()
+
+    async def test_record_drops_user_with_only_filtered_list_content(self) -> None:
+        """A user message whose only list-content blocks all get
+        filtered (e.g. only a runtime-context tag) becomes empty —
+        ``_prepare_turn`` drops it rather than persisting an empty
+        message that would confuse the LLM."""
+        session = Session(key="test:1")
+        conv = DefaultConversation(
+            history=_make_mock_history(session),
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+        )
+        msg = {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": f"{CONV_TAG}\nmetadata only"},
+            ],
+        }
+        await conv.record("test:1", [msg])
+        assert session.messages == []
+
 
 # ---------------------------------------------------------------------------
 # active_tools() unit tests
