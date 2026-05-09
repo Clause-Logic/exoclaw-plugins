@@ -89,9 +89,8 @@ class TestSession:
         assert len(s.messages) == 2
 
     def test_add_message_total_with_offset(self) -> None:
-        """add_message with pre-existing offset must track total correctly."""
+        """add_message with pre-existing total must keep tracking correctly."""
         s = Session(key="test")
-        s._messages_offset = 100
         s._total_messages = 105
         s.messages = [{"role": "user", "content": str(i)} for i in range(5)]
         s.add_message("user", "new")
@@ -1405,9 +1404,7 @@ class TestMemoryStoreEdgeCases:
         # Drive the policy directly with a list-backed reader so the test
         # exercises the boundary-repair logic without a full
         # SessionManager round-trip.
-        policy = SummarizingConsolidationPolicy(
-            memory=store, state_dir=tmp_path, memory_window=14
-        )
+        policy = SummarizingConsolidationPolicy(memory=store, state_dir=tmp_path, memory_window=14)
         reader = _MockReader("ut:test", messages)
         await policy.on_turn_complete(reader)
 
@@ -1552,7 +1549,9 @@ class TestDefaultConversationRecoverFromOverflow:
             async def recover_from_overflow(self, reader) -> bool:  # type: ignore[no-untyped-def]
                 return True
 
-        prompt = MagicMock(spec=["build_messages", "build_system_prompt", "get_active_optional_tools"])
+        prompt = MagicMock(
+            spec=["build_messages", "build_system_prompt", "get_active_optional_tools"]
+        )
         prompt.build_system_prompt = MagicMock(return_value="SYSTEM PROMPT")
         prompt.get_active_optional_tools = MagicMock(return_value=set())
 
@@ -1620,9 +1619,7 @@ class TestDefaultConversationExtra:
         result = await conv.clear("test:1")
         assert result is False
 
-    async def test_clear_deletes_sidecar_when_history_exposes_dir(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_clear_deletes_sidecar_when_history_exposes_dir(self, tmp_path: Path) -> None:
         """If the ``HistoryStore`` exposes a ``sessions_dir``, ``clear``
         also deletes the policy sidecar that lives next to the session
         JSONL. Without this, a sidecar from a deleted session would

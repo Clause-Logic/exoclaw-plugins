@@ -18,6 +18,7 @@ source of truth.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 from typing import Any
 
@@ -173,9 +174,13 @@ def save_state(state_dir: Path, key: str, state: ConsolidationState) -> None:
     ensure_dir(state_dir)
     state.last_updated = datetime.now().isoformat()
     path = sidecar_path(state_dir, key)
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    # ``Path.with_suffix`` / ``Path.replace`` aren't on the MP
+    # ``exoclaw._compat.Path`` shim (it's a Path subset, not a full
+    # pathlib reimplementation). Construct the temp path via string
+    # concat and rename via ``os.replace`` — both work cross-runtime.
+    tmp = Path(str(path) + ".tmp")
     tmp.write_text(json.dumps(state.to_dict(), indent=2), encoding="utf-8")
-    tmp.replace(path)
+    os.replace(str(tmp), str(path))
 
 
 def delete_state(state_dir: Path, key: str) -> None:

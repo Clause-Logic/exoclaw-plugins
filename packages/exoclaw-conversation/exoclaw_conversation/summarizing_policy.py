@@ -43,7 +43,19 @@ logger = get_logger()
 # Async chunk-summarizer callable — defaults to MemoryBackend.summarize
 # but can be overridden for tests / Temporal-activity boundaries where
 # the LLM call must run via a different transport.
-ChunkSummarizer = Callable[[list[dict[str, Any]], bool], Awaitable["str | None"]]
+#
+# Subscribing ``Callable[[list[dict[...]], bool], Awaitable[...]]`` at
+# module level evaluates ``list[dict[...]]`` eagerly, which MicroPython
+# 1.27 rejects with ``TypeError: 'type' object isn't subscriptable``
+# (built-in ``list``/``dict`` aren't subscriptable in MP). Gate the
+# real alias on ``TYPE_CHECKING`` so type checkers see it; at runtime
+# ``ChunkSummarizer`` is just ``object`` and stringified annotations
+# resolve via the type-checker side. Same pattern as core's
+# ``PriorSource`` in ``exoclaw/executor.py``.
+if TYPE_CHECKING:
+    ChunkSummarizer = Callable[[list[dict[str, Any]], bool], Awaitable["str | None"]]
+else:
+    ChunkSummarizer = object
 
 
 class SummarizingConsolidationPolicy:
@@ -221,11 +233,7 @@ class SummarizingConsolidationPolicy:
                 cur_idx += 1
                 continue
             prev = await reader.at(cur_idx - 1) if cur_idx > 0 else None
-            if (
-                prev is not None
-                and prev.get("role") == "assistant"
-                and prev.get("tool_calls")
-            ):
+            if prev is not None and prev.get("role") == "assistant" and prev.get("tool_calls"):
                 cur_idx += 1
                 continue
             break

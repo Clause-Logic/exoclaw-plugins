@@ -86,9 +86,7 @@ class TestRecoverFromOverflow:
         """A successful summarize call advances the sidecar and
         returns ``True`` so the caller knows to retry."""
         memory = _summarize_succeeds("[archived]")
-        policy = SummarizingConsolidationPolicy(
-            memory=memory, state_dir=tmp_path, memory_window=2
-        )
+        policy = SummarizingConsolidationPolicy(memory=memory, state_dir=tmp_path, memory_window=2)
         msgs = [{"role": "user", "content": f"message-{i}"} for i in range(6)]
         reader = _ListReader("ut:recover", msgs)
         advanced = await policy.recover_from_overflow(reader)
@@ -103,19 +101,20 @@ class TestRecoverFromOverflow:
         of the log returns ``False`` — caller surfaces the original
         overflow error rather than spinning."""
         memory = _summarize_succeeds()
-        policy = SummarizingConsolidationPolicy(
-            memory=memory, state_dir=tmp_path, memory_window=2
-        )
+        policy = SummarizingConsolidationPolicy(memory=memory, state_dir=tmp_path, memory_window=2)
         # Pre-seed sidecar so summarized_through is already at the tail.
         ss.save_state(
             tmp_path,
             "ut:done",
             ss.ConsolidationState(summarized_through=2, summary="prior"),
         )
-        reader = _ListReader("ut:done", [
-            {"role": "user", "content": "a"},
-            {"role": "assistant", "content": "b"},
-        ])
+        reader = _ListReader(
+            "ut:done",
+            [
+                {"role": "user", "content": "a"},
+                {"role": "assistant", "content": "b"},
+            ],
+        )
         advanced = await policy.recover_from_overflow(reader)
         assert advanced is False
         memory.summarize.assert_not_called()
@@ -125,9 +124,7 @@ class TestRecoverFromOverflow:
         pointer doesn't advance and the method returns False — caller
         surfaces the original overflow."""
         memory = _summarize_fails()
-        policy = SummarizingConsolidationPolicy(
-            memory=memory, state_dir=tmp_path, memory_window=2
-        )
+        policy = SummarizingConsolidationPolicy(memory=memory, state_dir=tmp_path, memory_window=2)
         msgs = [{"role": "user", "content": f"big-{i}" * 20} for i in range(6)]
         reader = _ListReader("ut:fail", msgs)
         advanced = await policy.recover_from_overflow(reader)
@@ -140,9 +137,7 @@ class TestRecoverFromOverflow:
         """The sidecar is written before recover_from_overflow returns —
         partial progress survives a crash before the next retry."""
         memory = _summarize_succeeds("[partial]")
-        policy = SummarizingConsolidationPolicy(
-            memory=memory, state_dir=tmp_path, memory_window=2
-        )
+        policy = SummarizingConsolidationPolicy(memory=memory, state_dir=tmp_path, memory_window=2)
         msgs = [{"role": "user", "content": f"msg-{i}"} for i in range(6)]
         reader = _ListReader("ut:persist", msgs)
         await policy.recover_from_overflow(reader)
@@ -157,13 +152,14 @@ class TestOnTurnCompleteThreshold:
         """Under the ``memory_window`` threshold ``on_turn_complete``
         is a no-op — no summarize calls, no sidecar writes."""
         memory = _summarize_succeeds()
-        policy = SummarizingConsolidationPolicy(
-            memory=memory, state_dir=tmp_path, memory_window=10
+        policy = SummarizingConsolidationPolicy(memory=memory, state_dir=tmp_path, memory_window=10)
+        reader = _ListReader(
+            "ut:idle",
+            [
+                {"role": "user", "content": "short"},
+                {"role": "assistant", "content": "ok"},
+            ],
         )
-        reader = _ListReader("ut:idle", [
-            {"role": "user", "content": "short"},
-            {"role": "assistant", "content": "ok"},
-        ])
         await policy.on_turn_complete(reader)
         memory.summarize.assert_not_called()
 
@@ -172,9 +168,7 @@ class TestOnTurnCompleteThreshold:
         chunk per call — long sessions catch up over multiple turns
         rather than freezing the current turn for a multi-chunk batch."""
         memory = _summarize_succeeds("[hop]")
-        policy = SummarizingConsolidationPolicy(
-            memory=memory, state_dir=tmp_path, memory_window=4
-        )
+        policy = SummarizingConsolidationPolicy(memory=memory, state_dir=tmp_path, memory_window=4)
         msgs = [{"role": "user", "content": f"msg-{i}"} for i in range(20)]
         reader = _ListReader("ut:hop", msgs)
         await policy.on_turn_complete(reader)
@@ -193,9 +187,7 @@ class TestBoundaryRepair:
         the emitted view never starts mid-pair — that's the MiniMax
         400-invalid_params guard from the production incident."""
         memory = _summarize_succeeds("[ok]")
-        policy = SummarizingConsolidationPolicy(
-            memory=memory, state_dir=tmp_path, memory_window=2
-        )
+        policy = SummarizingConsolidationPolicy(memory=memory, state_dir=tmp_path, memory_window=2)
         # 1 user, then assistant(tool_calls=T1) at idx 1, tool(T1) at idx 2,
         # plus more pairs. memory_window=2 cuts at idx 2 — but the cut
         # would split T1 across the boundary. Repair must advance past it.
@@ -230,14 +222,17 @@ class TestConsolidationStateMigration:
         migrated into a fresh sidecar on first ``load_state``."""
         legacy = tmp_path / "telegram_42.jsonl"
         legacy.write_text(
-            json.dumps({
-                "_type": "metadata",
-                "key": "telegram:42",
-                "created_at": "2024-01-01",
-                "updated_at": "2024-01-01",
-                "metadata": {"summary": "carryover from old session"},
-                "last_consolidated": 17,
-            }) + "\n"
+            json.dumps(
+                {
+                    "_type": "metadata",
+                    "key": "telegram:42",
+                    "created_at": "2024-01-01",
+                    "updated_at": "2024-01-01",
+                    "metadata": {"summary": "carryover from old session"},
+                    "last_consolidated": 17,
+                }
+            )
+            + "\n"
         )
         state = ss.load_state(tmp_path, "telegram:42")
         assert state.summarized_through == 17
@@ -251,14 +246,17 @@ class TestConsolidationStateMigration:
         sessions."""
         legacy = tmp_path / "telegram_99.jsonl"
         legacy.write_text(
-            json.dumps({
-                "_type": "metadata",
-                "key": "telegram:99",
-                "created_at": "2024-01-01",
-                "updated_at": "2024-01-01",
-                "metadata": {},
-                "last_consolidated": 0,
-            }) + "\n"
+            json.dumps(
+                {
+                    "_type": "metadata",
+                    "key": "telegram:99",
+                    "created_at": "2024-01-01",
+                    "updated_at": "2024-01-01",
+                    "metadata": {},
+                    "last_consolidated": 0,
+                }
+            )
+            + "\n"
         )
         state = ss.load_state(tmp_path, "telegram:99")
         assert state.summarized_through == 0
@@ -279,9 +277,7 @@ class TestConsolidationStateMigration:
         plain message, or empty) must not produce a sidecar. The
         migration shim's "no legacy data, nothing to migrate" branch."""
         legacy = tmp_path / "telegram_77.jsonl"
-        legacy.write_text(
-            json.dumps({"role": "user", "content": "hi"}) + "\n"
-        )
+        legacy.write_text(json.dumps({"role": "user", "content": "hi"}) + "\n")
         state = ss.load_state(tmp_path, "telegram:77")
         assert state.summarized_through == 0
         assert not (tmp_path / "telegram_77.consolidation.json").exists()
@@ -290,9 +286,7 @@ class TestConsolidationStateMigration:
         """First line is JSON but ``_type`` isn't ``metadata`` — must
         be treated like an absent header rather than crashing."""
         legacy = tmp_path / "telegram_88.jsonl"
-        legacy.write_text(
-            json.dumps({"_type": "something_else", "data": 1}) + "\n"
-        )
+        legacy.write_text(json.dumps({"_type": "something_else", "data": 1}) + "\n")
         state = ss.load_state(tmp_path, "telegram:88")
         assert state.summarized_through == 0
 
@@ -318,23 +312,24 @@ class TestConsolidationStateMigration:
         reloaded = ss.load_state(tmp_path, "ut:stamp")
         assert reloaded.last_updated is not None
 
-    def test_migration_swallows_save_failure(
-        self, tmp_path: Path, monkeypatch: Any
-    ) -> None:
+    def test_migration_swallows_save_failure(self, tmp_path: Path, monkeypatch: Any) -> None:
         """If the migration shim can't persist the seeded sidecar (disk
         full, permissions), we still return the in-memory state so the
         policy can keep working — the sidecar just doesn't get
         materialized this run. The exception is logged, not re-raised."""
         legacy = tmp_path / "telegram_99.jsonl"
         legacy.write_text(
-            json.dumps({
-                "_type": "metadata",
-                "key": "telegram:99",
-                "created_at": "2024-01-01",
-                "updated_at": "2024-01-01",
-                "metadata": {"summary": "old"},
-                "last_consolidated": 5,
-            }) + "\n"
+            json.dumps(
+                {
+                    "_type": "metadata",
+                    "key": "telegram:99",
+                    "created_at": "2024-01-01",
+                    "updated_at": "2024-01-01",
+                    "metadata": {"summary": "old"},
+                    "last_consolidated": 5,
+                }
+            )
+            + "\n"
         )
 
         def _boom(*_args: Any, **_kwargs: Any) -> None:
@@ -347,9 +342,7 @@ class TestConsolidationStateMigration:
         assert state.summarized_through == 5
         assert state.summary == "old"
 
-    def test_delete_state_swallows_unlink_failure(
-        self, tmp_path: Path, monkeypatch: Any
-    ) -> None:
+    def test_delete_state_swallows_unlink_failure(self, tmp_path: Path, monkeypatch: Any) -> None:
         """``delete_state`` never raises — used by ``conv.clear`` which
         runs as best-effort cleanup. A failed unlink (permissions, etc.)
         is logged and ignored."""
@@ -405,7 +398,9 @@ class TestDefaultSessionReader:
         reader = _DefaultSessionReader(store, "ut:default")
         assert reader.key == "ut:default"
         assert await reader.count() == 5
-        assert (await reader.at(2))["content"] == "2"
+        msg2 = await reader.at(2)
+        assert msg2 is not None
+        assert msg2["content"] == "2"
         assert await reader.at(99) is None
         streamed = [m async for m in reader.stream()]
         assert [m["content"] for m in streamed] == [str(i) for i in range(5)]

@@ -449,9 +449,7 @@ def _build_dispatching_provider() -> tuple[Any, dict[str, int]]:
                         id=f"sm-{counters['memory']}",
                         name="save_memory",
                         arguments={
-                            "history_entry": (
-                                f"[summary-{counters['memory']}] earlier exchange"
-                            ),
+                            "history_entry": (f"[summary-{counters['memory']}] earlier exchange"),
                             "memory_update": "fact: integration test running",
                         },
                     )
@@ -523,9 +521,7 @@ class TestConsolidationCascadeThroughFullAgentLoop:
         # background ``on_turn_complete`` task has had enough log
         # entries to summarize one chunk and update the sidecar.
         for n in range(4):
-            await run_durable_turn(
-                session_id, f"q{n}", channel="cli", chat_id="u"
-            )
+            await run_durable_turn(session_id, f"q{n}", channel="cli", chat_id="u")
             # Wait for any background maintenance tasks spawned by
             # post_turn so the assertions below see a settled sidecar.
             pending = list(conv._consolidation_tasks)
@@ -538,15 +534,17 @@ class TestConsolidationCascadeThroughFullAgentLoop:
             "consolidation didn't advance the sidecar pointer; "
             f"summarized_through={sidecar.summarized_through}"
         )
-        assert sidecar.summary, (
-            "sidecar carries no summary text after consolidation"
-        )
+        assert sidecar.summary, "sidecar carries no summary text after consolidation"
         assert "[summary" in sidecar.summary, (
             f"summary text missing the synthetic marker: {sidecar.summary!r}"
         )
 
         # ── MemoryStore wrote artifacts ──────────────────────────────
+        # ``conv.memory`` is typed as the ``MemoryBackend`` protocol
+        # which doesn't surface ``history_file``; narrow to the
+        # concrete impl for the artifact assertions.
         memory = conv.memory
+        assert isinstance(memory, MemoryStore)
         assert memory.history_file.exists(), "HISTORY.md was never written"
         assert "[summary" in memory.history_file.read_text(), (
             "HISTORY.md doesn't contain the policy's summary entry"
@@ -555,9 +553,7 @@ class TestConsolidationCascadeThroughFullAgentLoop:
         # ── One more turn — its prompt history must lead with the
         #    rolling summary preamble emitted by ``policy.transform``.
         captured_history.clear()
-        await run_durable_turn(
-            session_id, "q-after", channel="cli", chat_id="u"
-        )
+        await run_durable_turn(session_id, "q-after", channel="cli", chat_id="u")
         pending = list(conv._consolidation_tasks)
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)

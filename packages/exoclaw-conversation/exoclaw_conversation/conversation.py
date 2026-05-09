@@ -333,9 +333,7 @@ class DefaultConversation:
         """Return optional tool names activated by the current turn's skills."""
         return self.prompt.get_active_optional_tools()
 
-    async def recover_from_overflow(
-        self, session_id: str
-    ) -> list[dict[str, Any]] | None:
+    async def recover_from_overflow(self, session_id: str) -> list[dict[str, Any]] | None:
         """Reactive overflow-recovery seam consumed by ``AgentLoop``
         (via ``Executor.recover_from_overflow``) on
         ``ContextWindowExceededError``.
@@ -402,9 +400,7 @@ class DefaultConversation:
                 async with lock:
                     await self._consolidation_policy.on_turn_complete(reader)
             except Exception:
-                logger.exception(
-                    "policy_on_turn_complete_failed", **{"session.id": session_id}
-                )
+                logger.exception("policy_on_turn_complete_failed", **{"session.id": session_id})
             finally:
                 self._consolidating.discard(session_id)
                 _task = asyncio.current_task()
