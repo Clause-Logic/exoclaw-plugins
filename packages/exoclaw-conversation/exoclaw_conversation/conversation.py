@@ -187,7 +187,11 @@ class DefaultConversation:
             history = []
         else:
             reader = self.history.reader(session_id)
-            history = [m async for m in self._consolidation_policy.transform(reader)]
+            # Async list comprehensions (PEP 530) don't parse on
+            # MicroPython 1.27 — build via explicit ``async for``.
+            history = []
+            async for _m in self._consolidation_policy.transform(reader):
+                history.append(_m)
 
         extra_context: str | None = None
         if plugin_context:
@@ -356,8 +360,12 @@ class DefaultConversation:
 
         # Re-materialize the active view through the policy. Includes
         # the rolling summary preamble (if any) plus the tail past
-        # the freshly-advanced ``summarized_through`` pointer.
-        recovered_view = [m async for m in self._consolidation_policy.transform(reader)]
+        # the freshly-advanced ``summarized_through`` pointer. Built
+        # via explicit ``async for`` because async list comprehensions
+        # don't parse on MicroPython 1.27.
+        recovered_view: list[dict[str, Any]] = []
+        async for _m in self._consolidation_policy.transform(reader):
+            recovered_view.append(_m)
 
         # Prepend the system prompt manually rather than going through
         # ``build_messages`` — the latter would append an empty user
