@@ -2,10 +2,50 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, AsyncIterator, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from .session.manager import Session
+
+
+@runtime_checkable
+class SessionReader(Protocol):
+    """Read-only, streaming view of a session's append-only message log.
+
+    All access is lazy — implementations stream from disk and never
+    materialize the full log in RAM. Restartable: ``stream()`` may be
+    called multiple times.
+
+    A ``SessionReader`` is policy-facing. The policy uses it to inspect
+    the log without coupling to ``HistoryStore`` internals or holding
+    the messages in Python memory.
+    """
+
+    @property
+    def key(self) -> str:
+        """The session key this reader is bound to."""
+        ...
+
+    async def count(self) -> int:
+        """Total messages currently in the log. Cheap — backed by the
+        store's index, not a full scan."""
+        ...
+
+    def stream(
+        self,
+        *,
+        start: int = 0,
+        end: int | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Stream messages in [start, end) one at a time. ``end=None``
+        streams to the current tail. Restartable — call again to re-read.
+        """
+        ...
+
+    async def at(self, index: int) -> dict[str, Any] | None:
+        """Random-access read of one message. Returns ``None`` if out of
+        range. For peek/lookahead — not for bulk reads."""
+        ...
 
 
 @runtime_checkable
@@ -28,6 +68,17 @@ class HistoryStore(Protocol):
     def load_range(self, key: str, start: int, end: int) -> list[dict[str, Any]]:
         """Load a range of messages from disk by index. Returns empty list by default."""
         return []
+
+    def reader(self, key: str) -> SessionReader:
+        """Return a streaming reader for the session's append-only log.
+
+        Default implementation wraps ``load_range`` / ``read_history`` —
+        correct but not memory-efficient. Backends should override with
+        a true streaming impl (e.g. line-by-line JSONL read, DB cursor).
+        """
+        from ._reader import _DefaultSessionReader
+
+        return _DefaultSessionReader(self, key)
 
     def read_history(self, key: str, max_messages: int | None = None) -> list[dict[str, Any]]:
         """Return the unconsolidated tail for LLM input, applying orphan repair.
@@ -72,33 +123,57 @@ class MemoryBackend(Protocol):
 class ConsolidationPolicy(Protocol):
     """Pluggable consolidation strategy.
 
-    Controls *when* and *how* old messages are consolidated. The default
-    behaviour (no policy) delegates to MemoryBackend.consolidate() which
-    runs a single LLM call to produce MEMORY.md + HISTORY.md updates.
+    A policy owns the *view* the LLM sees: it transforms the append-only
+    message log into the message list sent to the model. It may drop,
+    replace, prepend (e.g. with a summary), or truncate messages — and
+    it persists its own state in a sidecar next to the session file.
+    The session log itself is append-only and never mutated by the
+    policy.
 
-    Implement this protocol to add custom behaviour at consolidation
-    boundaries — per-session summaries, task-tracker sync, daily notes,
-    multi-stage summarization, or anything else.
+    ``transform`` is the read seam: ``DefaultConversation`` calls it
+    every turn to materialize the LLM input from a ``SessionReader``.
+    ``on_turn_complete`` is the write seam: called once per turn so
+    the policy can run any deferred work (token-estimate maintenance,
+    background summarization) and persist its sidecar.
+
+    Policies receive no ``Session`` handle. They are constructed with
+    whatever state-store they need; the only runtime input is a
+    streaming reader over the session's append-only log.
     """
 
-    async def should_consolidate(
+    def transform(
         self,
-        session: "Session",
+        reader: SessionReader,
         *,
-        memory_window: int,
-    ) -> bool:
-        """Return True when consolidation should run."""
-        ...
+        budget: int | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Transform a streaming view of the session log into the
+        message list to send to the LLM.
 
-    async def consolidate(
-        self,
-        session: "Session",
-        *,
-        archive_all: bool = False,
-        memory_window: int = 50,
-    ) -> bool:
-        """Run consolidation. Returns True on success."""
-        ...
+        May drop, replace, prepend, or truncate messages. May call
+        ``reader.stream()`` multiple times, peek with ``at()``, check
+        size with ``count()``. Must not hold the full log in memory.
+
+        If ``budget`` is given, the emitted stream should aim to fit
+        within ``budget`` tokens (best-effort, for overflow recovery).
+        Without ``budget``, normal consolidation rules apply.
+
+        Default is a passthrough — no transformation.
+        """
+
+        async def _passthrough() -> AsyncIterator[dict[str, Any]]:
+            async for m in reader.stream():
+                yield m
+
+        return _passthrough()
+
+    async def on_turn_complete(self, reader: SessionReader) -> None:
+        """Notify the policy a turn finished. Lets it run background
+        work (chunk-token-estimate updates, deferred summarization)
+        and persist its sidecar.
+
+        Default is a no-op."""
+        return None
 
 
 @runtime_checkable

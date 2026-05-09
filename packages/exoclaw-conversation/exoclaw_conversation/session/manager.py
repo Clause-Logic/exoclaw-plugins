@@ -2,9 +2,14 @@
 
 import json
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from exoclaw._compat import IS_MICROPYTHON, Path, WeakValueDictionary, get_logger
+
+if TYPE_CHECKING:
+    from typing import AsyncIterator
+
+    from ..protocols import SessionReader  # noqa: F401
 
 from ..helpers import ensure_dir, safe_filename
 
@@ -384,6 +389,15 @@ class SessionManager:
                 idx += 1
         return messages
 
+    def reader(self, key: str) -> "SessionReader":  # noqa: F821
+        """Return a streaming reader backed by the on-disk JSONL log.
+
+        Streams messages line-by-line via ``load_range`` — never holds
+        the full log in RAM. ``count`` reads the cached/persisted
+        ``total_messages`` rather than scanning the file.
+        """
+        return _JsonlSessionReader(self, key)
+
     def save(self, session: Session) -> None:
         """Rewrite the full session to disk.
 
@@ -515,3 +529,85 @@ class SessionManager:
                 continue
 
         return sorted(sessions, key=lambda x: x.get("updated_at", ""), reverse=True)
+
+
+class _JsonlSessionReader:
+    """Streaming ``SessionReader`` backed by ``SessionManager``'s JSONL log.
+
+    Streams messages line-by-line from disk — never holds the full log
+    in RAM. ``stream`` is restartable: each call reopens the file.
+    ``count`` reuses ``SessionManager``'s cached session metadata when
+    available, scanning the file only as a fallback.
+    """
+
+    def __init__(self, manager: "SessionManager", key: str) -> None:
+        self._manager = manager
+        self._key = key
+
+    @property
+    def key(self) -> str:
+        return self._key
+
+    async def count(self) -> int:
+        # Cached path: the session is usually live in the WeakValueDict
+        # because the caller just built the prompt from it.
+        cached = self._manager._cache.get(self._key)
+        if cached is not None:
+            return cached.total_messages
+        # Cold path: scan the file (skip the metadata line).
+        path = self._manager._get_session_path(self._key)
+        if not path.exists():
+            return 0
+        total = 0
+        with open(str(path)) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                if total == 0 and '"_type"' in line:
+                    try:
+                        if json.loads(line).get("_type") == "metadata":
+                            continue
+                    except (ValueError, json.JSONDecodeError):
+                        pass
+                total += 1
+        return total
+
+    def stream(
+        self,
+        *,
+        start: int = 0,
+        end: int | None = None,
+    ) -> "AsyncIterator[dict[str, Any]]":  # noqa: F821
+        manager = self._manager
+        key = self._key
+
+        async def _gen():  # type: ignore[no-untyped-def]
+            path = manager._get_session_path(key)
+            if not path.exists():
+                return
+            stop = end if end is not None else (1 << 30)
+            idx = 0
+            with open(str(path)) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if '"_type"' in line:
+                        try:
+                            if json.loads(line).get("_type") == "metadata":
+                                continue
+                        except (ValueError, json.JSONDecodeError):
+                            pass
+                    if idx >= stop:
+                        break
+                    if idx >= start:
+                        yield json.loads(line)
+                    idx += 1
+
+        return _gen()
+
+    async def at(self, index: int) -> "dict[str, Any] | None":
+        async for msg in self.stream(start=index, end=index + 1):
+            return msg
+        return None
