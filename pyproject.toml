@@ -24,6 +24,14 @@ exoclaw-screen = { workspace = true }
 exoclaw-tools-web = { workspace = true }
 exoclaw-tools-voice = { workspace = true }
 exoclaw-turn-budget = { workspace = true }
+exoclaw-nanobot-compat = { workspace = true }
+exoclaw-channel-codemod = { workspace = true }
+exoclaw-channel-slack = { workspace = true }
+exoclaw-channel-telegram = { workspace = true }
+exoclaw-channel-discord = { workspace = true }
+exoclaw-channel-email = { workspace = true }
+exoclaw-channel-matrix = { workspace = true }
+exoclaw-channel-whatsapp = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -50,6 +58,11 @@ asyncio_mode = "auto"
 testpaths = ["packages"]
 timeout = 10
 addopts = "--import-mode=importlib"
+# Codemod-vendored channels keep raw upstream test snapshots in `vendor/`
+# for diff-against-upstream during sync. Those files import `from nanobot…`
+# which only resolves in HKUDS's checkout; pytest must not try to collect
+# them.
+norecursedirs = ["vendor", ".venv*", "node_modules", "__pycache__"]
 
 [tool.mypy]
 python_version = "3.11"
@@ -70,11 +83,31 @@ ignore_missing_imports = true
 exclude = [
     "**/scripts/**",
     "**/boards/**",
+    # Vendored upstream snapshots — raw HKUDS/nanobot files used as codemod
+    # input. The codemod-generated channel.py and test_channel.py are
+    # gitignored (see hatch_build.py + per-package conftest.py) but may exist
+    # in working tree after a test run; exclude both so audits stay focused
+    # on hand-written code (compat shim + codemod + patches).
+    "packages/exoclaw-channel-*/vendor/**",
+    # The whole exoclaw_channel_* dir holds only `__init__.py` (re-exports
+    # from the gitignored, codemod-generated `channel.py`) — nothing
+    # ty-meaningful unless the codemod output is materialized first.
+    "packages/exoclaw-channel-*/exoclaw_channel_*/**",
+    "packages/exoclaw-channel-*/tests/test_channel.py",
+    # Build/test bootstrap scripts — import paths only resolve in the build
+    # env (hatchling) or after sys.path mutation in conftest.
+    "packages/exoclaw-channel-*/conftest.py",
+    "packages/exoclaw-channel-*/hatch_build.py",
 ]
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+extend-exclude = [
+    "packages/exoclaw-channel-*/vendor/**",
+    "packages/exoclaw-channel-*/exoclaw_channel_*/channel.py",
+    "packages/exoclaw-channel-*/tests/test_channel.py",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "TID251"]

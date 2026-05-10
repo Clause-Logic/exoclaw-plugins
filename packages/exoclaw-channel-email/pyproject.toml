@@ -1,0 +1,35 @@
+[project]
+name = "exoclaw-channel-email"
+version = "0.1.0"
+description = "Email (IMAP/SMTP) channel for exoclaw — vendored from HKUDS/nanobot via codemod"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "exoclaw>=0.28.0",
+    "exoclaw-nanobot-compat>=0.1.0",
+    "loguru>=0.7",
+    "pydantic>=2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
+dependencies = ["exoclaw-channel-codemod"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["exoclaw_channel_email"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "exoclaw_channel_email/__init__.py",
+    "vendor/",
+    "patches/",
+    "tests/",
+    "conftest.py",
+    "hatch_build.py",
+    "pyproject.toml",
+    "README.md",
+]

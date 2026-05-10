@@ -32,6 +32,22 @@ pip install exoclaw-channel-cli
 | `exoclaw-tools-mcp` | [![PyPI](https://img.shields.io/pypi/v/exoclaw-tools-mcp)](https://pypi.org/project/exoclaw-tools-mcp/) | Connect MCP servers and register their tools |
 | `exoclaw-subagent` | [![PyPI](https://img.shields.io/pypi/v/exoclaw-subagent)](https://pypi.org/project/exoclaw-subagent/) | SubagentManager — nested AgentLoop execution |
 
+### Vendored channels (codemod from HKUDS/nanobot)
+
+The following channel packages are codemod-vendored from [HKUDS/nanobot](https://github.com/HKUDS/nanobot) (MIT). Source files live in each package's `vendor/` dir; codemod output lives next to it; upstream tests are ported and run on every PR. Maintenance is `bash tools/channel-codemod/sync.sh <name> --apply` against a newer upstream commit.
+
+| Package | Description |
+|---|---|
+| `exoclaw-nanobot-compat` | Compat shim — `BaseChannel` superset, bus re-exports, helper shims. Required by all vendored channels below. |
+| `exoclaw-channel-slack` | Slack channel — Socket Mode, Block Kit, file uploads, mrkdwn |
+| `exoclaw-channel-telegram` | Telegram channel — long-poll, inline keyboards, video, MarkdownV2 |
+| `exoclaw-channel-discord` | Discord channel — discord.py, threads, streaming via message edits |
+| `exoclaw-channel-email` | Email channel — IMAP poll + SMTP send, attachment extraction |
+| `exoclaw-channel-matrix` | Matrix channel — matrix-nio, E2E, threads |
+| `exoclaw-channel-whatsapp` | WhatsApp channel — manages a Node bridge sidecar (npm + ws) |
+
+See [`packages/exoclaw-nanobot-compat/README.md`](packages/exoclaw-nanobot-compat/README.md) for the codemod design and [`packages/exoclaw-channel-codemod/`](packages/exoclaw-channel-codemod/) for the codemod itself + maintenance scripts.
+
 ---
 
 ## Quick start
