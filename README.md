@@ -4,14 +4,14 @@ Drop-in pieces for [exoclaw](https://github.com/Clause-Logic/exoclaw) — pick a
 
 ---
 
-## Working bot in 30 seconds
+## Working CLI agent in 30 seconds
 
 ```
 pip install exoclaw-nanobot
 exoclaw-nanobot
 ```
 
-That installs the full bundle (provider + conversation + every tool + every channel) and gives you a working agent. Edit `~/.nanobot/config.json` to point it at your LLM and turn on the channels you want.
+That installs a bundle (provider + conversation + tools + the CLI and heartbeat channels) and drops you into an interactive REPL. Edit `~/.nanobot/config.json` to point it at your LLM.
 
 ```python
 import asyncio
@@ -23,6 +23,8 @@ async def main():
 
 asyncio.run(main())
 ```
+
+Need Slack, Telegram, Discord, etc.? Install the channel package alongside it and pass it via `extra_channels=[...]` — see [Slack example](#slack-bot-four-lines-of-config) below.
 
 ---
 
