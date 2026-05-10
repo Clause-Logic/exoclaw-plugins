@@ -11,3 +11,19 @@ dist/
 
 # Per-developer mise overrides (e.g. EXOCLAW_MICROPYTHON_BIN).
 mise.local.toml
+
+# Codemod-generated channel modules and ported tests — derived from
+# packages/exoclaw-channel-*/vendor/upstream*.py + patches/. Materialized
+# at test time by per-package conftest.py and at build time by hatch_build.py.
+packages/exoclaw-channel-slack/exoclaw_channel_slack/channel.py
+packages/exoclaw-channel-slack/tests/test_channel.py
+packages/exoclaw-channel-telegram/exoclaw_channel_telegram/channel.py
+packages/exoclaw-channel-telegram/tests/test_channel.py
+packages/exoclaw-channel-discord/exoclaw_channel_discord/channel.py
+packages/exoclaw-channel-discord/tests/test_channel.py
+packages/exoclaw-channel-email/exoclaw_channel_email/channel.py
+packages/exoclaw-channel-email/tests/test_channel.py
+packages/exoclaw-channel-matrix/exoclaw_channel_matrix/channel.py
+packages/exoclaw-channel-matrix/tests/test_channel.py
+packages/exoclaw-channel-whatsapp/exoclaw_channel_whatsapp/channel.py
+packages/exoclaw-channel-whatsapp/tests/test_channel.py

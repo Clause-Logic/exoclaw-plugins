@@ -1,0 +1,10 @@
+--- a/test_channel.py
++++ b/test_channel.py
+@@ -1304,6 +1304,7 @@
+ 
+ 
+ @pytest.mark.asyncio
++@pytest.mark.skip(reason="exoclaw has no command system; build_help_text returns a static neutral string")
+ async def test_on_help_includes_restart_command() -> None:
+     channel = TelegramChannel(
+         TelegramConfig(enabled=True, token="123:abc", allow_from=["*"], group_policy="open"),

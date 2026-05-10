@@ -1,0 +1,15 @@
+[project]
+name = "exoclaw-nanobot-compat"
+version = "0.1.0"
+description = "Compatibility shim for HKUDS/nanobot channels vendored under exoclaw via codemod"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "exoclaw>=0.28.0",
+    "loguru>=0.7",
+    "pydantic>=2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
