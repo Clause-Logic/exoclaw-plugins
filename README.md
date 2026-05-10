@@ -1,93 +1,165 @@
 # exoclaw-plugins
 
-Plugin packages for [exoclaw](https://github.com/exoclaw/exoclaw) — the protocol-only AI agent framework.
-
-```
-pip install exoclaw-nanobot   # full stack, drop-in replacement for nanobot
-```
-
-Or pick only what you need:
-
-```
-pip install exoclaw-provider-litellm
-pip install exoclaw-conversation
-pip install exoclaw-channel-cli
-```
+Drop-in pieces for [exoclaw](https://github.com/Clause-Logic/exoclaw) — pick a provider, a memory store, the channels you want, and the tools you need.
 
 ---
 
-## Packages
+## Working CLI agent in 30 seconds
 
-| Package | PyPI | Description |
-|---|---|---|
-| `exoclaw-nanobot` | [![PyPI](https://img.shields.io/pypi/v/exoclaw-nanobot)](https://pypi.org/project/exoclaw-nanobot/) | Full-stack bundle — config, wiring, `exoclaw-nanobot` CLI |
-| `exoclaw-conversation` | [![PyPI](https://img.shields.io/pypi/v/exoclaw-conversation)](https://pypi.org/project/exoclaw-conversation/) | File-backed sessions, JSONL history, LLM memory consolidation |
-| `exoclaw-provider-litellm` | [![PyPI](https://img.shields.io/pypi/v/exoclaw-provider-litellm)](https://pypi.org/project/exoclaw-provider-litellm/) | LiteLLM provider — Anthropic, OpenAI, OpenRouter, and more |
-| `exoclaw-channel-cli` | [![PyPI](https://img.shields.io/pypi/v/exoclaw-channel-cli)](https://pypi.org/project/exoclaw-channel-cli/) | Interactive terminal REPL channel |
-| `exoclaw-channel-heartbeat` | [![PyPI](https://img.shields.io/pypi/v/exoclaw-channel-heartbeat)](https://pypi.org/project/exoclaw-channel-heartbeat/) | Timed heartbeat service for background agent tasks |
-| `exoclaw-tools-workspace` | [![PyPI](https://img.shields.io/pypi/v/exoclaw-tools-workspace)](https://pypi.org/project/exoclaw-tools-workspace/) | File, shell, and web tools |
-| `exoclaw-tools-cron` | [![PyPI](https://img.shields.io/pypi/v/exoclaw-tools-cron)](https://pypi.org/project/exoclaw-tools-cron/) | Cron scheduler tool |
-| `exoclaw-tools-message` | [![PyPI](https://img.shields.io/pypi/v/exoclaw-tools-message)](https://pypi.org/project/exoclaw-tools-message/) | Send messages to channels from within a turn |
-| `exoclaw-tools-spawn` | [![PyPI](https://img.shields.io/pypi/v/exoclaw-tools-spawn)](https://pypi.org/project/exoclaw-tools-spawn/) | Spawn background subagents |
-| `exoclaw-tools-mcp` | [![PyPI](https://img.shields.io/pypi/v/exoclaw-tools-mcp)](https://pypi.org/project/exoclaw-tools-mcp/) | Connect MCP servers and register their tools |
-| `exoclaw-subagent` | [![PyPI](https://img.shields.io/pypi/v/exoclaw-subagent)](https://pypi.org/project/exoclaw-subagent/) | SubagentManager — nested AgentLoop execution |
+```
+pip install exoclaw-nanobot
+exoclaw-nanobot
+```
 
-### Vendored channels (codemod from HKUDS/nanobot)
-
-The following channel packages are codemod-vendored from [HKUDS/nanobot](https://github.com/HKUDS/nanobot) (MIT). Source files live in each package's `vendor/` dir; codemod output lives next to it; upstream tests are ported and run on every PR. Maintenance is `bash tools/channel-codemod/sync.sh <name> --apply` against a newer upstream commit.
-
-| Package | Description |
-|---|---|
-| `exoclaw-nanobot-compat` | Compat shim — `BaseChannel` superset, bus re-exports, helper shims. Required by all vendored channels below. |
-| `exoclaw-channel-slack` | Slack channel — Socket Mode, Block Kit, file uploads, mrkdwn |
-| `exoclaw-channel-telegram` | Telegram channel — long-poll, inline keyboards, video, MarkdownV2 |
-| `exoclaw-channel-discord` | Discord channel — discord.py, threads, streaming via message edits |
-| `exoclaw-channel-email` | Email channel — IMAP poll + SMTP send, attachment extraction |
-| `exoclaw-channel-matrix` | Matrix channel — matrix-nio, E2E, threads |
-| `exoclaw-channel-whatsapp` | WhatsApp channel — manages a Node bridge sidecar (npm + ws) |
-
-See [`packages/exoclaw-nanobot-compat/README.md`](packages/exoclaw-nanobot-compat/README.md) for the codemod design and [`packages/exoclaw-channel-codemod/`](packages/exoclaw-channel-codemod/) for the codemod itself + maintenance scripts.
-
----
-
-## Quick start
+That installs a bundle (provider + conversation + tools + the CLI and heartbeat channels) and drops you into an interactive REPL. Edit `~/.nanobot/config.json` to point it at your LLM.
 
 ```python
 import asyncio
 from exoclaw_nanobot import create
 
 async def main():
-    bot = await create()  # reads ~/.nanobot/config.json, NANOBOT_* env vars
+    bot = await create()  # reads ~/.nanobot/config.json + NANOBOT_* env vars
     await bot.run()
 
 asyncio.run(main())
 ```
 
-Or from the command line:
+Need Slack, Telegram, Discord, etc.? Install the channel package alongside it and pass it via `extra_channels=[...]` — see [Slack example](#slack-bot-four-lines-of-config) below.
 
+---
+
+## Or pick your own stack
+
+A working agent needs at least:
+
+1. An **LLM provider** — talks to a model.
+2. A **conversation** — remembers what's been said.
+3. A **channel** — how messages come in and out.
+
+Everything else is optional. Pick from the catalog below.
+
+### LLM providers
+
+| Package | What you get |
+|---|---|
+| [`exoclaw-provider-litellm`](packages/exoclaw-provider-litellm) | Anthropic, OpenAI, OpenRouter, Bedrock, Ollama, … via [LiteLLM] |
+| [`exoclaw-provider-openai`](packages/exoclaw-provider-openai) | Direct OpenAI SDK |
+
+[LiteLLM]: https://github.com/BerriAI/litellm
+
+### Conversation memory
+
+| Package | What you get |
+|---|---|
+| [`exoclaw-conversation`](packages/exoclaw-conversation) | File-backed sessions, JSONL history, LLM memory consolidation |
+
+### Channels
+
+| Package | What you get |
+|---|---|
+| [`exoclaw-channel-cli`](packages/exoclaw-channel-cli) | Interactive terminal REPL — great for local testing |
+| [`exoclaw-channel-slack`](packages/exoclaw-channel-slack) | Slack — Socket Mode, Block Kit, file uploads |
+| [`exoclaw-channel-telegram`](packages/exoclaw-channel-telegram) | Telegram — long-poll, inline keyboards, video |
+| [`exoclaw-channel-discord`](packages/exoclaw-channel-discord) | Discord — threads, streaming via message edits |
+| [`exoclaw-channel-email`](packages/exoclaw-channel-email) | Email — IMAP poll + SMTP send |
+| [`exoclaw-channel-matrix`](packages/exoclaw-channel-matrix) | Matrix — E2E encryption, threads |
+| [`exoclaw-channel-whatsapp`](packages/exoclaw-channel-whatsapp) | WhatsApp — manages a Node bridge sidecar |
+| [`exoclaw-channel-heartbeat`](packages/exoclaw-channel-heartbeat) | Timed pings to trigger background agent tasks |
+| [`exoclaw-channel-pipe`](packages/exoclaw-channel-pipe) | Stdin/stdout — wire the agent into Unix pipelines |
+
+### Tools
+
+| Package | What the agent can do |
+|---|---|
+| [`exoclaw-tools-workspace`](packages/exoclaw-tools-workspace) | Read, write, and run shell commands inside a workspace dir |
+| [`exoclaw-tools-web`](packages/exoclaw-tools-web) | Web search and page fetching |
+| [`exoclaw-tools-mcp`](packages/exoclaw-tools-mcp) | Connect MCP servers and use their tools |
+| [`exoclaw-tools-cron`](packages/exoclaw-tools-cron) | Schedule reminders and recurring tasks |
+| [`exoclaw-tools-message`](packages/exoclaw-tools-message) | Send messages to other channels mid-turn |
+| [`exoclaw-tools-spawn`](packages/exoclaw-tools-spawn) | Spawn background subagents |
+| [`exoclaw-tools-batch`](packages/exoclaw-tools-batch) | Run several tool calls in parallel |
+| [`exoclaw-tools-llm-call`](packages/exoclaw-tools-llm-call) | Make a one-off LLM call without touching session state |
+| [`exoclaw-tools-voice`](packages/exoclaw-tools-voice) | Audio transcription |
+
+### Behavior plugins
+
+| Package | What it changes |
+|---|---|
+| [`exoclaw-loop-detection`](packages/exoclaw-loop-detection) | Smarter stop conditions (repeat detection, ping-pong, circuit breaker) |
+| [`exoclaw-turn-budget`](packages/exoclaw-turn-budget) | Per-turn token + tool budget enforcement |
+| [`exoclaw-executor-dbos`](packages/exoclaw-executor-dbos) | Durable execution via [DBOS](https://www.dbos.dev) — checkpointed turns |
+| [`exoclaw-subagent`](packages/exoclaw-subagent) | Nested AgentLoop execution for delegated work |
+
+### Integrations
+
+| Package | What it gives you |
+|---|---|
+| [`exoclaw-github`](packages/exoclaw-github) | GitHub Actions bot — replies to issues and PRs |
+| [`exoclaw-screen`](packages/exoclaw-screen) | Screen capture / OCR for visual context |
+| [`exoclaw-firmware`](packages/exoclaw-firmware) | MicroPython firmware images for ESP32-S3 |
+
+---
+
+## Examples
+
+### Slack bot, four lines of config
+
+```python
+import asyncio
+from exoclaw import Exoclaw
+from exoclaw_provider_litellm.provider import LiteLLMProvider
+from exoclaw_conversation.conversation import DefaultConversation
+from exoclaw_channel_slack.channel import SlackChannel
+
+async def main():
+    provider = LiteLLMProvider(default_model="claude-sonnet-4-6")
+    bot = Exoclaw(
+        provider=provider,
+        conversation=DefaultConversation.create(workspace="~/.slackbot", provider=provider),
+        channels=[SlackChannel(config={"bot_token": "...", "app_token": "...", "allow_from": ["*"]})],
+    )
+    await bot.run()
+
+asyncio.run(main())
 ```
-exoclaw-nanobot
+
+### CLI agent with web search
+
+```python
+from exoclaw import Exoclaw
+from exoclaw_provider_litellm.provider import LiteLLMProvider
+from exoclaw_conversation.conversation import DefaultConversation
+from exoclaw_channel_cli.channel import CLIChannel
+from exoclaw_tools_web.search import WebSearchTool
+
+provider = LiteLLMProvider(default_model="claude-sonnet-4-6")
+bot = Exoclaw(
+    provider=provider,
+    conversation=DefaultConversation.create(workspace="~/.cli-agent", provider=provider),
+    channels=[CLIChannel()],
+    tools=[WebSearchTool(api_key="...")],
+)
 ```
 
 ---
 
 ## Development
 
-This is a [uv workspace](https://docs.astral.sh/uv/concepts/workspaces/). All packages live under `packages/`.
+[uv workspace](https://docs.astral.sh/uv/concepts/workspaces/) — all packages live under `packages/`.
 
 ```bash
-uv sync                          # install all packages in editable mode
-uv run pytest                    # run all tests
-uv run mypy packages/<pkg>/      # typecheck a package
+uv sync                # install all packages in editable mode
+uv run pytest          # run all tests
+mise run test          # ditto, plus formatting and linting
 ```
 
-To add a new package:
+Channel packages under `packages/exoclaw-channel-{slack,telegram,discord,email,matrix,whatsapp}` are codemod-vendored from [HKUDS/nanobot](https://github.com/HKUDS/nanobot) (MIT). Source lives in each package's `vendor/` dir; the channel module is generated at build/test time. To pull in upstream fixes:
 
 ```bash
-mkdir -p packages/exoclaw-my-package/exoclaw_my_package
-# create pyproject.toml with hatchling build backend
-# add to [tool.uv.sources] in root pyproject.toml if it depends on another workspace package
+UPSTREAM=~/hkuds-nanobot bash packages/exoclaw-channel-codemod/sync.sh <name> --apply
 ```
+
+See [`packages/exoclaw-channel-codemod`](packages/exoclaw-channel-codemod) for the codemod itself, and [`packages/exoclaw-nanobot-compat`](packages/exoclaw-nanobot-compat) for the runtime compat shim.
 
 ---
 
