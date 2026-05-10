@@ -30,3 +30,37 @@ asyncio.run(main())
 ```
 
 `create()` accepts an optional pre-built `Config` or `config_path`. It returns an `ExoclawNanobot` whose `run()` method starts the cron service, heartbeat, agent loop, and CLI REPL, and tears everything down cleanly on exit.
+
+## Adding channels (Slack, Telegram, Discord, Email, Matrix, WhatsApp)
+
+Each channel lives in its own package — install only what you need:
+
+```
+pip install 'exoclaw-nanobot[slack]'
+pip install 'exoclaw-nanobot[slack,telegram,discord]'
+pip install 'exoclaw-nanobot[all-channels]'
+```
+
+Then enable each channel in your config:
+
+```json
+{
+  "channels": {
+    "slack": {
+      "enabled": true,
+      "botToken": "xoxb-...",
+      "appToken": "xapp-...",
+      "allowFrom": ["U01ABC..."]
+    },
+    "telegram": {
+      "enabled": true,
+      "token": "123456:abcdef...",
+      "allowFrom": ["123456789"]
+    }
+  }
+}
+```
+
+`create()` reads `config.channels.<name>` for each section, instantiates the matching channel class, and starts it alongside the CLI. If a channel is `enabled: true` but its package isn't installed, startup fails with a clear pointer to the right `pip install` command.
+
+Per-channel config fields live in `exoclaw_nanobot.config.schema` — `SlackConfig`, `TelegramConfig`, `DiscordConfig`, `EmailConfig`, `MatrixConfig`, `WhatsAppConfig`.

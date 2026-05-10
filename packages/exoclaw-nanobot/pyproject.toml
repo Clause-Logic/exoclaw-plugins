@@ -1,6 +1,6 @@
 [project]
 name = "exoclaw-nanobot"
-version = "0.31.0"
+version = "0.32.0"
 description = "Full-stack exoclaw bundle — config, provider registry, and one-line wiring"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -22,6 +22,30 @@ dependencies = [
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
     "structlog>=25.0.0",
+]
+
+# Optional channels — install the package with the matching extra, then
+# enable the channel in ~/.nanobot/config.json under the matching
+# `channels.<name>` section. `create()` instantiates each enabled channel
+# from config.
+#
+#   pip install 'exoclaw-nanobot[slack]'
+#   pip install 'exoclaw-nanobot[slack,telegram,discord]'
+#   pip install 'exoclaw-nanobot[all-channels]'
+[project.optional-dependencies]
+slack = ["exoclaw-channel-slack"]
+telegram = ["exoclaw-channel-telegram"]
+discord = ["exoclaw-channel-discord"]
+email = ["exoclaw-channel-email"]
+matrix = ["exoclaw-channel-matrix"]
+whatsapp = ["exoclaw-channel-whatsapp"]
+all-channels = [
+    "exoclaw-channel-slack",
+    "exoclaw-channel-telegram",
+    "exoclaw-channel-discord",
+    "exoclaw-channel-email",
+    "exoclaw-channel-matrix",
+    "exoclaw-channel-whatsapp",
 ]
 
 [project.scripts]

@@ -1053,7 +1053,7 @@ requires-dist = [{ name = "exoclaw", specifier = ">=0.7.0" }]
 
 [[package]]
 name = "exoclaw-nanobot"
-version = "0.31.0"
+version = "0.32.0"
 source = { editable = "packages/exoclaw-nanobot" }
 dependencies = [
     { name = "exoclaw" },
@@ -1075,11 +1075,51 @@ dependencies = [
     { name = "structlog" },
 ]
 
+[package.optional-dependencies]
+all-channels = [
+    { name = "exoclaw-channel-discord" },
+    { name = "exoclaw-channel-email" },
+    { name = "exoclaw-channel-matrix" },
+    { name = "exoclaw-channel-slack" },
+    { name = "exoclaw-channel-telegram" },
+    { name = "exoclaw-channel-whatsapp" },
+]
+discord = [
+    { name = "exoclaw-channel-discord" },
+]
+email = [
+    { name = "exoclaw-channel-email" },
+]
+matrix = [
+    { name = "exoclaw-channel-matrix" },
+]
+slack = [
+    { name = "exoclaw-channel-slack" },
+]
+telegram = [
+    { name = "exoclaw-channel-telegram" },
+]
+whatsapp = [
+    { name = "exoclaw-channel-whatsapp" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "exoclaw", specifier = ">=0.26.0" },
     { name = "exoclaw-channel-cli", editable = "packages/exoclaw-channel-cli" },
+    { name = "exoclaw-channel-discord", marker = "extra == 'all-channels'", editable = "packages/exoclaw-channel-discord" },
+    { name = "exoclaw-channel-discord", marker = "extra == 'discord'", editable = "packages/exoclaw-channel-discord" },
+    { name = "exoclaw-channel-email", marker = "extra == 'all-channels'", editable = "packages/exoclaw-channel-email" },
+    { name = "exoclaw-channel-email", marker = "extra == 'email'", editable = "packages/exoclaw-channel-email" },
     { name = "exoclaw-channel-heartbeat", editable = "packages/exoclaw-channel-heartbeat" },
+    { name = "exoclaw-channel-matrix", marker = "extra == 'all-channels'", editable = "packages/exoclaw-channel-matrix" },
+    { name = "exoclaw-channel-matrix", marker = "extra == 'matrix'", editable = "packages/exoclaw-channel-matrix" },
+    { name = "exoclaw-channel-slack", marker = "extra == 'all-channels'", editable = "packages/exoclaw-channel-slack" },
+    { name = "exoclaw-channel-slack", marker = "extra == 'slack'", editable = "packages/exoclaw-channel-slack" },
+    { name = "exoclaw-channel-telegram", marker = "extra == 'all-channels'", editable = "packages/exoclaw-channel-telegram" },
+    { name = "exoclaw-channel-telegram", marker = "extra == 'telegram'", editable = "packages/exoclaw-channel-telegram" },
+    { name = "exoclaw-channel-whatsapp", marker = "extra == 'all-channels'", editable = "packages/exoclaw-channel-whatsapp" },
+    { name = "exoclaw-channel-whatsapp", marker = "extra == 'whatsapp'", editable = "packages/exoclaw-channel-whatsapp" },
     { name = "exoclaw-conversation", editable = "packages/exoclaw-conversation" },
     { name = "exoclaw-executor-dbos", editable = "packages/exoclaw-executor-dbos" },
     { name = "exoclaw-loop-detection", editable = "packages/exoclaw-loop-detection" },
@@ -1095,6 +1135,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.0" },
     { name = "structlog", specifier = ">=25.0.0" },
 ]
+provides-extras = ["slack", "telegram", "discord", "email", "matrix", "whatsapp", "all-channels"]
 
 [[package]]
 name = "exoclaw-nanobot-compat"

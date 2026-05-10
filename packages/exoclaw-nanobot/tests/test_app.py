@@ -8,7 +8,13 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from exoclaw_nanobot.app import ExoclawNanobot, _build_router, create
+import pytest
+from exoclaw_nanobot.app import (
+    ExoclawNanobot,
+    _build_configured_channels,
+    _build_router,
+    create,
+)
 from exoclaw_nanobot.config.schema import Config, RouterConfig, RouterDeployment
 from exoclaw_tools_cron.types import CronJob, CronJobState, CronPayload, CronSchedule
 
@@ -1000,3 +1006,114 @@ class TestCreate:
         finally:
             for p_obj in patches:
                 p_obj.stop()
+
+
+class TestBuildConfiguredChannels:
+    """`_build_configured_channels` reads `config.channels.<name>.enabled`
+    and instantiates the matching channel class via lazy import. Each
+    optional channel package is opt-in via `[project.optional-dependencies]`,
+    so a missing package must produce a clear "install this extra" error
+    rather than a cryptic ModuleNotFoundError mid-startup."""
+
+    def test_returns_empty_when_nothing_enabled(self) -> None:
+        """Default config has every optional channel disabled — returns
+        an empty list so callers can pass it through unchanged."""
+        config = Config()
+        assert _build_configured_channels(config) == []
+
+    def test_builds_enabled_channel_with_section_config(self) -> None:
+        config = Config()
+        config.channels.slack.enabled = True
+        config.channels.slack.bot_token = "xoxb-test"
+        config.channels.slack.allow_from = ["U123"]
+
+        fake_cls = MagicMock()
+        fake_module = MagicMock(SlackChannel=fake_cls)
+        with patch.dict("sys.modules", {"exoclaw_channel_slack.channel": fake_module}):
+            result = _build_configured_channels(config)
+
+        assert len(result) == 1
+        fake_cls.assert_called_once()
+        passed_config = fake_cls.call_args.kwargs["config"]
+        assert passed_config["enabled"] is True
+        assert passed_config["bot_token"] == "xoxb-test"
+        assert passed_config["allow_from"] == ["U123"]
+
+    def test_missing_package_raises_pointing_to_extra(self) -> None:
+        """Enabled channel + uninstalled package = RuntimeError that names
+        the right `pip install 'exoclaw-nanobot[<extra>]'` invocation. The
+        original ModuleNotFoundError chains as __cause__ for debuggability."""
+        config = Config()
+        config.channels.telegram.enabled = True
+
+        # Simulate the real failure mode: the channel package itself isn't
+        # installed, so `import exoclaw_channel_telegram.channel` raises
+        # with `e.name == "exoclaw_channel_telegram"` (the topmost missing
+        # parent).
+        err = ModuleNotFoundError("no module")
+        err.name = "exoclaw_channel_telegram"
+        with patch("importlib.import_module", side_effect=err):
+            with pytest.raises(RuntimeError) as exc_info:
+                _build_configured_channels(config)
+
+        msg = str(exc_info.value)
+        assert "channels.telegram.enabled is true" in msg
+        assert "pip install 'exoclaw-nanobot[telegram]'" in msg
+        assert exc_info.value.__cause__ is err
+
+    def test_transitive_dep_missing_propagates_original_error(self) -> None:
+        """If the channel package IS installed but one of its own deps
+        isn't (e.g. ``slack_sdk`` failed to install), the original
+        ModuleNotFoundError must propagate — re-framing it as "install the
+        slack extra" would mislead the user into reinstalling something
+        that's already there. Only re-frame when the missing module is
+        the channel package itself."""
+        config = Config()
+        config.channels.slack.enabled = True
+
+        err = ModuleNotFoundError("No module named 'slack_sdk'")
+        err.name = "slack_sdk"
+        with patch("importlib.import_module", side_effect=err):
+            with pytest.raises(ModuleNotFoundError) as exc_info:
+                _build_configured_channels(config)
+
+        assert exc_info.value is err
+
+    def test_builds_multiple_channels_in_declared_order(self) -> None:
+        """When several channels are enabled, the order matches the
+        `_OPTIONAL_CHANNELS` declaration so outbound routing and startup
+        logs are deterministic across runs."""
+        config = Config()
+        config.channels.slack.enabled = True
+        config.channels.discord.enabled = True
+        config.channels.matrix.enabled = True
+
+        fake_slack = MagicMock(name="SlackChannel")
+        fake_discord = MagicMock(name="DiscordChannel")
+        fake_matrix = MagicMock(name="MatrixChannel")
+        modules = {
+            "exoclaw_channel_slack.channel": MagicMock(SlackChannel=fake_slack),
+            "exoclaw_channel_discord.channel": MagicMock(DiscordChannel=fake_discord),
+            "exoclaw_channel_matrix.channel": MagicMock(MatrixChannel=fake_matrix),
+        }
+        with patch.dict("sys.modules", modules):
+            result = _build_configured_channels(config)
+
+        assert len(result) == 3
+        # Order matches `_OPTIONAL_CHANNELS` (slack before discord before matrix)
+        assert result[0] is fake_slack.return_value
+        assert result[1] is fake_discord.return_value
+        assert result[2] is fake_matrix.return_value
+
+    def test_disabled_channel_is_skipped_even_if_package_present(self) -> None:
+        """`enabled: false` skips construction entirely — we don't even
+        try to import the module. This keeps cold-start fast for users
+        who installed `[all-channels]` but only enable a few."""
+        config = Config()
+        config.channels.slack.enabled = False
+
+        with patch("importlib.import_module") as fake_import:
+            result = _build_configured_channels(config)
+
+        assert result == []
+        fake_import.assert_not_called()

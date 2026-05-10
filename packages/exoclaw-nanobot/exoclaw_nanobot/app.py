@@ -109,6 +109,60 @@ def _build_router(config: Config) -> Any | None:
 logger = structlog.get_logger()
 
 
+# Map of (config attribute, package extra name, "module:Class" to import)
+# for each optional channel. Adding a new channel package = one row here +
+# a matching `[project.optional-dependencies]` extra in pyproject.toml +
+# a matching `<name>Config` already defined in `config/schema.py`.
+_OPTIONAL_CHANNELS = (
+    ("slack", "slack", "exoclaw_channel_slack.channel:SlackChannel"),
+    ("telegram", "telegram", "exoclaw_channel_telegram.channel:TelegramChannel"),
+    ("discord", "discord", "exoclaw_channel_discord.channel:DiscordChannel"),
+    ("email", "email", "exoclaw_channel_email.channel:EmailChannel"),
+    ("matrix", "matrix", "exoclaw_channel_matrix.channel:MatrixChannel"),
+    ("whatsapp", "whatsapp", "exoclaw_channel_whatsapp.channel:WhatsAppChannel"),
+)
+
+
+def _build_configured_channels(config: Config) -> list[Any]:
+    """Instantiate channels enabled in ``~/.nanobot/config.json``.
+
+    Each optional channel lives in its own package — `pip install
+    'exoclaw-nanobot[slack]'` etc. If a channel is `enabled: true` in
+    config but its package isn't installed, raise a clear error pointing
+    at the right extra rather than failing later with a cryptic
+    ``ModuleNotFoundError`` mid-startup.
+    """
+    import importlib
+
+    channels: list[Any] = []
+    for cfg_attr, extra_name, target in _OPTIONAL_CHANNELS:
+        section = getattr(config.channels, cfg_attr)
+        if not section.enabled:
+            continue
+        module_name, _, class_name = target.partition(":")
+        try:
+            module = importlib.import_module(module_name)
+        except ModuleNotFoundError as e:
+            # Only re-frame as "install the extra" when our target module
+            # itself is missing. If a channel package IS installed but one
+            # of its transitive deps isn't (e.g. slack_sdk failed to
+            # install), e.name points at the real culprit and the original
+            # error is more useful than a misleading "install [slack]".
+            if e.name and (module_name == e.name or module_name.startswith(e.name + ".")):
+                raise RuntimeError(
+                    f"channels.{cfg_attr}.enabled is true but {module_name} "
+                    f"isn't installed. Run: pip install 'exoclaw-nanobot[{extra_name}]'"
+                ) from e
+            raise
+        cls = getattr(module, class_name)
+        channels.append(cls(config=section.model_dump(by_alias=False)))
+        logger.info(
+            "configured_channel_built",
+            **{"channel.name": cfg_attr},
+        )
+    return channels
+
+
 class ExoclawNanobot:
     """A fully wired exoclaw agent ready to run."""
 
@@ -627,6 +681,15 @@ async def create(
     else:
         cli = CLIChannel(history_dir=workspace / "history")
 
+    # Configured channels — Slack, Telegram, Discord, Email, Matrix, WhatsApp.
+    # Each is opt-in via its package extra (`pip install 'exoclaw-nanobot[slack]'`)
+    # plus `enabled: true` in the matching `channels.<name>` config section.
+    # Caller-provided `extra_channels=` are appended after, so an explicitly
+    # passed channel overrides any same-name configured channel during outbound
+    # routing (last-one-wins in `_dispatch_outbound`'s channel_map dict build).
+    configured_channels = _build_configured_channels(config)
+    merged_extra_channels = configured_channels + (extra_channels or [])
+
     # Heartbeat
     heartbeat = HeartbeatService(
         workspace=workspace,
@@ -651,5 +714,5 @@ async def create(
         cron_service=cron_service,
         heartbeat=heartbeat,
         mcp_stack=mcp_stack,
-        extra_channels=extra_channels,
+        extra_channels=merged_extra_channels,
     )
