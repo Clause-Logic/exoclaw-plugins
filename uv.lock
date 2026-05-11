@@ -40,6 +40,7 @@ members = [
     "exoclaw-tools-voice",
     "exoclaw-tools-web",
     "exoclaw-tools-workspace",
+    "exoclaw-turn",
     "exoclaw-turn-budget",
 ]
 
@@ -1374,6 +1375,17 @@ requires-dist = [
     { name = "readability-lxml", specifier = ">=0.8.1" },
     { name = "structlog", specifier = ">=25.0.0" },
 ]
+
+[[package]]
+name = "exoclaw-turn"
+version = "0.1.0"
+source = { editable = "packages/exoclaw-turn" }
+dependencies = [
+    { name = "exoclaw" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "exoclaw", specifier = ">=0.10.1" }]
 
 [[package]]
 name = "exoclaw-turn-budget"
