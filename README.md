@@ -100,6 +100,32 @@ Everything else is optional. Pick from the catalog below.
 
 ---
 
+## Where these packages live
+
+Every package in this repo (and core `exoclaw`) dual-publishes to:
+
+1. **[clause-logic.github.io/registry](https://clause-logic.github.io/registry/)** — our self-hosted PEP 503 index. Authoritative; always in sync with the latest release.
+2. **PyPI** — best-effort mirror. New versions land here too, but PyPI's [new-project creation rate limit](https://github.com/pypi/support/issues/10572) occasionally delays a release.
+
+If you don't care which one you use, **PyPI is fine** — `pip install exoclaw-nanobot` just works for the bundle and all of core, providers, conversation, tools, and behavior plugins. The only packages that may briefly be out of sync are the six channel packages (slack/telegram/discord/email/matrix/whatsapp), which hit PyPI's new-project rate limit on initial publish.
+
+If you want the registry as your source of truth, add this to your project's `pyproject.toml`:
+
+```toml
+[[tool.uv.index]]
+name = "clause-logic"
+url = "https://clause-logic.github.io/registry/pypi/simple/"
+
+[tool.uv.sources]
+# Any exoclaw package you want pinned to the registry, e.g.:
+exoclaw = { index = "clause-logic" }
+exoclaw-channel-slack = { index = "clause-logic" }
+```
+
+Pip users: `pip install --extra-index-url https://clause-logic.github.io/registry/pypi/simple/ <package>`.
+
+---
+
 ## Examples
 
 ### Slack bot, four lines of config
