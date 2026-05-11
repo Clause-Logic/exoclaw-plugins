@@ -24,6 +24,7 @@ exoclaw-screen = { workspace = true }
 exoclaw-tools-web = { workspace = true }
 exoclaw-tools-voice = { workspace = true }
 exoclaw-turn-budget = { workspace = true }
+exoclaw-turn = { workspace = true }
 exoclaw-nanobot-compat = { workspace = true }
 exoclaw-channel-codemod = { workspace = true }
 exoclaw-channel-slack = { workspace = true }
