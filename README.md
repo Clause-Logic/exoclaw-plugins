@@ -102,14 +102,14 @@ Everything else is optional. Pick from the catalog below.
 
 ## Where these packages live
 
-Every package in this repo (and core `exoclaw`) dual-publishes to:
+We publish to two indexes:
 
-1. **[clause-logic.github.io/registry](https://clause-logic.github.io/registry/)** — our self-hosted PEP 503 index. Authoritative; always in sync with the latest release.
-2. **PyPI** — best-effort mirror. New versions land here too, but PyPI's [new-project creation rate limit](https://github.com/pypi/support/issues/10572) occasionally delays a release.
+1. **PyPI** — the default `pip install` source. Hosts core `exoclaw`, the bundle, providers, conversation, tools, and behavior plugins.
+2. **[clause-logic.github.io/registry](https://clause-logic.github.io/registry/)** — our self-hosted PEP 503 index. Hosts everything PyPI does *plus* the six channel packages (slack/telegram/discord/email/matrix/whatsapp) — those hit PyPI's [new-project creation rate limit](https://github.com/pypi/support/issues/10572) on initial publish and only live here for now.
 
-If you don't care which one you use, **PyPI is fine** — `pip install exoclaw-nanobot` just works for the bundle and all of core, providers, conversation, tools, and behavior plugins. The only packages that may briefly be out of sync are the six channel packages (slack/telegram/discord/email/matrix/whatsapp), which hit PyPI's new-project rate limit on initial publish.
+The release workflow attempts both indexes on every tag; once the channel rate-limit clears, they'll appear on PyPI too.
 
-If you want the registry as your source of truth, add this to your project's `pyproject.toml`:
+To prefer the registry for everything we publish, add this to your project's `pyproject.toml`:
 
 ```toml
 [[tool.uv.index]]
@@ -117,9 +117,9 @@ name = "clause-logic"
 url = "https://clause-logic.github.io/registry/pypi/simple/"
 ```
 
-That's the whole config. uv checks clause-logic first for every package; anything not there (pydantic, structlog, etc.) falls through to PyPI automatically.
+uv checks clause-logic first for every package and falls through to PyPI for anything not there. Transitive deps like `pydantic` and `structlog` only live on PyPI — they're not republished here.
 
-Pip users: `pip install --extra-index-url https://clause-logic.github.io/registry/pypi/simple/ <package>`.
+Pip users: add `--extra-index-url https://clause-logic.github.io/registry/pypi/simple/` to your install command (or set it in `pip.conf`). Note that with pip this adds the registry as an additional source rather than promoting it ahead of PyPI; that's fine for our case since the channel packages aren't on PyPI yet.
 
 ---
 
