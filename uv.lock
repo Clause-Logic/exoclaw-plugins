@@ -1385,7 +1385,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "exoclaw", specifier = ">=0.10.1" }]
+requires-dist = [{ name = "exoclaw", specifier = ">=0.28.0" }]
 
 [[package]]
 name = "exoclaw-turn-budget"

@@ -132,7 +132,6 @@ async def run_turn(
     max_tokens: int = 4096,
     reasoning_effort: str | None = None,
     iteration_policy: IterationPolicy | None = None,
-    media: list[str] | None = None,
     on_progress: Callable[..., Awaitable[None]] | None = None,
 ) -> TurnResult:
     """Drive one agent turn to completion and return the result.
@@ -166,11 +165,15 @@ async def run_turn(
     iteration_policy:
         Replace the hard ``max_iterations`` counter with a pattern-based
         termination strategy (e.g. ``exoclaw-loop-detection``).
-    media:
-        Optional list of media references (image/file paths) the
-        provider/tools can resolve. Same shape as ``InboundMessage.media``.
     on_progress:
         Optional async callback invoked by the loop for streaming progress.
+
+    Notes
+    -----
+    Media attachments aren't supported in v1. The ephemeral conversation
+    doesn't encode media into the user message content (image_url blocks
+    etc.), and silently accepting the parameter would drop them. Use a
+    bus-driven ``AgentLoop`` for multimodal turns.
     """
     bus = MessageBus()
     conversation = _EphemeralConversation(system=system)
@@ -189,7 +192,6 @@ async def run_turn(
     text, new_messages = await loop.process_turn(
         session_id=_SESSION_ID,
         message=message,
-        media=media,
         on_progress=on_progress,
     )
     return TurnResult(

@@ -58,11 +58,11 @@ Anything implementing the `exoclaw.agent.tools.protocol.Tool` protocol works as 
 | `max_tokens` | `int` | `4096` | Forwarded to provider. |
 | `reasoning_effort` | `str \| None` | `None` | Forwarded to provider for reasoning models. |
 | `iteration_policy` | `IterationPolicy \| None` | `None` | Replace the hard count with pattern-based termination. |
-| `media` | `list[str] \| None` | `None` | Media references the provider/tools can resolve. |
 | `on_progress` | `Callable \| None` | `None` | Async progress callback. |
 
 ## What it doesn't do
 
 - **No persistence.** State is dropped at end of turn. For multi-turn conversations, use the bus-driven `AgentLoop` directly, or build on top of `exoclaw-conversation`.
 - **No streaming result.** The function awaits the full turn before returning. Use `on_progress` for incremental feedback if you need it.
+- **No multimodal attachments.** The ephemeral conversation doesn't encode media into the user message content. For image/file inputs, use a bus-driven `AgentLoop` with a real `Conversation` implementation.
 - **No channel.** This is library-shaped. For an interactive REPL, use `exoclaw-channel-cli`.
