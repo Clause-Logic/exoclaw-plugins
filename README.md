@@ -102,12 +102,12 @@ Everything else is optional. Pick from the catalog below.
 
 ## Where these packages live
 
-Every package in this repo (and core `exoclaw`) is published to both:
+We publish to two indexes:
 
-1. **[clause-logic.github.io/registry](https://clause-logic.github.io/registry/)** — our self-hosted PEP 503 index. Each release lands here in the same workflow run that publishes to PyPI.
-2. **PyPI** — the default `pip install` source.
+1. **PyPI** — the default `pip install` source. Hosts core `exoclaw`, the bundle, providers, conversation, tools, and behavior plugins.
+2. **[clause-logic.github.io/registry](https://clause-logic.github.io/registry/)** — our self-hosted PEP 503 index. Hosts everything PyPI does *plus* the six channel packages (slack/telegram/discord/email/matrix/whatsapp) — those hit PyPI's [new-project creation rate limit](https://github.com/pypi/support/issues/10572) on initial publish and only live here for now.
 
-For most users, **PyPI is fine** — `pip install exoclaw-nanobot` works for the bundle and for core, providers, conversation, tools, and behavior plugins. The exception is the six channel packages (slack/telegram/discord/email/matrix/whatsapp): PyPI's [new-project creation rate limit](https://github.com/pypi/support/issues/10572) held up their initial publish, so for now they only live on the registry.
+The release workflow attempts both indexes on every tag; once the channel rate-limit clears, they'll appear on PyPI too.
 
 To prefer the registry for everything we publish, add this to your project's `pyproject.toml`:
 

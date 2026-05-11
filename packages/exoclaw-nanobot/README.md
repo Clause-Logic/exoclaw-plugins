@@ -67,7 +67,7 @@ Per-channel config fields live in `exoclaw_nanobot.config.schema` — `SlackConf
 
 ## Where these packages live
 
-This bundle and the other Clause-Logic packages it depends on are published to both **PyPI** (the default `pip install` source) and to a self-hosted PEP 503 index at **[clause-logic.github.io/registry](https://clause-logic.github.io/registry/)**. Releases land on both within the same workflow run. The registry is currently the only place hosting the six channel packages (slack/telegram/discord/email/matrix/whatsapp), since PyPI's [new-project creation rate limit](https://github.com/pypi/support/issues/10572) held up their initial publish.
+We publish to two indexes: **PyPI** (the default `pip install` source, which hosts the bundle and the other Clause-Logic packages it depends on) and a self-hosted PEP 503 index at **[clause-logic.github.io/registry](https://clause-logic.github.io/registry/)** (which hosts everything PyPI does plus the six channel packages — slack/telegram/discord/email/matrix/whatsapp — that hit PyPI's [new-project creation rate limit](https://github.com/pypi/support/issues/10572) on initial publish and only live on the registry for now).
 
 Third-party deps (pydantic, structlog, etc.) only live on PyPI — they're not republished here.
 
