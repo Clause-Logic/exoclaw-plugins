@@ -115,12 +115,9 @@ If you want the registry as your source of truth, add this to your project's `py
 [[tool.uv.index]]
 name = "clause-logic"
 url = "https://clause-logic.github.io/registry/pypi/simple/"
-
-[tool.uv.sources]
-# Any exoclaw package you want pinned to the registry, e.g.:
-exoclaw = { index = "clause-logic" }
-exoclaw-channel-slack = { index = "clause-logic" }
 ```
+
+That's the whole config. uv checks clause-logic first for every package; anything not there (pydantic, structlog, etc.) falls through to PyPI automatically.
 
 Pip users: `pip install --extra-index-url https://clause-logic.github.io/registry/pypi/simple/ <package>`.
 

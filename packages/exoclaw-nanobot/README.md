@@ -75,10 +75,8 @@ To prefer the registry, add to your project's `pyproject.toml`:
 [[tool.uv.index]]
 name = "clause-logic"
 url = "https://clause-logic.github.io/registry/pypi/simple/"
-
-[tool.uv.sources]
-exoclaw-nanobot = { index = "clause-logic" }
-exoclaw-channel-slack = { index = "clause-logic" }  # repeat per channel you use
 ```
+
+That's the whole config — uv checks clause-logic first for every package and falls through to PyPI for anything not there.
 
 Pip users: `pip install --extra-index-url https://clause-logic.github.io/registry/pypi/simple/ 'exoclaw-nanobot[slack]'`.
