@@ -1167,7 +1167,7 @@ class TestDefaultConversation:
 
         await conv.post_turn("test:1")
 
-        hooks.assert_awaited_once_with("test:1")
+        hooks.assert_awaited_once_with("test:1", chat_id=None)
 
     async def test_post_turn_skips_hook_turn(self) -> None:
         """Hook turns (``channel="hook"``) must not re-fire hooks —
@@ -1204,6 +1204,112 @@ class TestDefaultConversation:
         await conv.post_turn("test:1")
 
         hooks.assert_not_called()
+
+    async def test_post_turn_channel_kwarg_overrides_instance_state(self) -> None:
+        """Callers that drive ``build_prompt`` and ``post_turn`` from
+        different instances pass ``channel`` directly — must override
+        ``self._turn_channel``. Sets the instance state to ``"hook"``
+        (the recursion-guard value) and passes a non-hook ``channel``;
+        hooks must still fire."""
+        session = Session(key="test:1")
+        bus = MagicMock()
+        conv = DefaultConversation(
+            history=_make_mock_history(session),
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+            bus=bus,
+        )
+        conv._turn_channel = "hook"  # would normally suppress the call
+        hooks = AsyncMock()
+        conv._fire_agent_hooks = hooks  # type: ignore[method-assign]
+
+        await conv.post_turn("test:1", channel="ui")
+
+        hooks.assert_awaited_once_with("test:1", chat_id=None)
+
+    async def test_post_turn_channel_kwarg_can_force_hook_skip(self) -> None:
+        """Inverse of the above — passing ``channel="hook"`` must
+        suppress hooks even when the instance state says otherwise.
+        Confirms the kwarg fully replaces the instance attr rather
+        than only filling in when missing."""
+        session = Session(key="test:1")
+        bus = MagicMock()
+        conv = DefaultConversation(
+            history=_make_mock_history(session),
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+            bus=bus,
+        )
+        conv._turn_channel = "ui"  # would normally allow hook fire
+        hooks = AsyncMock()
+        conv._fire_agent_hooks = hooks  # type: ignore[method-assign]
+
+        await conv.post_turn("test:1", channel="hook")
+
+        hooks.assert_not_called()
+
+    async def test_post_turn_chat_id_kwarg_threads_through(self) -> None:
+        """``chat_id`` kwarg must reach ``_fire_agent_hooks`` so the
+        published hook envelope carries the caller-supplied id, not
+        whatever was left on the instance from a prior turn."""
+        session = Session(key="test:1")
+        bus = MagicMock()
+        conv = DefaultConversation(
+            history=_make_mock_history(session),
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+            bus=bus,
+        )
+        conv._turn_chat_id = "leftover"  # must not leak through
+        hooks = AsyncMock()
+        conv._fire_agent_hooks = hooks  # type: ignore[method-assign]
+
+        await conv.post_turn("test:1", chat_id="fresh-chat")
+
+        hooks.assert_awaited_once_with("test:1", chat_id="fresh-chat")
+
+    async def test_post_turn_await_maintenance_runs_inline(self) -> None:
+        """``await_maintenance=True`` skips the background-task
+        scheduler and awaits ``_run_maintenance`` directly. Required
+        for callers whose process lifetime ends with the call (e.g.
+        stateless workflow steps that lose background tasks at the
+        return boundary)."""
+        session = Session(key="test:1")
+        conv = DefaultConversation(
+            history=_make_mock_history(session),
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+        )
+        sched = MagicMock()
+        runner = AsyncMock()
+        conv._schedule_maintenance = sched  # type: ignore[method-assign]
+        conv._run_maintenance = runner  # type: ignore[method-assign]
+
+        await conv.post_turn("test:1", await_maintenance=True)
+
+        sched.assert_not_called()
+        runner.assert_awaited_once_with("test:1")
+
+    async def test_post_turn_default_uses_background_scheduler(self) -> None:
+        """Default behaviour (no ``await_maintenance``) preserves the
+        fire-and-forget scheduling path. Regression guard for callers
+        with long-lived processes that rely on the background task
+        not blocking the caller."""
+        session = Session(key="test:1")
+        conv = DefaultConversation(
+            history=_make_mock_history(session),
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+        )
+        sched = MagicMock()
+        runner = AsyncMock()
+        conv._schedule_maintenance = sched  # type: ignore[method-assign]
+        conv._run_maintenance = runner  # type: ignore[method-assign]
+
+        await conv.post_turn("test:1")
+
+        sched.assert_called_once_with("test:1")
+        runner.assert_not_awaited()
 
     async def test_clear_success(self) -> None:
         session = Session(key="test:1")
@@ -1762,7 +1868,114 @@ class TestDefaultConversationExtra:
         hooks = AsyncMock()
         conv._fire_agent_hooks = hooks  # type: ignore[method-assign]
         await conv.record("test:1", [{"role": "user", "content": "hi"}])
-        hooks.assert_awaited_once_with("test:1")
+        hooks.assert_awaited_once_with("test:1", chat_id=None)
+
+    async def test_record_channel_kwarg_overrides_instance_state(self) -> None:
+        """Same lift as on ``post_turn``: callers that don't share an
+        instance between ``build_prompt`` and ``record`` pass
+        ``channel`` directly. Verify it overrides ``self._turn_channel``."""
+        bus = MagicMock()
+        bus.publish_inbound = AsyncMock()
+        conv = DefaultConversation(
+            history=_make_mock_history(),
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+            bus=bus,
+        )
+        conv._turn_channel = "hook"  # would normally suppress the call
+        hooks = AsyncMock()
+        sched = MagicMock()
+        conv._fire_agent_hooks = hooks  # type: ignore[method-assign]
+        conv._schedule_maintenance = sched  # type: ignore[method-assign]
+
+        await conv.record("test:1", [{"role": "user", "content": "hi"}], channel="ui")
+
+        sched.assert_called_once_with("test:1")
+        hooks.assert_awaited_once_with("test:1", chat_id=None)
+
+    async def test_record_chat_id_kwarg_threads_through(self) -> None:
+        """``chat_id`` reaches ``_fire_agent_hooks`` so the hook
+        envelope carries the caller-supplied id."""
+        bus = MagicMock()
+        bus.publish_inbound = AsyncMock()
+        conv = DefaultConversation(
+            history=_make_mock_history(),
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+            bus=bus,
+        )
+        conv._turn_chat_id = "leftover"
+        hooks = AsyncMock()
+        conv._fire_agent_hooks = hooks  # type: ignore[method-assign]
+
+        await conv.record(
+            "test:1",
+            [{"role": "user", "content": "hi"}],
+            chat_id="fresh-chat",
+        )
+
+        hooks.assert_awaited_once_with("test:1", chat_id="fresh-chat")
+
+    async def test_record_await_maintenance_runs_inline(self) -> None:
+        """``await_maintenance=True`` on the legacy ``record`` path
+        runs maintenance inline. Same rationale as on ``post_turn``
+        — callers that can't keep a background task alive past the
+        function-call boundary need a synchronous path."""
+        conv = DefaultConversation(
+            history=_make_mock_history(),
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+        )
+        sched = MagicMock()
+        runner = AsyncMock()
+        conv._schedule_maintenance = sched  # type: ignore[method-assign]
+        conv._run_maintenance = runner  # type: ignore[method-assign]
+
+        await conv.record(
+            "test:1",
+            [{"role": "user", "content": "hi"}],
+            await_maintenance=True,
+        )
+
+        sched.assert_not_called()
+        runner.assert_awaited_once_with("test:1")
+
+    async def test_run_maintenance_calls_policy_and_releases_lock(self) -> None:
+        """The public-but-underscored ``_run_maintenance`` entry point
+        awaits ``policy.on_turn_complete`` and clears the in-flight
+        guard on success — same locking shape as the background path
+        but observable synchronously."""
+        policy = MagicMock()
+        policy.on_turn_complete = AsyncMock()
+        conv = DefaultConversation(
+            history=_make_mock_history(),
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+            consolidation_policy=policy,
+        )
+
+        await conv._run_maintenance("test:1")
+
+        policy.on_turn_complete.assert_awaited_once()
+        assert "test:1" not in conv._consolidating
+
+    async def test_run_maintenance_skips_when_already_in_flight(self) -> None:
+        """Re-entrant call while another maintenance pass holds the
+        session must return immediately — preserves the idempotency
+        property the background scheduler already had."""
+        policy = MagicMock()
+        policy.on_turn_complete = AsyncMock()
+        conv = DefaultConversation(
+            history=_make_mock_history(),
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+            consolidation_policy=policy,
+        )
+        conv._consolidating.add("test:1")
+
+        await conv._run_maintenance("test:1")
+
+        policy.on_turn_complete.assert_not_awaited()
 
     async def test_fire_agent_hooks_publishes_inbound(self) -> None:
         """``_fire_agent_hooks`` reaches into the prompt's skills loader,

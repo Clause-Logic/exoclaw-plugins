@@ -270,28 +270,62 @@ class DefaultConversation:
         if prepared:
             self.history.save_append(session, prepared)
 
-    async def post_turn(self, session_id: str) -> None:
+    async def post_turn(
+        self,
+        session_id: str,
+        *,
+        channel: str | None = None,
+        chat_id: str | None = None,
+        await_maintenance: bool = False,
+    ) -> None:
         """End-of-turn callback: schedule policy maintenance and fire
         agent_end hooks.
 
-        ``policy.on_turn_complete`` runs in a background task isolated
-        from the caller's contextvars (DBOS-aware) so a Temporal/DBOS
-        workflow at the call site doesn't propagate workflow context
-        into the consolidation pass. Hook turns (``channel="hook"``)
-        skip both maintenance and hook firing to prevent recursion.
+        By default ``policy.on_turn_complete`` runs in a background
+        task isolated from the caller's contextvars, so a long-lived
+        worker doesn't propagate caller context into the consolidation
+        pass. Hook turns (``channel="hook"``) skip both maintenance
+        and hook firing to prevent recursion.
+
+        Parameters
+        ----------
+        channel, chat_id:
+            Override the turn context recorded by ``build_prompt``.
+            Required when ``build_prompt`` and ``post_turn`` are
+            invoked on different ``Conversation`` instances — e.g.
+            stateless workflow runners or durable execution
+            environments that reconstruct the conversation per step.
+            When ``None``, falls back to instance state.
+        await_maintenance:
+            When True, run maintenance synchronously inline instead
+            of scheduling a background task. Required for callers
+            that can't keep a background task alive past the
+            surrounding function call (stateless workflow steps,
+            short-lived invocations). The synchronous path also
+            preserves the caller's contextvars so that the
+            maintenance pass's logs/traces are attributed to the
+            invoking step.
         """
-        if self._turn_channel == "hook":
+        effective_channel = channel if channel is not None else self._turn_channel
+        if effective_channel == "hook":
             return
 
-        self._schedule_maintenance(session_id)
+        if await_maintenance:
+            await self._run_maintenance(session_id)
+        else:
+            self._schedule_maintenance(session_id)
 
         if self._bus:
-            await self._fire_agent_hooks(session_id)
+            await self._fire_agent_hooks(session_id, chat_id=chat_id)
 
     async def record(
         self,
         session_id: str,
         new_messages: list[dict[str, Any]],
+        *,
+        channel: str | None = None,
+        chat_id: str | None = None,
+        await_maintenance: bool = False,
     ) -> None:
         """Persist the messages produced during one turn.
 
@@ -301,16 +335,25 @@ class DefaultConversation:
         — see above — so under a current-version agent loop this
         method isn't called during normal turns. Kept for external
         callers that still drive persistence via ``record`` directly.
+
+        ``channel``, ``chat_id``, and ``await_maintenance`` mirror the
+        options on ``post_turn`` for callers that drive persistence
+        through ``record`` without a paired ``post_turn`` invocation.
+        See ``post_turn`` for the rationale on each.
         """
         session = self.history.get_or_create(session_id)
         prepared = self._prepare_turn(session, new_messages)
         self.history.save_append(session, prepared)
 
         # Legacy batch path — fire end-of-turn machinery directly.
-        if self._turn_channel != "hook":
-            self._schedule_maintenance(session_id)
+        effective_channel = channel if channel is not None else self._turn_channel
+        if effective_channel != "hook":
+            if await_maintenance:
+                await self._run_maintenance(session_id)
+            else:
+                self._schedule_maintenance(session_id)
             if self._bus:
-                await self._fire_agent_hooks(session_id)
+                await self._fire_agent_hooks(session_id, chat_id=chat_id)
 
     async def clear(self, session_id: str) -> bool:
         """Reset the session log to a metadata-only header and remove
@@ -413,35 +456,61 @@ class DefaultConversation:
 
     # ─── Internal: maintenance + hook plumbing ───
 
-    def _schedule_maintenance(self, session_id: str) -> None:
-        """Spawn a background task that runs
-        ``policy.on_turn_complete``. Idempotent per session — if
-        maintenance is already running for this session, skip."""
+    async def _run_maintenance(self, session_id: str) -> None:
+        """Run ``policy.on_turn_complete`` synchronously inline.
+
+        Public-but-underscored entry point shared by
+        ``_schedule_maintenance`` (fire-and-forget background task)
+        and the ``await_maintenance=True`` path on ``post_turn`` /
+        ``record`` (synchronous inline). Idempotent per session —
+        re-entrant calls while another maintenance pass is in flight
+        return immediately.
+        """
         if session_id in self._consolidating:
             return
         self._consolidating.add(session_id)
         lock = self._consolidation_locks.setdefault(session_id, asyncio.Lock())
         reader = self.history.reader(session_id)
+        try:
+            async with lock:
+                await self._consolidation_policy.on_turn_complete(reader)
+        except Exception:
+            logger.exception("policy_on_turn_complete_failed", **{"session.id": session_id})
+        finally:
+            self._consolidating.discard(session_id)
 
-        async def _run_and_unlock() -> None:
+    def _schedule_maintenance(self, session_id: str) -> None:
+        """Spawn a background task that runs ``_run_maintenance``.
+
+        Used by the default ``post_turn`` path for callers whose
+        process lifetime extends past the surrounding function call.
+        Isolates the maintenance task from caller contextvars to keep
+        consolidation logs/traces separate from the in-flight turn.
+        """
+
+        async def _run_and_untrack() -> None:
             try:
-                async with lock:
-                    await self._consolidation_policy.on_turn_complete(reader)
-            except Exception:
-                logger.exception("policy_on_turn_complete_failed", **{"session.id": session_id})
+                await self._run_maintenance(session_id)
             finally:
-                self._consolidating.discard(session_id)
                 _task = asyncio.current_task()
                 if _task is not None:
                     self._consolidation_tasks.discard(_task)
 
-        # Isolate from caller contextvars — prevents DBOS/Temporal
-        # workflow context from propagating into the maintenance pass.
-        _task = create_isolated_task(_run_and_unlock())
+        _task = create_isolated_task(_run_and_untrack())
         self._consolidation_tasks.add(_task)
 
-    async def _fire_agent_hooks(self, session_id: str) -> None:
-        """Discover agent_end hooks and publish them as inbound messages on the bus."""
+    async def _fire_agent_hooks(
+        self,
+        session_id: str,
+        *,
+        chat_id: str | None = None,
+    ) -> None:
+        """Discover agent_end hooks and publish them as inbound messages on the bus.
+
+        ``chat_id`` overrides ``self._turn_chat_id`` when callers
+        invoke ``post_turn`` / ``record`` from a different instance
+        than the one that ran ``build_prompt``.
+        """
         from exoclaw.bus.events import InboundMessage
 
         skills_loader = getattr(self.prompt, "skills", None)
@@ -452,7 +521,7 @@ class DefaultConversation:
         if not hooks:
             return
 
-        chat_id = self._turn_chat_id or session_id
+        chat_id = chat_id or self._turn_chat_id or session_id
         for hook in hooks:
             try:
                 await self._bus.publish_inbound(  # type: ignore[union-attr]
