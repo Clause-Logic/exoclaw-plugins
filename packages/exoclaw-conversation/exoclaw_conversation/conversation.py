@@ -486,7 +486,13 @@ class DefaultConversation:
         process lifetime extends past the surrounding function call.
         Isolates the maintenance task from caller contextvars to keep
         consolidation logs/traces separate from the in-flight turn.
+
+        Fast-paths repeated calls for the same session — if a
+        maintenance pass is already in flight, skip spawning a task
+        that would only no-op against ``_run_maintenance``'s guard.
         """
+        if session_id in self._consolidating:
+            return
 
         async def _run_and_untrack() -> None:
             try:

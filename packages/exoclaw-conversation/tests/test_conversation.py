@@ -1959,6 +1959,23 @@ class TestDefaultConversationExtra:
         policy.on_turn_complete.assert_awaited_once()
         assert "test:1" not in conv._consolidating
 
+    async def test_schedule_maintenance_fast_paths_in_flight_session(self) -> None:
+        """If maintenance is already running for a session,
+        ``_schedule_maintenance`` must not spawn a fresh background
+        task that would only no-op against ``_run_maintenance``'s
+        guard — avoids task churn under rapid repeated
+        ``post_turn`` / ``record`` calls."""
+        conv = DefaultConversation(
+            history=_make_mock_history(),
+            memory=_make_mock_memory(),
+            prompt=_make_mock_prompt(),
+        )
+        conv._consolidating.add("test:1")
+
+        conv._schedule_maintenance("test:1")
+
+        assert not conv._consolidation_tasks
+
     async def test_run_maintenance_skips_when_already_in_flight(self) -> None:
         """Re-entrant call while another maintenance pass holds the
         session must return immediately — preserves the idempotency
