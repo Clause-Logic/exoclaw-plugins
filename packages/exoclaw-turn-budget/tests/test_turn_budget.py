@@ -73,6 +73,34 @@ class TestTurnBudgetTracker:
         assert tracker.total_tokens == 0
         assert tracker.iterations_seen == 2
 
+    def test_cached_tokens_discounted_at_default_weight(self) -> None:
+        # Default cached_token_weight is 0.1: of 1000 cached tokens, only
+        # 100 should count, leaving 200 chargeable from a 1100-token total
+        # (1000 cached + 100 fresh prompt + 0 completion = 1100 raw).
+        tracker = TurnBudgetTracker(TurnBudgetConfig())
+        tracker.record({"total_tokens": 1100, "cached_tokens": 1000})
+        assert tracker.total_tokens == 200
+
+    def test_cached_token_weight_one_preserves_legacy_behavior(self) -> None:
+        tracker = TurnBudgetTracker(TurnBudgetConfig(cached_token_weight=1.0))
+        tracker.record({"total_tokens": 1100, "cached_tokens": 1000})
+        assert tracker.total_tokens == 1100
+
+    def test_cache_read_input_tokens_alias_recognized(self) -> None:
+        # Anthropic-style usage payload uses ``cache_read_input_tokens``
+        # rather than the OpenAI ``cached_tokens`` key.
+        tracker = TurnBudgetTracker(TurnBudgetConfig())
+        tracker.record({"total_tokens": 1100, "cache_read_input_tokens": 1000})
+        assert tracker.total_tokens == 200
+
+    def test_cached_tokens_clamp_at_zero(self) -> None:
+        # Defensive: if a provider somehow reports more cached tokens than
+        # the total (clock skew, accounting bug), the discount must not
+        # underflow into a negative count.
+        tracker = TurnBudgetTracker(TurnBudgetConfig())
+        tracker.record({"total_tokens": 100, "cached_tokens": 1000})
+        assert tracker.total_tokens == 0
+
     def test_reset_clears_state(self) -> None:
         tracker = TurnBudgetTracker(TurnBudgetConfig(warning_thresholds=(0.5,)))
         tracker.record({"total_tokens": 1_000_000})
@@ -196,6 +224,11 @@ class TestDailyBudgetTracker:
         tracker.record({"total_tokens": 100}, model="a")
         tracker.record({"total_tokens": 200}, model="b")
         assert tracker.total_tokens == 300
+
+    def test_cached_tokens_discounted_at_default_weight(self) -> None:
+        tracker = DailyBudgetTracker(DailyBudgetConfig(daily_budget=1_000_000))
+        tracker.record({"total_tokens": 1100, "cached_tokens": 1000}, model="a")
+        assert tracker.total_tokens == 200
 
     def test_auto_resets_at_day_boundary(self) -> None:
         clock_value = [1_700_000_000.0]  # arbitrary epoch — middle of a day

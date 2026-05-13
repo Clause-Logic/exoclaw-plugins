@@ -370,6 +370,37 @@ class TestLiteLLMProvider:
         assert result.usage["prompt_tokens"] == 10
         assert result.usage["total_tokens"] == 15
 
+    async def test_parse_response_surfaces_openai_cached_tokens(self) -> None:
+        # OpenAI/OpenRouter shape: cached count nests under
+        # ``prompt_tokens_details.cached_tokens``. Surface it on the
+        # parsed usage dict so budget trackers can weight it.
+        response = _make_litellm_response()
+        details = MagicMock()
+        details.cached_tokens = 7
+        response.usage.prompt_tokens_details = details
+        p = LiteLLMProvider()
+        with patch("exoclaw_provider_litellm.provider.acompletion", new_callable=AsyncMock) as mock:
+            mock.return_value = response
+            result = await p.chat([{"role": "user", "content": "hi"}])
+        assert result.usage["cached_tokens"] == 7
+
+    async def test_parse_response_surfaces_anthropic_cache_fields(self) -> None:
+        # Anthropic shape: flat ``cache_read_input_tokens`` /
+        # ``cache_creation_input_tokens`` on usage with no nested details.
+        response = _make_litellm_response()
+        # Force ``prompt_tokens_details`` to absent — MagicMock would
+        # otherwise auto-create a truthy attribute and short-circuit the
+        # fallback path.
+        response.usage.prompt_tokens_details = None
+        response.usage.cache_read_input_tokens = 9
+        response.usage.cache_creation_input_tokens = 4
+        p = LiteLLMProvider()
+        with patch("exoclaw_provider_litellm.provider.acompletion", new_callable=AsyncMock) as mock:
+            mock.return_value = response
+            result = await p.chat([{"role": "user", "content": "hi"}])
+        assert result.usage["cached_tokens"] == 9
+        assert result.usage["cache_creation_input_tokens"] == 4
+
 
 # ---------------------------------------------------------------------------
 # Additional coverage: provider edge cases

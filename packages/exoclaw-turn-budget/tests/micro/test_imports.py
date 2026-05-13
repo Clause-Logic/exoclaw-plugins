@@ -48,6 +48,7 @@ def test_turn_config_constructs_with_defaults() -> None:
     # behave identically until they opt in.
     assert c.tool_strip_threshold is None
     assert c.tool_strip_disallow == ()
+    assert c.cached_token_weight == 0.1
 
 
 def test_turn_config_accepts_tool_strip_overrides() -> None:

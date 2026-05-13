@@ -50,15 +50,35 @@ if TYPE_CHECKING:  # pragma: no cover (runtime)
 _SECONDS_PER_DAY = 86400
 
 
-def _coerce_total_tokens(usage: "dict[str, int] | None") -> int:
+def _coerce_total_tokens(
+    usage: "dict[str, int] | None",
+    cached_token_weight: float = 1.0,
+) -> int:
+    """Sum chargeable tokens from a provider ``usage`` dict.
+
+    Cached prompt tokens (``cached_tokens`` / ``cache_read_input_tokens``)
+    are charged at ``cached_token_weight`` × their raw count — provider
+    pricing for cache reads is roughly an order of magnitude cheaper than
+    fresh input, so a weight of ``0.1`` keeps the budget tied to actual
+    cost. ``cache_creation_input_tokens`` is *not* discounted: cache writes
+    are billed at full input price (Anthropic) or above (1.25× on OpenAI).
+    Providers that don't report a cache field fall through unchanged.
+    """
     if not usage:
         return 0
+    cached = usage.get("cached_tokens") or usage.get("cache_read_input_tokens") or 0
     total = usage.get("total_tokens")
     if total is not None:
-        return int(total)
-    prompt = usage.get("prompt_tokens") or usage.get("input_tokens") or 0
-    completion = usage.get("completion_tokens") or usage.get("output_tokens") or 0
-    return int(prompt) + int(completion)
+        raw = int(total)
+    else:
+        prompt = usage.get("prompt_tokens") or usage.get("input_tokens") or 0
+        completion = usage.get("completion_tokens") or usage.get("output_tokens") or 0
+        raw = int(prompt) + int(completion)
+    if not cached:
+        return raw
+    discount = int(cached) - int(int(cached) * cached_token_weight)
+    chargeable = raw - discount
+    return chargeable if chargeable > 0 else 0
 
 
 def _format(template: str, scope: str, pct: int, used: int, cap, unit: str, **extra) -> str:
@@ -121,7 +141,7 @@ class TurnBudgetTracker:
 
     def record(self, usage: "dict[str, int] | None", model: str | None = None) -> None:
         self.iterations_seen += 1
-        self.total_tokens += _coerce_total_tokens(usage)
+        self.total_tokens += _coerce_total_tokens(usage, self._config.cached_token_weight)
 
     def utilization(self) -> float:
         cfg = self._config
@@ -350,7 +370,7 @@ class DailyBudgetTracker:
     def record(self, usage: "dict[str, int] | None", model: str | None = None) -> None:
         if not self._counts_against_budget(model):
             return
-        self.total_tokens += _coerce_total_tokens(usage)
+        self.total_tokens += _coerce_total_tokens(usage, self._config.cached_token_weight)
         self._persist()
 
     def utilization(self) -> float:
