@@ -35,6 +35,31 @@ def _short_tool_id() -> str:
     return "".join(secrets.choice(_ALNUM) for _ in range(9))
 
 
+def _coerce_int(value: Any) -> int:
+    """Coerce known scalar shapes to int; everything else becomes 0.
+
+    Used for cache-token fields on the litellm ``usage`` object. Only
+    accepts ``int``, ``float``, and numeric strings — anything else
+    (notably ``MagicMock`` auto-attrs in tests, where ``int(mock)``
+    returns ``1`` and would silently fabricate one cached token per
+    response) is treated as absent. Booleans are excluded explicitly
+    because Python treats ``bool`` as a subclass of ``int``, so a
+    stray ``True`` would otherwise count as one cached token.
+    """
+    if value is None or isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return 0
+    return 0
+
+
 def _sanitize_empty_content(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Replace empty text content that causes provider 400 errors."""
     result: list[dict[str, Any]] = []
@@ -484,6 +509,25 @@ class LiteLLMProvider:
                 "completion_tokens": response.usage.completion_tokens,
                 "total_tokens": response.usage.total_tokens,
             }
+            # Surface cache-read / cache-creation counts when the upstream
+            # response carries them so downstream consumers (budget
+            # trackers, cost reporters) can weight cached tokens at their
+            # actual provider price instead of treating them as full-cost
+            # input. OpenAI-style responses nest cache_read under
+            # ``prompt_tokens_details.cached_tokens``; Anthropic-style
+            # responses expose ``cache_read_input_tokens`` /
+            # ``cache_creation_input_tokens`` flat on usage.
+            cached_tokens = 0
+            details = getattr(response.usage, "prompt_tokens_details", None)
+            if details is not None:
+                cached_tokens = _coerce_int(getattr(details, "cached_tokens", 0))
+            if not cached_tokens:
+                cached_tokens = _coerce_int(getattr(response.usage, "cache_read_input_tokens", 0))
+            if cached_tokens:
+                usage["cached_tokens"] = cached_tokens
+            cache_created = _coerce_int(getattr(response.usage, "cache_creation_input_tokens", 0))
+            if cache_created:
+                usage["cache_creation_input_tokens"] = cache_created
 
         reasoning_content = getattr(message, "reasoning_content", None) or None
         thinking_blocks = getattr(message, "thinking_blocks", None) or None

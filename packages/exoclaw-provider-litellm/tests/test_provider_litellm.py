@@ -14,6 +14,7 @@ from exoclaw_provider_litellm.provider import (
     LiteLLMProvider,
     _apply_anthropic_cache_control_to_system,
     _apply_anthropic_cache_control_to_tools,
+    _coerce_int,
     _is_anthropic,
     _normalize_tool_call_id,
     _sanitize_empty_content,
@@ -24,6 +25,40 @@ from exoclaw_provider_litellm.provider import (
 # ---------------------------------------------------------------------------
 # _short_tool_id
 # ---------------------------------------------------------------------------
+
+
+class TestCoerceInt:
+    """Cache-token fields go through ``_coerce_int`` before reaching the
+    parsed ``usage`` dict. The helper must reject anything that isn't a
+    real scalar — most importantly ``MagicMock`` auto-attrs, since
+    ``int(MagicMock())`` returns ``1`` and would silently fabricate one
+    cached token per response in any test that doesn't pin those
+    fields."""
+
+    def test_passes_through_real_ints(self) -> None:
+        assert _coerce_int(7) == 7
+        assert _coerce_int(0) == 0
+
+    def test_truncates_floats(self) -> None:
+        assert _coerce_int(3.9) == 3
+
+    def test_parses_numeric_strings(self) -> None:
+        assert _coerce_int("42") == 42
+
+    def test_returns_zero_for_none(self) -> None:
+        assert _coerce_int(None) == 0
+
+    def test_returns_zero_for_non_numeric_string(self) -> None:
+        assert _coerce_int("not-a-number") == 0
+
+    def test_returns_zero_for_magicmock(self) -> None:
+        assert _coerce_int(MagicMock()) == 0
+
+    def test_returns_zero_for_bool(self) -> None:
+        # ``bool`` is a subclass of ``int`` so a stray ``True`` would
+        # otherwise count as one cached token.
+        assert _coerce_int(True) == 0
+        assert _coerce_int(False) == 0
 
 
 class TestShortToolId:
@@ -369,6 +404,37 @@ class TestLiteLLMProvider:
             result = await p.chat([{"role": "user", "content": "hi"}])
         assert result.usage["prompt_tokens"] == 10
         assert result.usage["total_tokens"] == 15
+
+    async def test_parse_response_surfaces_openai_cached_tokens(self) -> None:
+        # OpenAI/OpenRouter shape: cached count nests under
+        # ``prompt_tokens_details.cached_tokens``. Surface it on the
+        # parsed usage dict so budget trackers can weight it.
+        response = _make_litellm_response()
+        details = MagicMock()
+        details.cached_tokens = 7
+        response.usage.prompt_tokens_details = details
+        p = LiteLLMProvider()
+        with patch("exoclaw_provider_litellm.provider.acompletion", new_callable=AsyncMock) as mock:
+            mock.return_value = response
+            result = await p.chat([{"role": "user", "content": "hi"}])
+        assert result.usage["cached_tokens"] == 7
+
+    async def test_parse_response_surfaces_anthropic_cache_fields(self) -> None:
+        # Anthropic shape: flat ``cache_read_input_tokens`` /
+        # ``cache_creation_input_tokens`` on usage with no nested details.
+        response = _make_litellm_response()
+        # Force ``prompt_tokens_details`` to absent — MagicMock would
+        # otherwise auto-create a truthy attribute and short-circuit the
+        # fallback path.
+        response.usage.prompt_tokens_details = None
+        response.usage.cache_read_input_tokens = 9
+        response.usage.cache_creation_input_tokens = 4
+        p = LiteLLMProvider()
+        with patch("exoclaw_provider_litellm.provider.acompletion", new_callable=AsyncMock) as mock:
+            mock.return_value = response
+            result = await p.chat([{"role": "user", "content": "hi"}])
+        assert result.usage["cached_tokens"] == 9
+        assert result.usage["cache_creation_input_tokens"] == 4
 
 
 # ---------------------------------------------------------------------------

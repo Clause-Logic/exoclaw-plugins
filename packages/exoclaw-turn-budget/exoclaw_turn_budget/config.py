@@ -52,6 +52,14 @@ if not IS_MICROPYTHON:  # pragma: no cover (micropython)
         every forwarded call. That forces the model into a text-only
         response so it actually wraps up instead of issuing more tool
         calls until the cutoff. Set to ``None`` to disable.
+
+        ``cached_token_weight`` scales the contribution of cached prompt
+        tokens (``usage["cached_tokens"]``) to the chargeable total —
+        defaults to ``0.1`` because Anthropic and most OpenAI-compatible
+        providers price cache reads at ~10% of fresh input. Set to ``1.0``
+        to restore the legacy behavior where cached tokens count at full
+        weight. Providers that don't surface a ``cached_tokens`` key are
+        unaffected.
         """
 
         iteration_budget: int | None = 50
@@ -64,6 +72,7 @@ if not IS_MICROPYTHON:  # pragma: no cover (micropython)
         tool_strip_threshold: float | None = None
         tool_strip_disallow: tuple[str, ...] = ()
         tool_strip_template: str = _DEFAULT_TOOL_STRIP_TEMPLATE
+        cached_token_weight: float = 0.1
 
     @dataclass
     class DailyBudgetConfig:
@@ -73,6 +82,9 @@ if not IS_MICROPYTHON:  # pragma: no cover (micropython)
         day (UTC, offset by ``reset_hour_utc``). When the budget is exhausted,
         the wrapper takes the configured action; tokens spent on the fallback
         model do not count toward the budget.
+
+        ``cached_token_weight`` mirrors the turn-config field — see
+        ``TurnBudgetConfig`` for the rationale.
         """
 
         daily_budget: int = 35_000_000
@@ -84,6 +96,7 @@ if not IS_MICROPYTHON:  # pragma: no cover (micropython)
         warning_template: str = _DEFAULT_WARNING_TEMPLATE
         cutoff_template: str = _DEFAULT_CUTOFF_TEMPLATE
         fallback_template: str = _DEFAULT_FALLBACK_TEMPLATE
+        cached_token_weight: float = 0.1
 
 else:  # pragma: no cover (cpython)
     from exoclaw_turn_budget.enforcement import Enforcement
@@ -104,6 +117,7 @@ else:  # pragma: no cover (cpython)
             tool_strip_threshold: float | None = None,
             tool_strip_disallow: tuple[str, ...] = (),
             tool_strip_template: str = _DEFAULT_TOOL_STRIP_TEMPLATE,
+            cached_token_weight: float = 0.1,
         ) -> None:
             self.iteration_budget = iteration_budget
             self.token_budget = token_budget
@@ -115,6 +129,7 @@ else:  # pragma: no cover (cpython)
             self.tool_strip_threshold = tool_strip_threshold
             self.tool_strip_disallow = tool_strip_disallow
             self.tool_strip_template = tool_strip_template
+            self.cached_token_weight = cached_token_weight
 
     class DailyBudgetConfig:
         """MicroPython fallback — plain class with hand-written ``__init__``.
@@ -131,6 +146,7 @@ else:  # pragma: no cover (cpython)
             warning_template: str = _DEFAULT_WARNING_TEMPLATE,
             cutoff_template: str = _DEFAULT_CUTOFF_TEMPLATE,
             fallback_template: str = _DEFAULT_FALLBACK_TEMPLATE,
+            cached_token_weight: float = 0.1,
         ) -> None:
             self.daily_budget = daily_budget
             self.primary_models = primary_models
@@ -141,3 +157,4 @@ else:  # pragma: no cover (cpython)
             self.warning_template = warning_template
             self.cutoff_template = cutoff_template
             self.fallback_template = fallback_template
+            self.cached_token_weight = cached_token_weight
