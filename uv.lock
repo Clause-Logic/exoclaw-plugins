@@ -1389,7 +1389,7 @@ requires-dist = [{ name = "exoclaw", specifier = ">=0.28.0" }]
 
 [[package]]
 name = "exoclaw-turn-budget"
-version = "0.4.0"
+version = "0.5.0"
 source = { editable = "packages/exoclaw-turn-budget" }
 dependencies = [
     { name = "exoclaw" },

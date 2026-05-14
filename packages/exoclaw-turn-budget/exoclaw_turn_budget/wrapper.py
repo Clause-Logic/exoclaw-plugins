@@ -36,7 +36,7 @@ model don't deplete the daily budget that triggered the fallback.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 from exoclaw.providers.types import LLMResponse
 
@@ -47,6 +47,13 @@ if TYPE_CHECKING:  # pragma: no cover (runtime)
     from exoclaw.providers.types import ResponseFormat
 
     from exoclaw_turn_budget.tracker import BudgetTracker
+
+# Hook signatures:
+#   on_threshold_crossed(scope, threshold, utilization, used, cap, unit)
+#   on_limit_reached(scope, utilization, used, cap, unit)
+# Both are fire-and-forget — return values are ignored. Exceptions are
+# caught and discarded so a buggy hook can't take the agent loop down.
+BudgetHook = Callable[..., Any]
 
 
 def _tool_name(tool: object) -> str | None:
@@ -83,6 +90,8 @@ class BudgetWrapper:
         tracker: "BudgetTracker",
         enforcement: str | None = None,
         fallback_model: str | None = None,
+        on_threshold_crossed: "BudgetHook | None" = None,
+        on_limit_reached: "BudgetHook | None" = None,
     ) -> None:
         # Default ``enforcement`` and ``fallback_model`` from the tracker's
         # config when not explicitly passed, so callers only need to set
@@ -102,6 +111,27 @@ class BudgetWrapper:
         self._tracker = tracker
         self._enforcement = enforcement
         self._fallback_model = fallback_model
+        self._on_threshold_crossed = on_threshold_crossed
+        self._on_limit_reached = on_limit_reached
+        # Dedup state for ``on_limit_reached`` — fire once per "limit
+        # crossing event," not on every subsequent call against an already-
+        # exhausted budget. Reset when the tracker auto-resets (daily) or
+        # when reset() is called externally (turn).
+        #
+        # When attaching to a tracker that's already at limit AND whose
+        # at-limit warning has already been consumed (i.e. the
+        # ``_at_limit_warning_pending`` flag, which ``DailyBudgetTracker``
+        # persists via ``BudgetStateStore``, is False), treat the hook as
+        # already fired. Without this, every process restart against a
+        # persisted daily exhaustion would re-fire the hook.
+        already_fired = (
+            tracker.is_at_limit() and getattr(tracker, "_at_limit_warning_pending", True) is False
+        )
+        self._limit_hook_fired: bool = already_fired
+        # Snapshot of ``is_at_limit()`` from the prior call — used to
+        # detect the True→False transition that means a turn or day
+        # boundary just rolled, so we can clear the dedup flag.
+        self._prev_at_limit: bool = tracker.is_at_limit()
 
     def get_default_model(self) -> str:
         return self._inner.get_default_model()
@@ -136,10 +166,20 @@ class BudgetWrapper:
         self._tracker.maybe_auto_reset()
 
         at_limit = self._tracker.is_at_limit()
+        # Detect the True→False transition that means the tracker rolled
+        # (turn reset, daily reset) so the limit hook can fire again on
+        # the next exhaustion.
+        if self._prev_at_limit and not at_limit:
+            self._limit_hook_fired = False
+        self._prev_at_limit = at_limit
+
         used_model = model
 
         # --- Limit-hit actions ------------------------------------------
         if at_limit:
+            # Fire on_limit_reached exactly once per crossing, regardless
+            # of which enforcement mode handles the in-band side-effect.
+            self._fire_limit_hook()
             if self._enforcement == Enforcement.CUTOFF:
                 # Refuse the call. Return a synthetic response that the
                 # agent loop reads as a normal "no tool calls" finish, so
@@ -150,6 +190,8 @@ class BudgetWrapper:
                 # at_limit is true, so without the force the highest
                 # unreported threshold would get stranded forever.
                 stranded = self._tracker.consume_threshold_warning(force=True)
+                if stranded:
+                    self._fire_threshold_hook()
                 cutoff_msg = self._tracker.at_limit_message()
                 content = (stranded + "\n\n" + cutoff_msg) if stranded else cutoff_msg
                 return LLMResponse(
@@ -172,6 +214,7 @@ class BudgetWrapper:
         threshold_warning = self._tracker.consume_threshold_warning()
         if threshold_warning:
             messages = list(messages) + [{"role": "user", "content": threshold_warning}]
+            self._fire_threshold_hook()
 
         # --- Tool stripping (opt-in escalation between warning + cutoff)
         # ``getattr`` + ``callable`` rather than a ``hasattr`` + protocol
@@ -215,4 +258,53 @@ class BudgetWrapper:
             response.usage if response.usage else None,
             tracked_model,
         )
+        # If ``record()`` is what pushed the tracker over the line, the
+        # iteration policy may end the loop right after this call —
+        # there may never be a subsequent ``chat()`` for the at-limit
+        # branch at the top to fire the hook. Catch the transition here.
+        if not at_limit and self._tracker.is_at_limit():
+            self._fire_limit_hook()
         return response
+
+    # ── Observability hooks ────────────────────────────────────────────
+    # Both hooks are best-effort: exceptions are swallowed so a buggy
+    # callback (or one that depends on a frame-local context that
+    # disappeared, like ``workflow.logger`` outside the workflow event
+    # loop) can't crash the agent's next ``chat()`` call.
+
+    def _fire_threshold_hook(self) -> None:
+        if self._on_threshold_crossed is None:
+            return
+        scope = getattr(self._tracker, "SCOPE", "budget")
+        threshold = getattr(self._tracker, "last_consumed_threshold", None)
+        utilization = self._tracker.utilization()
+        used, cap, unit = self._tracker.dominant_axis()
+        try:
+            self._on_threshold_crossed(
+                scope=scope,
+                threshold=threshold,
+                utilization=utilization,
+                used=used,
+                cap=cap,
+                unit=unit,
+            )
+        except Exception:  # noqa: BLE001 — best-effort, see above
+            pass
+
+    def _fire_limit_hook(self) -> None:
+        if self._on_limit_reached is None or self._limit_hook_fired:
+            return
+        self._limit_hook_fired = True
+        scope = getattr(self._tracker, "SCOPE", "budget")
+        utilization = self._tracker.utilization()
+        used, cap, unit = self._tracker.dominant_axis()
+        try:
+            self._on_limit_reached(
+                scope=scope,
+                utilization=utilization,
+                used=used,
+                cap=cap,
+                unit=unit,
+            )
+        except Exception:  # noqa: BLE001 — best-effort, see above
+            pass

@@ -45,6 +45,9 @@ if TYPE_CHECKING:  # pragma: no cover (runtime)
         def consume_threshold_warning(self, force: bool = False) -> str | None: ...
         def at_limit_message(self) -> str: ...
         def consume_at_limit_warning(self) -> str | None: ...
+        @property
+        def last_consumed_threshold(self) -> float | None: ...
+        def dominant_axis(self) -> tuple[int, int | None, str]: ...
 
 
 _SECONDS_PER_DAY = 86400
@@ -123,6 +126,11 @@ class TurnBudgetTracker:
         self.iterations_seen: int = 0
         self._warned_thresholds: set[float] = set()
         self._at_limit_warning_pending: bool = True
+        # Records the threshold value that the most recent
+        # ``consume_threshold_warning`` call fired for, so consumers
+        # (e.g. ``BudgetWrapper``'s ``on_threshold_crossed`` hook) can
+        # learn which threshold was crossed without re-deriving it.
+        self._last_consumed_threshold: float | None = None
 
     @property
     def config(self) -> TurnBudgetConfig:
@@ -134,6 +142,7 @@ class TurnBudgetTracker:
         self.iterations_seen = 0
         self._warned_thresholds.clear()
         self._at_limit_warning_pending = True
+        self._last_consumed_threshold = None
 
     def maybe_auto_reset(self) -> None:
         """Turn boundaries are detected by the policy, not the wrapper."""
@@ -195,8 +204,29 @@ class TurnBudgetTracker:
                 for t in cfg.warning_thresholds:
                     if t <= threshold:
                         self._warned_thresholds.add(t)
+                self._last_consumed_threshold = threshold
                 return self._format_at(cfg.warning_template, int(threshold * 100))
         return None
+
+    @property
+    def last_consumed_threshold(self) -> float | None:
+        """The threshold value the most recent ``consume_threshold_warning``
+        fired for, or ``None`` if no warning has fired yet (or since the
+        last ``reset``). Used by the wrapper to surface the crossed
+        threshold to ``on_threshold_crossed`` hooks."""
+        return self._last_consumed_threshold
+
+    def dominant_axis(self) -> "tuple[int, int | None, str]":
+        """Return ``(used, cap, unit)`` for whichever axis is closer to
+        exhaustion — same selection ``_format_at`` uses internally.
+        Exposed so the wrapper can pass these values to observability
+        hooks without duplicating the comparison logic."""
+        cfg = self._config
+        iter_ratio = self.iterations_seen / cfg.iteration_budget if cfg.iteration_budget else 0.0
+        tok_ratio = self.total_tokens / cfg.token_budget if cfg.token_budget else 0.0
+        if iter_ratio >= tok_ratio:
+            return self.iterations_seen, cfg.iteration_budget, "iterations"
+        return self.total_tokens, cfg.token_budget, "tokens"
 
     def should_strip_tools(self) -> bool:
         """``True`` once utilization crosses ``tool_strip_threshold``.
@@ -232,29 +262,8 @@ class TurnBudgetTracker:
         return None
 
     def _format_at(self, template: str, pct: int, **extra) -> str:
-        cfg = self._config
-        # Use whichever axis is closer to exhaustion for the substitution.
-        iter_ratio = self.iterations_seen / cfg.iteration_budget if cfg.iteration_budget else 0.0
-        tok_ratio = self.total_tokens / cfg.token_budget if cfg.token_budget else 0.0
-        if iter_ratio >= tok_ratio:
-            return _format(
-                template,
-                self.SCOPE,
-                pct,
-                self.iterations_seen,
-                cfg.iteration_budget,
-                "iterations",
-                **extra,
-            )
-        return _format(
-            template,
-            self.SCOPE,
-            pct,
-            self.total_tokens,
-            cfg.token_budget,
-            "tokens",
-            **extra,
-        )
+        used, cap, unit = self.dominant_axis()
+        return _format(template, self.SCOPE, pct, used, cap, unit, **extra)
 
 
 def _day_key(now_epoch: float, reset_hour_utc: int) -> int:
@@ -292,6 +301,12 @@ class DailyBudgetTracker:
         self.total_tokens: int = 0
         self._warned_thresholds: set[float] = set()
         self._at_limit_warning_pending: bool = True
+        # Same role as TurnBudgetTracker._last_consumed_threshold — surfaces
+        # which threshold the most recent ``consume_threshold_warning`` fired
+        # for. Not persisted: the persisted threshold dedup is enough to
+        # prevent re-firing, and hooks would already have observed the prior
+        # crossing in the previous process run.
+        self._last_consumed_threshold: float | None = None
         self._store: BudgetStateStore = store if store is not None else InMemoryBudgetStore()
         self._restore()
 
@@ -357,6 +372,7 @@ class DailyBudgetTracker:
             self.total_tokens = 0
             self._warned_thresholds.clear()
             self._at_limit_warning_pending = True
+            self._last_consumed_threshold = None
             self._persist()
 
     def _counts_against_budget(self, model: str | None) -> bool:
@@ -398,6 +414,7 @@ class DailyBudgetTracker:
                 for t in cfg.warning_thresholds:
                     if t <= threshold:
                         self._warned_thresholds.add(t)
+                self._last_consumed_threshold = threshold
                 self._persist()
                 return _format(
                     cfg.warning_template,
@@ -408,6 +425,21 @@ class DailyBudgetTracker:
                     "tokens",
                 )
         return None
+
+    @property
+    def last_consumed_threshold(self) -> float | None:
+        """The threshold value the most recent ``consume_threshold_warning``
+        fired for, or ``None`` if no warning has fired yet (or since the
+        last day-boundary auto-reset)."""
+        return self._last_consumed_threshold
+
+    def dominant_axis(self) -> "tuple[int, int | None, str]":
+        """Return ``(used, cap, unit)`` for the daily tracker — always
+        the token axis since iterations aren't part of the daily budget.
+        Mirrors ``TurnBudgetTracker.dominant_axis`` so the wrapper can
+        consume a uniform shape from either tracker.
+        """
+        return self.total_tokens, self._config.daily_budget, "tokens"
 
     def at_limit_message(self) -> str:
         cfg = self._config
