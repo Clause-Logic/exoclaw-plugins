@@ -754,8 +754,75 @@ class TestBudgetWrapperHooks:
         wrapper = BudgetWrapper(inner, tracker)  # no hooks
         for _ in range(4):
             await wrapper.chat(messages=[{"role": "user", "content": "x"}])
-        # Existed cleanly, no AttributeError or similar.
+        # Exited cleanly, no AttributeError or similar.
         assert tracker.is_at_limit() is True
+
+    async def test_limit_hook_fires_on_record_transition(self) -> None:
+        """``TurnBudgetPolicy.should_continue`` may stop the loop right
+        after the call that records the limit-crossing — there's no
+        subsequent ``chat()`` for the at-limit branch at the top to
+        observe. The post-record check guarantees the hook still fires."""
+        cfg = TurnBudgetConfig(
+            iteration_budget=2,
+            token_budget=None,
+            warning_thresholds=(),
+            enforcement=Enforcement.CUTOFF,
+        )
+        tracker = TurnBudgetTracker(cfg)
+        inner = FakeProvider(usage={"total_tokens": 0})
+        events: list[dict] = []
+        wrapper = BudgetWrapper(
+            inner,
+            tracker,
+            on_limit_reached=lambda **kw: events.append(kw),
+        )
+        # EXACTLY 2 calls — the second one's record() pushes us over.
+        # Stop immediately, mimicking what TurnBudgetPolicy would do.
+        await wrapper.chat(messages=[{"role": "user", "content": "x"}])
+        await wrapper.chat(messages=[{"role": "user", "content": "x"}])
+
+        assert tracker.is_at_limit() is True
+        assert len(events) == 1
+
+    async def test_limit_hook_not_re_fired_on_restart_against_persisted_limit(
+        self,
+    ) -> None:
+        """A new wrapper attached to a daily tracker that's already
+        exhausted (and whose at-limit warning has been consumed in a
+        prior process) must not re-fire the hook. The dedup is inferred
+        from the tracker's persisted state."""
+        cfg = DailyBudgetConfig(
+            daily_budget=10,
+            primary_models=(),
+            warning_thresholds=(),
+            enforcement=Enforcement.CUTOFF,
+        )
+        # Hand-build a persisted state representing "already at limit
+        # and already-warned." This is what a FileBudgetStore would
+        # contain after the first process consumed the at-limit message.
+        store = InMemoryBudgetStore()
+        store.save(
+            {
+                "day_key": int(__import__("time").time()) // 86400,
+                "total_tokens": 100,
+                "warned_thresholds": [],
+                "at_limit_warning_pending": False,
+            }
+        )
+        tracker = DailyBudgetTracker(cfg, store=store)
+        assert tracker.is_at_limit() is True
+
+        inner = FakeProvider(usage={"total_tokens": 0})
+        events: list[dict] = []
+        wrapper = BudgetWrapper(
+            inner,
+            tracker,
+            on_limit_reached=lambda **kw: events.append(kw),
+        )
+        for _ in range(3):
+            await wrapper.chat(messages=[{"role": "user", "content": "x"}])
+
+        assert events == []  # no re-fire across the restart
 
 
 class TestDailyBudgetWrapper:

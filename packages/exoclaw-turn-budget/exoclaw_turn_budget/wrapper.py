@@ -117,11 +117,21 @@ class BudgetWrapper:
         # crossing event," not on every subsequent call against an already-
         # exhausted budget. Reset when the tracker auto-resets (daily) or
         # when reset() is called externally (turn).
-        self._limit_hook_fired: bool = False
+        #
+        # When attaching to a tracker that's already at limit AND whose
+        # at-limit warning has already been consumed (i.e. the
+        # ``_at_limit_warning_pending`` flag, which ``DailyBudgetTracker``
+        # persists via ``BudgetStateStore``, is False), treat the hook as
+        # already fired. Without this, every process restart against a
+        # persisted daily exhaustion would re-fire the hook.
+        already_fired = (
+            tracker.is_at_limit() and getattr(tracker, "_at_limit_warning_pending", True) is False
+        )
+        self._limit_hook_fired: bool = already_fired
         # Snapshot of ``is_at_limit()`` from the prior call — used to
         # detect the True→False transition that means a turn or day
         # boundary just rolled, so we can clear the dedup flag.
-        self._prev_at_limit: bool = False
+        self._prev_at_limit: bool = tracker.is_at_limit()
 
     def get_default_model(self) -> str:
         return self._inner.get_default_model()
@@ -248,6 +258,12 @@ class BudgetWrapper:
             response.usage if response.usage else None,
             tracked_model,
         )
+        # If ``record()`` is what pushed the tracker over the line, the
+        # iteration policy may end the loop right after this call —
+        # there may never be a subsequent ``chat()`` for the at-limit
+        # branch at the top to fire the hook. Catch the transition here.
+        if not at_limit and self._tracker.is_at_limit():
+            self._fire_limit_hook()
         return response
 
     # ── Observability hooks ────────────────────────────────────────────
