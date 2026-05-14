@@ -623,7 +623,8 @@ class TestBudgetWrapperHooks:
         inner = FakeProvider(usage={"total_tokens": 0})
         events: list[dict] = []
         wrapper = BudgetWrapper(
-            inner, tracker,
+            inner,
+            tracker,
             on_threshold_crossed=lambda **kw: events.append(kw),
         )
         # The wrapper checks the threshold *before* recording the
@@ -652,7 +653,8 @@ class TestBudgetWrapperHooks:
         inner = FakeProvider(usage={"total_tokens": 0})
         events: list[dict] = []
         wrapper = BudgetWrapper(
-            inner, tracker,
+            inner,
+            tracker,
             on_threshold_crossed=lambda **kw: events.append(kw),
         )
         # Same off-by-one as above: thresholds fire on the call AFTER
@@ -673,7 +675,8 @@ class TestBudgetWrapperHooks:
         inner = FakeProvider(usage={"total_tokens": 0})
         events: list[dict] = []
         wrapper = BudgetWrapper(
-            inner, tracker,
+            inner,
+            tracker,
             on_limit_reached=lambda **kw: events.append(kw),
         )
         # 2 calls = budget exhausted. Subsequent calls return synthetic
@@ -698,7 +701,8 @@ class TestBudgetWrapperHooks:
         inner = FakeProvider(usage={"total_tokens": 0})
         events: list[dict] = []
         wrapper = BudgetWrapper(
-            inner, tracker,
+            inner,
+            tracker,
             on_limit_reached=lambda **kw: events.append(kw),
         )
         # First turn: exhaust + extra CUTOFF call.
@@ -727,7 +731,8 @@ class TestBudgetWrapperHooks:
             raise RuntimeError("buggy hook")
 
         wrapper = BudgetWrapper(
-            inner, tracker,
+            inner,
+            tracker,
             on_threshold_crossed=boom,
             on_limit_reached=boom,
         )
