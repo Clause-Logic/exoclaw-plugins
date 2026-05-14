@@ -607,6 +607,152 @@ class TestBudgetWrapperToolStrip:
         assert all(len(m) == 1 for m in inner.seen_messages)
 
 
+class TestBudgetWrapperHooks:
+    """Optional ``on_threshold_crossed`` / ``on_limit_reached`` callbacks
+    let consumers wire structured logs or metrics without subclassing or
+    intercepting ``chat()`` themselves."""
+
+    async def test_threshold_hook_fires_with_full_payload(self) -> None:
+        cfg = TurnBudgetConfig(
+            iteration_budget=10,
+            token_budget=None,
+            warning_thresholds=(0.5,),
+            enforcement=Enforcement.OBSERVE,
+        )
+        tracker = TurnBudgetTracker(cfg)
+        inner = FakeProvider(usage={"total_tokens": 0})
+        events: list[dict] = []
+        wrapper = BudgetWrapper(
+            inner, tracker,
+            on_threshold_crossed=lambda **kw: events.append(kw),
+        )
+        # The wrapper checks the threshold *before* recording the
+        # current call, so iterations_seen needs to be ≥5 entering
+        # chat() — that's the 6th call.
+        for _ in range(6):
+            await wrapper.chat(messages=[{"role": "user", "content": "x"}])
+
+        assert len(events) == 1
+        e = events[0]
+        assert e["scope"] == "turn"
+        assert e["threshold"] == 0.5
+        assert e["utilization"] == 0.5
+        assert e["used"] == 5
+        assert e["cap"] == 10
+        assert e["unit"] == "iterations"
+
+    async def test_threshold_hook_fires_at_most_once_per_crossing(self) -> None:
+        cfg = TurnBudgetConfig(
+            iteration_budget=10,
+            token_budget=None,
+            warning_thresholds=(0.5, 0.8),
+            enforcement=Enforcement.OBSERVE,
+        )
+        tracker = TurnBudgetTracker(cfg)
+        inner = FakeProvider(usage={"total_tokens": 0})
+        events: list[dict] = []
+        wrapper = BudgetWrapper(
+            inner, tracker,
+            on_threshold_crossed=lambda **kw: events.append(kw),
+        )
+        # Same off-by-one as above: thresholds fire on the call AFTER
+        # the boundary is crossed in the tracker's state.
+        for _ in range(10):
+            await wrapper.chat(messages=[{"role": "user", "content": "x"}])
+
+        assert [e["threshold"] for e in events] == [0.5, 0.8]
+
+    async def test_limit_hook_fires_once_on_cutoff(self) -> None:
+        cfg = TurnBudgetConfig(
+            iteration_budget=2,
+            token_budget=None,
+            warning_thresholds=(),
+            enforcement=Enforcement.CUTOFF,
+        )
+        tracker = TurnBudgetTracker(cfg)
+        inner = FakeProvider(usage={"total_tokens": 0})
+        events: list[dict] = []
+        wrapper = BudgetWrapper(
+            inner, tracker,
+            on_limit_reached=lambda **kw: events.append(kw),
+        )
+        # 2 calls = budget exhausted. Subsequent calls return synthetic
+        # responses but must not re-fire the hook.
+        for _ in range(5):
+            await wrapper.chat(messages=[{"role": "user", "content": "x"}])
+
+        assert len(events) == 1
+        assert events[0]["scope"] == "turn"
+        assert events[0]["used"] == 2
+        assert events[0]["cap"] == 2
+        assert events[0]["unit"] == "iterations"
+
+    async def test_limit_hook_re_fires_after_tracker_reset(self) -> None:
+        cfg = TurnBudgetConfig(
+            iteration_budget=2,
+            token_budget=None,
+            warning_thresholds=(),
+            enforcement=Enforcement.CUTOFF,
+        )
+        tracker = TurnBudgetTracker(cfg)
+        inner = FakeProvider(usage={"total_tokens": 0})
+        events: list[dict] = []
+        wrapper = BudgetWrapper(
+            inner, tracker,
+            on_limit_reached=lambda **kw: events.append(kw),
+        )
+        # First turn: exhaust + extra CUTOFF call.
+        for _ in range(3):
+            await wrapper.chat(messages=[{"role": "user", "content": "x"}])
+        # Simulate turn boundary — policy would call tracker.reset(),
+        # then call chat() again on the new turn.
+        tracker.reset()
+        # Second turn: exhaust again.
+        for _ in range(3):
+            await wrapper.chat(messages=[{"role": "user", "content": "x"}])
+
+        assert len(events) == 2
+
+    async def test_hooks_swallow_callback_errors(self) -> None:
+        cfg = TurnBudgetConfig(
+            iteration_budget=2,
+            token_budget=None,
+            warning_thresholds=(0.5,),
+            enforcement=Enforcement.CUTOFF,
+        )
+        tracker = TurnBudgetTracker(cfg)
+        inner = FakeProvider(usage={"total_tokens": 0})
+
+        def boom(**_: object) -> None:
+            raise RuntimeError("buggy hook")
+
+        wrapper = BudgetWrapper(
+            inner, tracker,
+            on_threshold_crossed=boom,
+            on_limit_reached=boom,
+        )
+        # Both hooks raise. The agent loop must not see those exceptions.
+        for _ in range(4):
+            await wrapper.chat(messages=[{"role": "user", "content": "x"}])
+        # Tracker should still reflect normal state.
+        assert tracker.is_at_limit() is True
+
+    async def test_hooks_optional_no_op_when_unset(self) -> None:
+        cfg = TurnBudgetConfig(
+            iteration_budget=2,
+            token_budget=None,
+            warning_thresholds=(0.5,),
+            enforcement=Enforcement.CUTOFF,
+        )
+        tracker = TurnBudgetTracker(cfg)
+        inner = FakeProvider(usage={"total_tokens": 0})
+        wrapper = BudgetWrapper(inner, tracker)  # no hooks
+        for _ in range(4):
+            await wrapper.chat(messages=[{"role": "user", "content": "x"}])
+        # Existed cleanly, no AttributeError or similar.
+        assert tracker.is_at_limit() is True
+
+
 class TestDailyBudgetWrapper:
     async def test_fallback_tokens_dont_deplete_budget(self) -> None:
         cfg = DailyBudgetConfig(

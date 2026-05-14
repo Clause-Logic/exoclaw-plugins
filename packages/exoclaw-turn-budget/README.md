@@ -155,6 +155,28 @@ respond to the user soon.
 
 The injection is ephemeral — only that one model call sees it, but the agent's response (the wrap-up plan it adopts) gets persisted as normal. Each threshold fires at most once per turn; subsequent iterations don't repeat the same warning. Threshold warnings are also suppressed once the budget is exhausted, so the agent doesn't get a stale "you're at 50%" notice after it has already hit the limit.
 
+## Observability hooks
+
+The plugin doesn't emit logs or metrics on its own — it stays silent so consumers can route signal through whatever telemetry stack they already use. Two optional callbacks on `BudgetWrapper` cover the lifecycle:
+
+```python
+def on_threshold_crossed(*, scope, threshold, utilization, used, cap, unit): ...
+def on_limit_reached(*, scope, utilization, used, cap, unit): ...
+
+provider = BudgetWrapper(
+    inner, tracker,
+    on_threshold_crossed=lambda **kw: logger.info("turn_budget_threshold", **kw),
+    on_limit_reached=lambda **kw: logger.info("turn_budget_exhausted", **kw),
+)
+```
+
+- `scope` — `"turn"` or `"daily"` (from the tracker's `SCOPE`).
+- `threshold` — fraction in `warning_thresholds` that was just crossed (`on_threshold_crossed` only).
+- `utilization` — current ratio (`0.0`–`1.0`+).
+- `used` / `cap` / `unit` — whichever axis is closer to exhaustion (`"iterations"` or `"tokens"`), so the payload matches the in-band warning template substitutions.
+
+Both hooks are dedup'd internally — `on_threshold_crossed` fires once per threshold crossing, `on_limit_reached` fires once per exhaustion event (and re-arms when the tracker resets, so the next turn or day boundary can fire it again). Exceptions raised inside a hook are swallowed so a buggy callback can't crash the agent loop.
+
 ## Subagents
 
 Each `AgentLoop` instance gets its own `TurnBudgetTracker`. To budget a parent turn together with its subagent spawns, share the same tracker (and policy) when constructing the subagent loop. The `DailyBudgetTracker` is naturally shared across all loops in a process since it's keyed on wall-clock time, not turn boundaries.
