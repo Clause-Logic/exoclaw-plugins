@@ -36,20 +36,28 @@ def _short_tool_id() -> str:
 
 
 def _coerce_int(value: Any) -> int:
-    """Best-effort int coercion that returns 0 for None / non-numeric.
+    """Coerce known scalar shapes to int; everything else becomes 0.
 
-    Used for cache-token fields on the litellm ``usage`` object: real
-    providers return ints, but tests using ``MagicMock`` auto-create
-    truthy non-int attributes, and offline integration paths can hand
-    back stringified counts. Treating "can't be converted" as zero keeps
-    the response parser robust to all three shapes.
+    Used for cache-token fields on the litellm ``usage`` object. Only
+    accepts ``int``, ``float``, and numeric strings — anything else
+    (notably ``MagicMock`` auto-attrs in tests, where ``int(mock)``
+    returns ``1`` and would silently fabricate one cached token per
+    response) is treated as absent. Booleans are excluded explicitly
+    because Python treats ``bool`` as a subclass of ``int``, so a
+    stray ``True`` would otherwise count as one cached token.
     """
-    if value is None:
+    if value is None or isinstance(value, bool):
         return 0
-    try:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
         return int(value)
-    except (TypeError, ValueError):
-        return 0
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return 0
+    return 0
 
 
 def _sanitize_empty_content(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
