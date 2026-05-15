@@ -1,6 +1,6 @@
 [project]
 name = "exoclaw-turn-budget"
-version = "0.5.0"
+version = "0.6.0"
 description = "Per-turn iteration + token budget with progressive warnings, plus a daily token-rate guard with model fallback — keeps agents from blowing through provider weekly quotas"
 readme = "README.md"
 requires-python = ">=3.11"
