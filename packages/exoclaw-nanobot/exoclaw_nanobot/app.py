@@ -386,6 +386,10 @@ async def create(
                 warning_thresholds=tuple(turn_budget.warning_thresholds),
                 enforcement=turn_budget.enforcement,
                 fallback_model=turn_budget.fallback_model,
+                tool_strip_threshold=turn_budget.tool_strip_threshold,
+                tool_strip_disallow=tuple(turn_budget.tool_strip_disallow),
+                cached_token_weight=turn_budget.cached_token_weight,
+                model_weights=dict(turn_budget.model_weights),
             )
         )
         provider = BudgetWrapper(provider, turn_tracker)

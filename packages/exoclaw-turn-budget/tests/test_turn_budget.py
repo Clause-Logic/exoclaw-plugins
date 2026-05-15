@@ -101,6 +101,43 @@ class TestTurnBudgetTracker:
         tracker.record({"total_tokens": 100, "cached_tokens": 1000})
         assert tracker.total_tokens == 0
 
+    def test_model_weights_scale_known_model(self) -> None:
+        # A model with weight 0.25 accumulates 1/4 of the chargeable tokens.
+        # int() truncates toward zero, matching the production code path.
+        tracker = TurnBudgetTracker(TurnBudgetConfig(model_weights={"minimax-m2.7": 0.25}))
+        tracker.record({"total_tokens": 1000}, model="minimax-m2.7")
+        assert tracker.total_tokens == 250
+
+    def test_model_weights_unknown_model_defaults_to_one(self) -> None:
+        # A model not in model_weights must not raise KeyError — it falls
+        # back to weight 1.0 (the legacy "no discount" behavior).
+        tracker = TurnBudgetTracker(TurnBudgetConfig(model_weights={"glm-5.1": 1.0}))
+        tracker.record({"total_tokens": 1000}, model="unknown-model")
+        assert tracker.total_tokens == 1000
+
+    def test_model_weights_none_model_defaults_to_one(self) -> None:
+        # ``record(model=None)`` is the documented contract for callers
+        # that don't know the model (e.g. providers without per-call
+        # routing). Weight must not be looked up against None.
+        tracker = TurnBudgetTracker(TurnBudgetConfig(model_weights={"glm-5.1": 0.5}))
+        tracker.record({"total_tokens": 1000}, model=None)
+        assert tracker.total_tokens == 1000
+
+    def test_model_weights_empty_preserves_legacy_behavior(self) -> None:
+        # Default config has no model_weights → behaves identically to
+        # the pre-feature implementation.
+        tracker = TurnBudgetTracker(TurnBudgetConfig())
+        tracker.record({"total_tokens": 1000}, model="anything")
+        assert tracker.total_tokens == 1000
+
+    def test_model_weights_truncate_to_zero_for_tiny_costs(self) -> None:
+        # Locks in the int() truncation choice: a very cheap model
+        # (weight 0.03) with a small chargeable count rounds down to 0.
+        # If this should ever round to 1 instead, this test catches it.
+        tracker = TurnBudgetTracker(TurnBudgetConfig(model_weights={"deepseek-v4-flash": 0.03}))
+        tracker.record({"total_tokens": 30}, model="deepseek-v4-flash")
+        assert tracker.total_tokens == 0
+
     def test_reset_clears_state(self) -> None:
         tracker = TurnBudgetTracker(TurnBudgetConfig(warning_thresholds=(0.5,)))
         tracker.record({"total_tokens": 1_000_000})
