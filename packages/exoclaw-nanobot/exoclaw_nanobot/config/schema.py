@@ -243,6 +243,10 @@ class TurnBudgetDefaults(Base):
     warning_thresholds: list[float] = Field(default_factory=lambda: [0.5, 0.8, 0.9])
     enforcement: str = "cutoff"  # observe | warn | cutoff | fallback
     fallback_model: str | None = None
+    tool_strip_threshold: float | None = None
+    tool_strip_disallow: list[str] = Field(default_factory=list)
+    cached_token_weight: float = 0.1
+    model_weights: dict[str, float] = Field(default_factory=dict)
 
 
 class DailyBudgetDefaults(Base):

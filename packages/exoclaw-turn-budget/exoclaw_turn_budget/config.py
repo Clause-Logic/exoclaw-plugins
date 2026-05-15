@@ -73,6 +73,11 @@ if not IS_MICROPYTHON:  # pragma: no cover (micropython)
         tool_strip_disallow: tuple[str, ...] = ()
         tool_strip_template: str = _DEFAULT_TOOL_STRIP_TEMPLATE
         cached_token_weight: float = 0.1
+        model_weights: dict = None  # type: ignore[assignment]
+
+        def __post_init__(self) -> None:
+            if self.model_weights is None:
+                self.model_weights = {}
 
     @dataclass
     class DailyBudgetConfig:
@@ -118,6 +123,7 @@ else:  # pragma: no cover (cpython)
             tool_strip_disallow: tuple[str, ...] = (),
             tool_strip_template: str = _DEFAULT_TOOL_STRIP_TEMPLATE,
             cached_token_weight: float = 0.1,
+            model_weights: dict | None = None,
         ) -> None:
             self.iteration_budget = iteration_budget
             self.token_budget = token_budget
@@ -130,6 +136,7 @@ else:  # pragma: no cover (cpython)
             self.tool_strip_disallow = tool_strip_disallow
             self.tool_strip_template = tool_strip_template
             self.cached_token_weight = cached_token_weight
+            self.model_weights = model_weights or {}
 
     class DailyBudgetConfig:
         """MicroPython fallback — plain class with hand-written ``__init__``.

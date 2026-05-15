@@ -150,7 +150,9 @@ class TurnBudgetTracker:
 
     def record(self, usage: "dict[str, int] | None", model: str | None = None) -> None:
         self.iterations_seen += 1
-        self.total_tokens += _coerce_total_tokens(usage, self._config.cached_token_weight)
+        chargeable = _coerce_total_tokens(usage, self._config.cached_token_weight)
+        model_weight = self._config.model_weights.get(model, 1.0) if model else 1.0
+        self.total_tokens += int(chargeable * model_weight)
 
     def utilization(self) -> float:
         cfg = self._config
