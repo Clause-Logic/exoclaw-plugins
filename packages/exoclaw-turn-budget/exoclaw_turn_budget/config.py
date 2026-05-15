@@ -32,7 +32,7 @@ _DEFAULT_TOOL_STRIP_TEMPLATE = (
 
 
 if not IS_MICROPYTHON:  # pragma: no cover (micropython)
-    from dataclasses import dataclass
+    from dataclasses import dataclass, field
 
     from exoclaw_turn_budget.enforcement import Enforcement
 
@@ -73,11 +73,7 @@ if not IS_MICROPYTHON:  # pragma: no cover (micropython)
         tool_strip_disallow: tuple[str, ...] = ()
         tool_strip_template: str = _DEFAULT_TOOL_STRIP_TEMPLATE
         cached_token_weight: float = 0.1
-        model_weights: dict = None  # type: ignore[assignment]
-
-        def __post_init__(self) -> None:
-            if self.model_weights is None:
-                self.model_weights = {}
+        model_weights: dict[str, float] = field(default_factory=dict)
 
     @dataclass
     class DailyBudgetConfig:
