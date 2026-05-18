@@ -1,11 +1,13 @@
 [project]
 name = "exoclaw-openrouter-search"
-version = "0.2.1"
+version = "0.2.2"
 description = "Web search tool for exoclaw using OpenRouter's web search plugin"
 requires-python = ">=3.11"
 dependencies = [
     "exoclaw>=0.10.1",
-    "litellm>=1.0.0,<1.82.7",  # 1.82.7-8 compromised: https://github.com/BerriAI/litellm/issues/24512
+    # See exoclaw-provider-litellm/pyproject.toml for the floor rationale —
+    # bumped past the SQLi-vulnerable window (CVE-2026-42208) to 1.83.10+.
+    "litellm>=1.83.10",
     "structlog>=25.0.0",
 ]
 

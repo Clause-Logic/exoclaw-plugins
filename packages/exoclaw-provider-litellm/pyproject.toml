@@ -1,12 +1,19 @@
 [project]
 name = "exoclaw-provider-litellm"
-version = "0.9.0"
+version = "0.9.1"
 description = "LiteLLM provider for exoclaw"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "exoclaw>=0.10.1",
-    "litellm>=1.0.0,<1.82.7",  # 1.82.7-8 compromised: https://github.com/BerriAI/litellm/issues/24512
+    # Floor at 1.83.10 — clears CVE-2026-42208 (pre-auth SQLi, affects
+    # 1.81.16..1.83.6, exploited within 36h of disclosure). 1.83.0+ is
+    # built under LiteLLM's post-incident CI/CD v2 pipeline (cosign-signed
+    # release artifacts) after the March 2026 1.82.7/8 PyPI compromise.
+    # Old cap of <1.82.7 was defensive against those yanked malicious
+    # releases; PyPI has since removed them so the cap is no longer
+    # load-bearing — it just kept us on a vulnerable SQLi-era version.
+    "litellm>=1.83.10",
     "json-repair>=0.1.0",
     "structlog>=25.0.0",
 ]
