@@ -118,15 +118,14 @@ class TestDBOSExecutorProtocol:
         after the per-instance-ContextVar refactor landed.
         """
         executor = DBOSExecutor()
-        # ``ToolContext`` and ``DBOSExecutor`` are dual-class
-        # (``@dataclass`` on CPython, plain on MP); ty sees the
-        # union and can't narrow ``__init__`` / ``asdict`` calls.
-        # Runtime is the CPython dataclass branch here.
+        # ``ToolContext`` is dual-class (``@dataclass`` on CPython, plain on
+        # MP); ty sees the union and can't narrow the ``asdict`` call. Runtime
+        # is the CPython dataclass branch here.
         ctx = ToolContext(
             session_key="test:deepcopy",
             channel="ipc",
             chat_id="x",
-            executor=executor,  # type: ignore[invalid-argument-type]
+            executor=executor,
         )
         data = dataclasses.asdict(ctx)  # type: ignore[invalid-argument-type]  # must not raise
         assert data["session_key"] == "test:deepcopy"

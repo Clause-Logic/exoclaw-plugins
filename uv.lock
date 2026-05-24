@@ -723,14 +723,14 @@ wheels = [
 
 [[package]]
 name = "exoclaw"
-version = "0.28.0"
+version = "0.30.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "structlog" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e2/a8/046f81bb1b40bbbcdc97dd11d322d7d8d23f5958ed359eb3b64977346812/exoclaw-0.28.0.tar.gz", hash = "sha256:2847aa67f61ae2658b824a70ba35b4859f7a5da9e20b11ee81b9c7336041ac99", size = 80561, upload-time = "2026-05-09T22:43:02.377Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/07/95/4597c076ec0f03319534b9788c30ff761b28961f32fd4ee18e8546004c59/exoclaw-0.30.2.tar.gz", hash = "sha256:b6dc52052c3104a4df68e96012eb75dc02a021318fa233308d06d9b5aa5000cf", size = 79167, upload-time = "2026-05-24T15:10:59.572Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9b/21/5d12460a44e1a46a2e34edfa3147ec9b45a611d53edbe2e433f25769ec19/exoclaw-0.28.0-py3-none-any.whl", hash = "sha256:041eb39fc07b314830e0a37a83ec57af20d8b24ba5c1849380bf8d4cdd944766", size = 84337, upload-time = "2026-05-09T22:43:01.157Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/27/ce5025e50438f38a1fcb83b855a533dfa0b013a6d25a2f8cf8b80d12c2f1/exoclaw-0.30.2-py3-none-any.whl", hash = "sha256:4ae877006985ccb0f222b6b002dc34252d0bfc4bac528e39b370f4d19fd95c39", size = 88903, upload-time = "2026-05-24T15:11:00.951Z" },
 ]
 
 [package.optional-dependencies]
@@ -945,7 +945,7 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-executor-dbos"
-version = "0.15.1"
+version = "0.15.2"
 source = { editable = "packages/exoclaw-executor-dbos" }
 dependencies = [
     { name = "dbos" },
@@ -958,7 +958,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "dbos", specifier = ">=1.0.0" },
-    { name = "exoclaw", specifier = ">=0.26.0" },
+    { name = "exoclaw", specifier = ">=0.30.2" },
     { name = "exoclaw-subagent", editable = "packages/exoclaw-subagent" },
     { name = "structlog", specifier = ">=24.0.0" },
     { name = "uuid-utils", specifier = ">=0.9.0" },

@@ -507,3 +507,95 @@ class TestDurability:
         assert announced.batch_id == batch_id
         assert announced.total == 6
         assert announced.completed == 6
+
+    async def test_before_finish_inject_and_continue_replays(self, dbos_instance: Any) -> None:
+        """``on_before_finish`` re-prompts a model that stopped early, and the
+        re-prompt must survive a crash inside the durable executor.
+
+        The hook is dispatched via ``run_hook`` (a plain await, NOT a
+        ``@DBOS.step``), so on workflow recovery the whole loop body —
+        including the hook — re-executes. The ``_chat_step`` calls replay from
+        the journal, so this only stays correct if the hook's inject-or-stop
+        decision is a pure function of the journaled responses. This test locks
+        that in: the first response lacks a DONE sentinel (hook nudges), the
+        second has it (hook accepts); on recovery the same final answer comes
+        back and the provider is NOT re-invoked.
+        """
+        from dbos._schemas.system_database import SystemSchema
+        from exoclaw.agent.loop import AgentLoop
+        from exoclaw.bus.queue import MessageBus
+        from exoclaw_executor_dbos.executor import DBOSExecutor
+
+        provider = MagicMock()
+        provider.chat = AsyncMock(
+            side_effect=[
+                _make_response("still working on it"),
+                _make_response("DONE — all set"),
+            ]
+        )
+        # spec excludes ``append`` so the loop takes the batched-record path
+        # (prefer_append=False); the nudge then rides the in-memory delta the
+        # provider reads, with no extra append step to journal.
+        conversation = MagicMock(spec=["build_prompt", "record", "clear"])
+
+        nudge = "you stopped without finishing — keep going"
+
+        async def on_before_finish(
+            final: str, tools_used: list[str], session_key: str
+        ) -> str | None:
+            # Decision derives only from the (journaled) response content, so
+            # it reproduces identically when the loop re-runs on recovery.
+            return nudge if "DONE" not in (final or "") else None
+
+        executor = DBOSExecutor()
+        loop = AgentLoop(
+            bus=MessageBus(),
+            provider=provider,
+            conversation=conversation,
+            executor=executor,
+            on_before_finish=on_before_finish,
+        )
+
+        @DBOS.workflow()
+        async def run_loop() -> str | None:
+            executor.set_messages([{"role": "user", "content": "go"}])
+            final, _tools, _msgs = await loop._run_agent_loop(
+                [{"role": "user", "content": "go"}], session_id="s:before-finish"
+            )
+            return final
+
+        wfid = str(uuid.uuid4())
+        with SetWorkflowID(wfid):
+            final = await run_loop()
+
+        # First run: the hook nudged after the early stop and the loop
+        # re-prompted, ending only on the DONE response.
+        assert final == "DONE — all set"
+        assert provider.chat.await_count == 2
+        # The nudge actually reached the second LLM call (inject worked under
+        # the durable executor, not just "the loop ran twice").
+        second_call_messages = provider.chat.await_args_list[1].kwargs["messages"]
+        assert any(m.get("content") == nudge for m in second_call_messages), (
+            "nudge did not reach the second chat — inject path broken under DBOS"
+        )
+
+        # Simulate a crash mid-turn: force the workflow back to PENDING.
+        with dbos_instance._sys_db.engine.begin() as conn:
+            conn.execute(
+                sa.update(SystemSchema.workflow_status)
+                .values({"status": "PENDING"})
+                .where(SystemSchema.workflow_status.c.workflow_uuid == wfid)
+            )
+
+        handles = DBOS._recover_pending_workflows()
+        assert len(handles) == 1
+        recovered = handles[0].get_result()
+
+        assert recovered == "DONE — all set"
+        # Both chat steps replayed from the journal — provider.chat was NOT
+        # called again even though the hook re-ran the entire loop on recovery.
+        # inject-and-continue is replay-safe under the durable executor.
+        assert provider.chat.await_count == 2, (
+            "provider.chat fired on replay — the nudge turn re-called the LLM "
+            "instead of replaying the journaled chat step"
+        )
