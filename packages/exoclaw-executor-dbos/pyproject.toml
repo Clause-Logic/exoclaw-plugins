@@ -1,15 +1,16 @@
 [project]
 name = "exoclaw-executor-dbos"
-version = "0.15.2"
+version = "0.16.0"
 description = "DBOS-backed durable executor for exoclaw — turns and tool calls survive restarts"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    # 0.29.0 added the ``on_before_finish`` AgentLoop hook the durability
-    # test exercises (re-prompt a model that stopped early). 0.26.0 changed
-    # ``ToolResult.content_file`` from ``Path`` to ``str | None`` for
-    # cross-runtime serialisation.
-    "exoclaw>=0.29.0",
+    # 0.30.0 added the ``Executor.run_effect`` seam this executor overrides to
+    # journal a lifecycle hook's side effect (replays exactly once on recovery).
+    # 0.29.0 added the ``on_before_finish`` AgentLoop hook the durability test
+    # also exercises. 0.26.0 changed ``ToolResult.content_file`` from ``Path``
+    # to ``str | None`` for cross-runtime serialisation.
+    "exoclaw>=0.30.0",
     "exoclaw-subagent>=0.12.0",
     "dbos>=1.0.0",
     "structlog>=24.0.0",
