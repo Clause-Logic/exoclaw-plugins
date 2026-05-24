@@ -153,13 +153,6 @@ _provider_var: contextvars.ContextVar[LLMProvider | None] = contextvars.ContextV
 _registry_var: contextvars.ContextVar[ToolRegistry | None] = contextvars.ContextVar(
     "_registry_var", default=None
 )
-# Thunk a lifecycle hook handed to ``run_effect``. Passed via ContextVar (not a
-# step arg) because closures aren't journal-serialisable — the step's *result*
-# is what DBOS journals and replays, so the effect runs exactly once across a
-# crash. Same set-then-call pattern as ``_provider_var`` + ``_chat_step``.
-_effect_fn_var: contextvars.ContextVar[Callable[[], Awaitable[object]] | None] = (
-    contextvars.ContextVar("_effect_fn_var", default=None)
-)
 
 
 # ── DBOS step functions ──────────────────────────────────────────────────────
@@ -310,22 +303,6 @@ async def _mint_turn_id_step() -> str:
     replay and break ``turn.root_id`` correlation across the crash.
     """
     return str(uuid7())
-
-
-@DBOS.step()
-async def _effect_step() -> object:
-    """Journaled execution of a lifecycle hook's ``run_effect`` callable.
-
-    The thunk is read from ``_effect_fn_var`` (set by ``run_effect`` just
-    before this call) rather than passed as a step arg — closures aren't
-    journal-serialisable. DBOS journals the step's *result* on first run and
-    replays it on recovery without re-invoking the thunk, so a hook's side
-    effect (a DB write, a notification) happens exactly once across a crash.
-    """
-    fn = _effect_fn_var.get()
-    if fn is None:
-        raise RuntimeError("effect thunk not set — call run_effect, not _effect_step directly")
-    return await fn()
 
 
 # ── Workflow registry for deferred-intent dispatch ───────────────────────────
@@ -877,28 +854,6 @@ class DBOSExecutor:
         # protocol — a positional-only marker here makes DBOSExecutor a
         # non-substitutable, narrower signature and breaks structural typing.
         return await fn(*args, **kwargs)
-
-    async def run_effect(
-        self,
-        fn: Callable[..., Awaitable[object]],
-        /,
-        *args: object,
-        **kwargs: object,
-    ) -> object:
-        """Journal a lifecycle hook's side effect (``HookContext.run_effect``).
-
-        Unlike ``run_hook`` (inline — its hooks mutate in-workflow state), an
-        effect is durable I/O, so it runs inside a ``@DBOS.step``: the result
-        is journaled on first run and replayed on recovery without re-invoking
-        ``fn``. The thunk rides ``_effect_fn_var`` because closures can't be
-        step args.
-        """
-
-        async def _thunk() -> object:
-            return await fn(*args, **kwargs)
-
-        _effect_fn_var.set(_thunk)
-        return await _effect_step()
 
     async def mint_turn_id(self) -> str:
         """Mint a replay-safe per-turn id via a DBOS step.
