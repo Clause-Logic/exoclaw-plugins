@@ -95,6 +95,47 @@ class TestDurability:
         # provider.chat was NOT called again — step was replayed
         assert provider.chat.await_count == 1
 
+    async def test_run_effect_replayed_on_recovery(self, dbos_instance: Any) -> None:
+        """``DBOSExecutor.run_effect`` runs a lifecycle hook's side effect
+        inside a ``@DBOS.step``, so on recovery the journaled result replays
+        without re-invoking the effect — a hook's I/O happens exactly once
+        across a crash. This is what makes ``HookContext.run_effect`` safe
+        under the durable executor (the seam skill hooks dispatch through)."""
+        from dbos._schemas.system_database import SystemSchema
+        from exoclaw_executor_dbos.executor import DBOSExecutor
+
+        calls: list[int] = []
+        executor = DBOSExecutor()
+
+        async def effect() -> str:
+            calls.append(1)
+            return "effect-result"
+
+        @DBOS.workflow()
+        async def single_effect_workflow() -> str:
+            return await executor.run_effect(effect)
+
+        wfid = str(uuid.uuid4())
+        with SetWorkflowID(wfid):
+            result = await single_effect_workflow()
+
+        assert result == "effect-result"
+        assert calls == [1]
+
+        # Simulate crash mid-turn: force the workflow back to PENDING.
+        with dbos_instance._sys_db.engine.begin() as conn:
+            conn.execute(
+                sa.update(SystemSchema.workflow_status)
+                .values({"status": "PENDING"})
+                .where(SystemSchema.workflow_status.c.workflow_uuid == wfid)
+            )
+
+        handles = DBOS._recover_pending_workflows()
+        assert len(handles) == 1
+        assert handles[0].get_result() == "effect-result"
+        # The effect was NOT re-run — DBOS replayed the journaled step result.
+        assert calls == [1], "run_effect re-ran the side effect on replay — step not journaled"
+
     async def test_tool_step_replayed_on_recovery(self, dbos_instance: Any) -> None:
         """On recovery, _tool_step returns the journaled result without calling registry.execute again."""
         from dbos._schemas.system_database import SystemSchema
