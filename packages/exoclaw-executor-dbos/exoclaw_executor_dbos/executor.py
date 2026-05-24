@@ -870,10 +870,12 @@ class DBOSExecutor:
     async def run_hook(
         self,
         fn: Callable[..., Awaitable[object]],
-        /,
         *args: object,
         **kwargs: object,
     ) -> object:
+        # ``fn`` is positional-or-keyword (no ``/``) to match the Executor
+        # protocol — a positional-only marker here makes DBOSExecutor a
+        # non-substitutable, narrower signature and breaks structural typing.
         return await fn(*args, **kwargs)
 
     async def run_effect(

@@ -112,7 +112,7 @@ class TestDurability:
             return "effect-result"
 
         @DBOS.workflow()
-        async def single_effect_workflow() -> str:
+        async def single_effect_workflow() -> object:
             return await executor.run_effect(effect)
 
         wfid = str(uuid.uuid4())
