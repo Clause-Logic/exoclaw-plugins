@@ -322,6 +322,9 @@ class OpenAIStreamingProvider:
             "temperature": temperature,
             "stream": True,
             "stream_options": {"include_usage": True},
+            # OpenRouter usage accounting: returns the billed ``usage.cost``
+            # (USD, with flex/caching applied) on the final usage chunk.
+            "usage": {"include": True},
         }
         if tools:
             body_head["tools"] = tools
@@ -433,6 +436,11 @@ class OpenAIStreamingProvider:
         tool_call_parts: dict[int, dict[str, Any]] = {}
         finish_reason = "stop"
         usage: dict[str, int] = {}
+        # Billed cost (USD) from ``usage.cost`` and the served tier from the
+        # chunk's top-level ``service_tier`` — both reported by OpenRouter when
+        # usage accounting is on. None until/unless the provider sends them.
+        cost: float | None = None
+        service_tier: str | None = None
 
         # Demand the first line inside the TTFT budget. Without this
         # the much larger ``request_timeout`` wins when a server
@@ -507,6 +515,12 @@ class OpenAIStreamingProvider:
                 }
                 if details := chunk_usage.get("prompt_tokens_details"):
                     usage["cached_tokens"] = details.get("cached_tokens", 0) or 0
+                if (c := chunk_usage.get("cost")) is not None:
+                    cost = c
+
+            # ``service_tier`` rides the chunk top-level (not under ``usage``).
+            if (tier := chunk.get("service_tier")) is not None:
+                service_tier = tier
 
             for choice in chunk.get("choices") or []:
                 delta = choice.get("delta") or {}
@@ -571,6 +585,8 @@ class OpenAIStreamingProvider:
             usage=usage,
             reasoning_content="".join(reasoning_parts) or None,
             thinking_blocks=None,
+            cost=cost,
+            service_tier=service_tier,
         )
 
     def _log_request(
