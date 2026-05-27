@@ -218,6 +218,8 @@ def _sse_completion(
     content: str = "ok",
     tool_calls: list[dict[str, Any]] | None = None,
     finish_reason: str = "stop",
+    cost: float | None = None,
+    service_tier: str | None = None,
 ) -> bytes:
     """Build an SSE response that a real OpenAI-compatible server would
     send. Content arrives in a single chunk (real servers split more, but
@@ -231,19 +233,20 @@ def _sse_completion(
     events.append(
         "data: " + json.dumps({"choices": [{"index": 0, "delta": delta, "finish_reason": None}]})
     )
-    events.append(
-        "data: "
-        + json.dumps(
-            {
-                "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
-                "usage": {
-                    "prompt_tokens": 10,
-                    "completion_tokens": 2,
-                    "total_tokens": 12,
-                },
-            }
-        )
-    )
+    usage_block: dict[str, Any] = {
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "total_tokens": 12,
+    }
+    if cost is not None:
+        usage_block["cost"] = cost
+    final_chunk: dict[str, Any] = {
+        "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
+        "usage": usage_block,
+    }
+    if service_tier is not None:
+        final_chunk["service_tier"] = service_tier
+    events.append("data: " + json.dumps(final_chunk))
     events.append("data: [DONE]")
     return ("\n\n".join(events) + "\n\n").encode("utf-8")
 
@@ -304,6 +307,45 @@ class TestProviderRouting:
         req = seen[0]
         assert str(req.url) == "https://a.example/v1/chat/completions"
         assert req.headers["authorization"] == "Bearer k-a"
+
+    async def test_cost_and_service_tier_parsed(self) -> None:
+        """OpenRouter usage accounting: the request opts in via
+        ``usage.include``, and the billed ``usage.cost`` + top-level
+        ``service_tier`` land on the response."""
+        captured: dict[str, Any] = {}
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            captured["body"] = req.read()
+            return httpx.Response(
+                200,
+                content=_sse_completion("hi", cost=0.000135, service_tier="flex"),
+                headers={"content-type": "text/event-stream"},
+            )
+
+        async with _provider(httpx.MockTransport(handler)) as provider:
+            resp = await provider.chat(messages=[{"role": "user", "content": "hi"}])
+
+        assert resp.cost == 0.000135
+        assert resp.service_tier == "flex"
+        body = json.loads(captured["body"])
+        assert body["usage"] == {"include": True}
+
+    async def test_cost_and_tier_default_none_when_absent(self) -> None:
+        """No usage.cost / service_tier in the stream → both stay None
+        (provider didn't report them)."""
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                content=_sse_completion("hi"),
+                headers={"content-type": "text/event-stream"},
+            )
+
+        async with _provider(httpx.MockTransport(handler)) as provider:
+            resp = await provider.chat(messages=[{"role": "user", "content": "hi"}])
+
+        assert resp.cost is None
+        assert resp.service_tier is None
 
     async def test_body_is_streamed_not_preserialized(self) -> None:
         """Sanity: the POST must carry the messages we sent, and the
