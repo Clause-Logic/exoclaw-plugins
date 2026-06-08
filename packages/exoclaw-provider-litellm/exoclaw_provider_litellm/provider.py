@@ -134,6 +134,11 @@ def _is_anthropic(model: str) -> bool:
     return "claude" in lower or lower.startswith("anthropic/")
 
 
+def _is_gemini(model: str) -> bool:
+    """Return True when the model is a Google Gemini model."""
+    return "gemini" in model.lower()
+
+
 def _apply_anthropic_cache_control_to_system(
     messages: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -179,6 +184,36 @@ def _apply_anthropic_cache_control_to_tools(
     last["cache_control"] = {"type": "ephemeral"}
     result[-1] = last
     return result
+
+
+def _ensure_array_items(schema: Any) -> Any:
+    """Recursively give every ``array``-typed schema node an ``items`` schema.
+
+    Gemini rejects a function declaration when an ``array`` property omits
+    ``items`` (``INVALID_ARGUMENT: ... items: missing field``), while Anthropic
+    and OpenAI tolerate it. Some MCP tool schemas ship arrays without ``items``
+    (e.g. Notion's ``children``/``rich_text``/``sorts``). Routing to Gemini via
+    the ``openrouter/`` prefix skips LiteLLM's native Gemini schema fixups, so
+    the raw schema reaches Google and the whole request 400s — taking down even
+    turns that never touch those tools. We synthesize a permissive
+    ``{"type": "string"}`` item schema; it only shapes argument generation for
+    those specific properties, and without it the request is rejected outright.
+    """
+    if isinstance(schema, dict):
+        result = {k: _ensure_array_items(v) for k, v in schema.items()}
+        node_type = result.get("type")
+        is_array = node_type == "array" or (isinstance(node_type, list) and "array" in node_type)
+        if is_array and "items" not in result:
+            result["items"] = {"type": "string"}
+        return result
+    if isinstance(schema, list):
+        return [_ensure_array_items(item) for item in schema]
+    return schema
+
+
+def _sanitize_tools_for_gemini(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return tools with Gemini-compatible parameter schemas (arrays get items)."""
+    return [_ensure_array_items(tool) for tool in tools]
 
 
 class LiteLLMProvider:
@@ -360,6 +395,8 @@ class LiteLLMProvider:
             kwargs["messages"] = _apply_anthropic_cache_control_to_system(kwargs["messages"])
             if "tools" in kwargs:
                 kwargs["tools"] = _apply_anthropic_cache_control_to_tools(kwargs["tools"])
+        elif _is_gemini(resolved_model) and "tools" in kwargs:
+            kwargs["tools"] = _sanitize_tools_for_gemini(kwargs["tools"])
 
         if self._llm_logging:
             logger.info(

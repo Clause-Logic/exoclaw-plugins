@@ -15,10 +15,13 @@ from exoclaw_provider_litellm.provider import (
     _apply_anthropic_cache_control_to_system,
     _apply_anthropic_cache_control_to_tools,
     _coerce_int,
+    _ensure_array_items,
     _is_anthropic,
+    _is_gemini,
     _normalize_tool_call_id,
     _sanitize_empty_content,
     _sanitize_request_messages,
+    _sanitize_tools_for_gemini,
     _short_tool_id,
 )
 
@@ -263,6 +266,80 @@ class TestApplyAnthropicCacheControlToTools:
         tools = [{"type": "function", "function": {"name": "tool_a"}}]
         _apply_anthropic_cache_control_to_tools(tools)
         assert "cache_control" not in tools[0]
+
+
+# ---------------------------------------------------------------------------
+# _is_gemini
+# ---------------------------------------------------------------------------
+
+
+class TestIsGemini:
+    def test_gemini_models(self) -> None:
+        assert _is_gemini("gemini-3.5-flash")
+        assert _is_gemini("openrouter/google/gemini-3.5-flash")
+
+    def test_non_gemini(self) -> None:
+        assert not _is_gemini("claude-sonnet-4-5")
+        assert not _is_gemini("gpt-4o")
+
+
+# ---------------------------------------------------------------------------
+# _ensure_array_items / _sanitize_tools_for_gemini
+# ---------------------------------------------------------------------------
+
+
+class TestEnsureArrayItems:
+    def test_adds_items_to_bare_array(self) -> None:
+        schema = {"type": "array"}
+        assert _ensure_array_items(schema) == {"type": "array", "items": {"type": "string"}}
+
+    def test_preserves_existing_items(self) -> None:
+        schema = {"type": "array", "items": {"type": "object"}}
+        assert _ensure_array_items(schema)["items"] == {"type": "object"}
+
+    def test_recurses_into_nested_properties(self) -> None:
+        schema = {
+            "type": "object",
+            "properties": {
+                "children": {"type": "array"},
+                "nested": {"type": "object", "properties": {"sorts": {"type": "array"}}},
+            },
+        }
+        result = _ensure_array_items(schema)
+        assert result["properties"]["children"]["items"] == {"type": "string"}
+        assert result["properties"]["nested"]["properties"]["sorts"]["items"] == {"type": "string"}
+
+    def test_handles_union_type_list(self) -> None:
+        schema = {"type": ["array", "null"]}
+        assert _ensure_array_items(schema)["items"] == {"type": "string"}
+
+    def test_non_array_untouched(self) -> None:
+        schema = {"type": "string"}
+        assert _ensure_array_items(schema) == {"type": "string"}
+
+    def test_original_not_mutated(self) -> None:
+        schema = {"type": "array"}
+        _ensure_array_items(schema)
+        assert "items" not in schema
+
+
+class TestSanitizeToolsForGemini:
+    def test_fixes_notion_style_tool(self) -> None:
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "append_block_children",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"children": {"type": "array"}},
+                    },
+                },
+            }
+        ]
+        result = _sanitize_tools_for_gemini(tools)
+        props = result[0]["function"]["parameters"]["properties"]
+        assert props["children"]["items"] == {"type": "string"}
 
 
 # ---------------------------------------------------------------------------
@@ -764,6 +841,28 @@ class TestLiteLLMProviderExtra:
         sent_msgs = mock.call_args[1]["messages"]
         sys_msg = next(m for m in sent_msgs if m["role"] == "system")
         assert isinstance(sys_msg["content"], str)
+
+    async def test_chat_gemini_sanitizes_tool_array_items(self) -> None:
+        p = LiteLLMProvider()
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "append",
+                    "parameters": {"type": "object", "properties": {"children": {"type": "array"}}},
+                },
+            }
+        ]
+        with patch("exoclaw_provider_litellm.provider.acompletion", new_callable=AsyncMock) as mock:
+            mock.return_value = _make_litellm_response()
+            await p.chat(
+                [{"role": "user", "content": "hi"}],
+                model="openrouter/google/gemini-3.5-flash",
+                tools=tools,
+            )
+        sent_tools = mock.call_args[1]["tools"]
+        props = sent_tools[0]["function"]["parameters"]["properties"]
+        assert props["children"]["items"] == {"type": "string"}
 
 
 class TestModelConcurrency:
