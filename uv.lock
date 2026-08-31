@@ -1193,7 +1193,7 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-provider-openai"
-version = "0.4.3"
+version = "0.4.4"
 source = { editable = "packages/exoclaw-provider-openai" }
 dependencies = [
     { name = "exoclaw", extra = ["http"] },

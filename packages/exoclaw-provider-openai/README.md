@@ -28,6 +28,17 @@ provider = OpenAIStreamingProvider(
 )
 ```
 
+## SSE capture for live debugging
+
+Set `LLM_SSE_LOG_PATH` to opt into a private raw-SSE JSONL capture. Each
+`data:` payload is recorded in receive order, including reasoning, streamed
+tool-call arguments, usage, and the final `[DONE]` marker. The sink is not
+sent to normal structured logging.
+
+It rotates the current file plus four backups at 2 MiB each, retaining about
+10 MiB total. Because the capture can contain private model output, place it
+on a protected persistent volume and enable it only for debugging.
+
 Each model name maps to exactly one deployment (base URL + API key + optional
 extra headers). `fallbacks` is a per-model list — when the primary raises a
 retryable error (429, 5xx, timeout) the provider walks the fallback list

@@ -41,6 +41,11 @@ if not IS_MICROPYTHON:
     # falls back to plain ``json.loads`` below; on a chip the
     # extra resiliency isn't worth pulling in a 3rd-party
     # dependency that isn't packaged for ``mip``.
+    import logging
+    from datetime import UTC, datetime
+    from logging.handlers import RotatingFileHandler
+    from pathlib import Path
+
     import json_repair
 from exoclaw.http import (
     HTTPClient,
@@ -75,6 +80,55 @@ _ALNUM = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 # Response-retryable HTTP status codes. 408/425 join the 5xx/429 set
 # for safety — some providers emit them on transient queue pressure.
 _RETRYABLE_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
+
+# The local debugging sink keeps the current log plus four prior 2 MiB files,
+# for about 10 MiB of raw SSE data in total. It is deliberately opt-in via
+# ``LLM_SSE_LOG_PATH``: response events can contain reasoning and tool-call
+# arguments, so they must not flow into the normal structured log pipeline.
+_SSE_LOG_FILE_BYTES = 2 * 1024 * 1024
+_SSE_LOG_BACKUP_COUNT = 4
+
+
+if not IS_MICROPYTHON:
+
+    class _SSECapture:
+        """Write raw SSE ``data:`` payloads to a private rotating JSONL file."""
+
+        def __init__(
+            self,
+            path: str,
+            *,
+            max_bytes: int = _SSE_LOG_FILE_BYTES,
+            backup_count: int = _SSE_LOG_BACKUP_COUNT,
+        ) -> None:
+            log_path = Path(path).expanduser()
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            self._handler = RotatingFileHandler(
+                log_path,
+                maxBytes=max_bytes,
+                backupCount=backup_count,
+                encoding="utf-8",
+            )
+            self._handler.setFormatter(logging.Formatter("%(message)s"))
+
+        def write(self, *, model: str | None, sequence: int, payload: str) -> None:
+            context = get_log_contextvars()
+            event = {
+                "ts": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                "event": "sse_data",
+                "model": model,
+                "session_key": context.get("session.key"),
+                "sequence": sequence,
+                # This is intentionally the exact text after ``data:`` rather
+                # than a re-serialized chunk, including the ``[DONE]`` marker.
+                "data": payload,
+            }
+            self._handler.emit(
+                logging.makeLogRecord({"msg": json.dumps(event, ensure_ascii=False)})
+            )
+
+        def close(self) -> None:
+            self._handler.close()
 
 
 def _short_tool_id() -> str:
@@ -184,12 +238,19 @@ class OpenAIStreamingProvider:
         # doesn't ship ``os.environ`` but does ship ``getenv``.
         self._llm_logging = (os.getenv("LLM_LOGGING") or "").lower() == "true"
         self._llm_log_truncate = int(os.getenv("LLM_LOG_TRUNCATE") or "500")
+        sse_log_path = os.getenv("LLM_SSE_LOG_PATH")
+        self._sse_capture = (
+            _SSECapture(sse_log_path) if sse_log_path and not IS_MICROPYTHON else None
+        )
 
     def get_default_model(self) -> str:
         return self.default_model
 
     async def close(self) -> None:
         """Close the underlying HTTP client. Safe to call multiple times."""
+        if self._sse_capture is not None:
+            self._sse_capture.close()
+            self._sse_capture = None
         if self._owns_client:
             await self._client.aclose()
 
@@ -228,7 +289,7 @@ class OpenAIStreamingProvider:
             if resp.status_code >= 400:
                 text = await resp.aread()
                 raise RuntimeError(f"status {resp.status_code} from {model}: {text[:500]!r}")
-            response = await self._consume_sse_stream(resp)
+            response = await self._consume_sse_stream(resp, model=model)
         return response.content or ""
 
     async def chat(
@@ -362,7 +423,7 @@ class OpenAIStreamingProvider:
                     raise ContextWindowExceededError("Prompt exceeds model context window")
                 resp.raise_for_status()
 
-                response = await self._consume_sse_stream(resp, on_delta=on_delta)
+                response = await self._consume_sse_stream(resp, model=model, on_delta=on_delta)
 
         except HTTPConnectError as e:
             raise _RetryableError(f"connect error: {e}") from e
@@ -410,6 +471,7 @@ class OpenAIStreamingProvider:
         self,
         resp: "ResponseProto",
         *,
+        model: str | None = None,
         on_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> LLMResponse:
         """Accumulate SSE chunks into a single ``LLMResponse``.
@@ -443,6 +505,7 @@ class OpenAIStreamingProvider:
         tool_call_parts: dict[int, dict[str, Any]] = {}
         finish_reason = "stop"
         usage: dict[str, int] = {}
+        sse_sequence = 0
 
         # Demand the first line inside the TTFT budget. Without this
         # the much larger ``request_timeout`` wins when a server
@@ -496,6 +559,13 @@ class OpenAIStreamingProvider:
             if not line.startswith("data:"):
                 continue
             payload = line[len("data:") :].strip()
+            if self._sse_capture is not None:
+                self._sse_capture.write(
+                    model=model,
+                    sequence=sse_sequence,
+                    payload=payload,
+                )
+            sse_sequence += 1
             if payload == "[DONE]":
                 break
             try:

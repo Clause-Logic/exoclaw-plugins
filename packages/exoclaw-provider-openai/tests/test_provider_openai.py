@@ -28,7 +28,7 @@ import httpx
 import pytest
 from exoclaw.providers.types import ContextWindowExceededError
 from exoclaw_provider_openai import Deployment, OpenAIStreamingProvider
-from exoclaw_provider_openai.provider import _stream_body
+from exoclaw_provider_openai.provider import _SSECapture, _stream_body
 
 
 async def _collect_bytes(gen: Any) -> bytes:
@@ -277,15 +277,54 @@ async def _provider(
         # Wrap the test ``httpx.AsyncClient`` as an
         # ``exoclaw.http.ClientProto`` so the provider's call site
         # goes through the standard ``stream_post`` plumbing.
-        yield OpenAIStreamingProvider(
+        provider = OpenAIStreamingProvider(
             default_model=default,
             deployments=deployments,
             fallbacks=fallbacks,
             client=from_httpx(raw),
         )
+        try:
+            yield provider
+        finally:
+            await provider.close()
 
 
 class TestProviderRouting:
+    async def test_opt_in_sse_capture_writes_raw_data_events(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The private capture preserves each SSE ``data:`` payload in order."""
+        capture_path = tmp_path / "sse-responses.jsonl"
+        monkeypatch.setenv("LLM_SSE_LOG_PATH", str(capture_path))
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                content=_sse_completion(content_chunks=["hel", "lo"]),
+                headers={"content-type": "text/event-stream"},
+            )
+
+        async with _provider(httpx.MockTransport(handler)) as provider:
+            response = await provider.chat(messages=[{"role": "user", "content": "hi"}])
+
+        assert response.content == "hello"
+        events = [json.loads(line) for line in capture_path.read_text().splitlines()]
+        assert [event["sequence"] for event in events] == list(range(len(events)))
+        assert events[-1]["data"] == "[DONE]"
+        assert all(event["event"] == "sse_data" for event in events)
+        assert all(event["model"] == "primary" for event in events)
+
+    def test_sse_capture_rotates_at_its_configured_file_limit(self, tmp_path: Path) -> None:
+        """A full capture file rolls over instead of growing without bound."""
+        capture_path = tmp_path / "sse-responses.jsonl"
+        capture = _SSECapture(str(capture_path), max_bytes=256, backup_count=1)
+        capture.write(model="primary", sequence=0, payload="a" * 256)
+        capture.write(model="primary", sequence=1, payload="b" * 256)
+        capture.close()
+
+        assert capture_path.exists()
+        assert capture_path.with_name(f"{capture_path.name}.1").exists()
+
     async def test_routes_to_deployment_base_url_and_key(self) -> None:
         """Primary model's base_url + api_key must be used on the
         outgoing request. Other models' deployments must not leak into
