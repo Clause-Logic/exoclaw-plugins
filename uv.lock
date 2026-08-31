@@ -945,7 +945,7 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-executor-dbos"
-version = "0.15.1"
+version = "0.15.2"
 source = { editable = "packages/exoclaw-executor-dbos" }
 dependencies = [
     { name = "dbos" },
@@ -1193,7 +1193,7 @@ requires-dist = [
 
 [[package]]
 name = "exoclaw-provider-openai"
-version = "0.4.2"
+version = "0.4.3"
 source = { editable = "packages/exoclaw-provider-openai" }
 dependencies = [
     { name = "exoclaw", extra = ["http"] },
