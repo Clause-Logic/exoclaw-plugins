@@ -145,6 +145,8 @@ class OpenAIStreamingProvider:
     CPython (httpx underneath) and MicroPython (hand-rolled
     HTTP/1.1)."""
 
+    supports_response_deltas = True
+
     def __init__(
         self,
         default_model: str,

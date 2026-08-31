@@ -514,9 +514,12 @@ class DBOSExecutor:
     ) -> LLMResponse:
         _provider_var.set(provider)
         tools_json = json.dumps(tools) if tools else None
-        delta_token = _on_delta_var.set(on_delta)
+        streams_deltas = (
+            on_delta is not None and getattr(provider, "supports_response_deltas", False) is True
+        )
+        delta_token = _on_delta_var.set(on_delta if streams_deltas else None)
         try:
-            chat_step = _streaming_chat_step if on_delta is not None else _chat_step
+            chat_step = _streaming_chat_step if streams_deltas else _chat_step
             result = await chat_step(
                 messages=list(messages),
                 tools_json=tools_json,

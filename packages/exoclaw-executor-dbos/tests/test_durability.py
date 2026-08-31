@@ -290,9 +290,14 @@ class TestDurability:
         )
 
     async def test_executor_omits_delta_kwarg_for_legacy_provider(self, dbos_instance: Any) -> None:
-        """Providers predating Exoclaw 0.31.0 must still work when their
-        channel did not request visible response streaming."""
+        """Providers without the streaming capability still complete when
+        their channel requests visible response deltas."""
         from exoclaw_executor_dbos.executor import DBOSExecutor
+
+        observed: list[str] = []
+
+        async def on_delta(chunk: str) -> None:
+            observed.append(chunk)
 
         async def legacy_chat(
             *,
@@ -311,7 +316,11 @@ class TestDurability:
 
         @DBOS.workflow()
         async def run_once() -> Any:
-            return await executor.chat(provider, messages=[{"role": "user", "content": "hi"}])
+            return await executor.chat(
+                provider,
+                messages=[{"role": "user", "content": "hi"}],
+                on_delta=on_delta,
+            )
 
         with SetWorkflowID(str(uuid.uuid4())):
             response = await run_once()
@@ -320,6 +329,7 @@ class TestDurability:
         call = provider.chat.await_args
         assert call is not None
         assert "on_delta" not in call.kwargs
+        assert observed == []
 
     async def test_executor_forwards_requested_deltas(self, dbos_instance: Any) -> None:
         """An opted-in channel receives provider deltas through the
@@ -337,6 +347,7 @@ class TestDurability:
             return _make_response("firstsecond")
 
         provider = MagicMock()
+        provider.supports_response_deltas = True
         provider.chat = AsyncMock(side_effect=streaming_chat)
         executor = DBOSExecutor()
 
