@@ -153,6 +153,9 @@ _provider_var: contextvars.ContextVar[LLMProvider | None] = contextvars.ContextV
 _registry_var: contextvars.ContextVar[ToolRegistry | None] = contextvars.ContextVar(
     "_registry_var", default=None
 )
+_on_delta_var: contextvars.ContextVar[Callable[[str], Awaitable[None]] | None] = (
+    contextvars.ContextVar("_on_delta_var", default=None)
+)
 
 
 # ── DBOS step functions ──────────────────────────────────────────────────────
@@ -181,6 +184,46 @@ _CHAT_STEP_ERROR_KEY = "__exoclaw_error__"
 _CHAT_STEP_CONTEXT_EXCEEDED_VALUE = "__exoclaw_context_window_exceeded__"
 
 
+async def _run_chat(
+    messages: list[dict[str, Any]],
+    tools_json: str | None,
+    model: str | None,
+    temperature: float,
+    max_tokens: int,
+    reasoning_effort: str | None,
+) -> dict[str, Any]:
+    """Run one LLM call through the provider held in task-local context.
+
+    ``ContextWindowExceededError`` is returned as a sentinel result
+    instead of raised — retries can't fix a deterministic overflow and
+    the exception must reach ``AgentLoop._run_agent_loop`` *as itself*
+    so the overflow handler fires. See sentinel comment above.
+    """
+    provider = _provider_var.get()
+    if provider is None:
+        raise RuntimeError("provider not set — bind it before calling a DBOS chat step")
+    tools = json.loads(tools_json) if tools_json else None
+    chat_kwargs: dict[str, Any] = {
+        "messages": messages,
+        "tools": tools,
+        "model": model,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "reasoning_effort": reasoning_effort,
+    }
+    on_delta = _on_delta_var.get()
+    if on_delta is not None:
+        chat_kwargs["on_delta"] = on_delta
+    try:
+        resp = await provider.chat(**chat_kwargs)
+    except ContextWindowExceededError as e:
+        return {
+            _CHAT_STEP_ERROR_KEY: _CHAT_STEP_CONTEXT_EXCEEDED_VALUE,
+            "message": str(e) or "Prompt exceeds model context window",
+        }
+    return _response_to_dict(resp)
+
+
 @DBOS.step(retries_allowed=True, max_attempts=3, interval_seconds=2)
 async def _chat_step(
     messages: list[dict[str, Any]],
@@ -190,32 +233,25 @@ async def _chat_step(
     max_tokens: int,
     reasoning_effort: str | None,
 ) -> dict[str, Any]:
-    """Durable LLM call. Result is cached by DBOS on completion.
+    """Durable LLM call for channels without user-visible token output."""
+    return await _run_chat(messages, tools_json, model, temperature, max_tokens, reasoning_effort)
 
-    ``ContextWindowExceededError`` is returned as a sentinel result
-    instead of raised — retries can't fix a deterministic overflow and
-    the exception must reach ``AgentLoop._run_agent_loop`` *as itself*
-    so the overflow handler fires. See sentinel comment above.
+
+@DBOS.step(retries_allowed=False)
+async def _streaming_chat_step(
+    messages: list[dict[str, Any]],
+    tools_json: str | None,
+    model: str | None,
+    temperature: float,
+    max_tokens: int,
+    reasoning_effort: str | None,
+) -> dict[str, Any]:
+    """One externally visible LLM stream.
+
+    Retrying this step could replay already-delivered content. Normal channels
+    still use ``_chat_step`` and retain DBOS's retry policy.
     """
-    provider = _provider_var.get()
-    if provider is None:
-        raise RuntimeError("provider not set — call set_turn_context() before running turns")
-    tools = json.loads(tools_json) if tools_json else None
-    try:
-        resp = await provider.chat(
-            messages=messages,
-            tools=tools,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            reasoning_effort=reasoning_effort,
-        )
-    except ContextWindowExceededError as e:
-        return {
-            _CHAT_STEP_ERROR_KEY: _CHAT_STEP_CONTEXT_EXCEEDED_VALUE,
-            "message": str(e) or "Prompt exceeds model context window",
-        }
-    return _response_to_dict(resp)
+    return await _run_chat(messages, tools_json, model, temperature, max_tokens, reasoning_effort)
 
 
 @DBOS.step(retries_allowed=True, max_attempts=2, interval_seconds=1)
@@ -474,17 +510,26 @@ class DBOSExecutor:
         temperature: float = 0.7,
         max_tokens: int = 4096,
         reasoning_effort: str | None = None,
+        on_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> LLMResponse:
         _provider_var.set(provider)
         tools_json = json.dumps(tools) if tools else None
-        result = await _chat_step(
-            messages=list(messages),
-            tools_json=tools_json,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            reasoning_effort=reasoning_effort,
+        streams_deltas = (
+            on_delta is not None and getattr(provider, "supports_response_deltas", False) is True
         )
+        delta_token = _on_delta_var.set(on_delta if streams_deltas else None)
+        try:
+            chat_step = _streaming_chat_step if streams_deltas else _chat_step
+            result = await chat_step(
+                messages=list(messages),
+                tools_json=tools_json,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                reasoning_effort=reasoning_effort,
+            )
+        finally:
+            _on_delta_var.reset(delta_token)
         if result.get(_CHAT_STEP_ERROR_KEY) == _CHAT_STEP_CONTEXT_EXCEEDED_VALUE:
             # Step handed the exception back as data; re-raise so
             # ``AgentLoop._run_agent_loop``'s overflow handler can

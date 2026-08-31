@@ -61,7 +61,7 @@ if TYPE_CHECKING:
     # for type-checking only. ``from __future__ import annotations``
     # stringifies all annotations so the runtime never resolves
     # these names.
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Awaitable, Callable
 
     from exoclaw.http import ClientProto, ResponseProto
 
@@ -144,6 +144,8 @@ class OpenAIStreamingProvider:
     is ``exoclaw.http.HTTPClient``, so the same source runs on both
     CPython (httpx underneath) and MicroPython (hand-rolled
     HTTP/1.1)."""
+
+    supports_response_deltas = True
 
     def __init__(
         self,
@@ -238,6 +240,7 @@ class OpenAIStreamingProvider:
         temperature: float = 0.7,
         reasoning_effort: str | None = None,
         response_format: ResponseFormat | None = None,
+        on_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> LLMResponse:
         """Send a chat completion. Walks the fallback chain on retryable
         errors; raises the last error if every model fails."""
@@ -261,6 +264,7 @@ class OpenAIStreamingProvider:
                     temperature=temperature,
                     reasoning_effort=reasoning_effort,
                     response_format=response_format,
+                    on_delta=on_delta,
                 )
             except _RetryableError as e:
                 # ``__cause__`` can be any BaseException; narrow to
@@ -305,6 +309,7 @@ class OpenAIStreamingProvider:
         temperature: float,
         reasoning_effort: str | None,
         response_format: ResponseFormat | None,
+        on_delta: Callable[[str], Awaitable[None]] | None,
     ) -> LLMResponse:
         """Single non-retried request to ``deployment`` for ``model``.
         Raises ``_RetryableError`` on status/network errors the caller
@@ -357,7 +362,7 @@ class OpenAIStreamingProvider:
                     raise ContextWindowExceededError("Prompt exceeds model context window")
                 resp.raise_for_status()
 
-                response = await self._consume_sse_stream(resp)
+                response = await self._consume_sse_stream(resp, on_delta=on_delta)
 
         except HTTPConnectError as e:
             raise _RetryableError(f"connect error: {e}") from e
@@ -401,7 +406,12 @@ class OpenAIStreamingProvider:
                 extra_body["user"] = str(session_key)
         return extra_body
 
-    async def _consume_sse_stream(self, resp: "ResponseProto") -> LLMResponse:
+    async def _consume_sse_stream(
+        self,
+        resp: "ResponseProto",
+        *,
+        on_delta: Callable[[str], Awaitable[None]] | None = None,
+    ) -> LLMResponse:
         """Accumulate SSE chunks into a single ``LLMResponse``.
 
         We need the full response anyway (the turn loop wants
@@ -512,6 +522,8 @@ class OpenAIStreamingProvider:
                 delta = choice.get("delta") or {}
                 if piece := delta.get("content"):
                     content_parts.append(piece)
+                    if on_delta is not None:
+                        await on_delta(piece)
                 if piece := delta.get("reasoning_content"):
                     reasoning_parts.append(piece)
                 for tc in delta.get("tool_calls") or []:
