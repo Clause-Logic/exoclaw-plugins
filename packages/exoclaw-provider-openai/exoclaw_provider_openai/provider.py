@@ -520,7 +520,7 @@ class OpenAIStreamingProvider:
                 delta = choice.get("delta") or {}
                 if piece := delta.get("content"):
                     content_parts.append(piece)
-                    if on_delta:
+                    if on_delta is not None:
                         await on_delta(piece)
                 if piece := delta.get("reasoning_content"):
                     reasoning_parts.append(piece)

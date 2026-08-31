@@ -201,7 +201,7 @@ async def _run_chat(
     """
     provider = _provider_var.get()
     if provider is None:
-        raise RuntimeError("provider not set — call set_turn_context() before running turns")
+        raise RuntimeError("provider not set — bind it before calling a DBOS chat step")
     tools = json.loads(tools_json) if tools_json else None
     chat_kwargs: dict[str, Any] = {
         "messages": messages,
@@ -248,8 +248,8 @@ async def _streaming_chat_step(
 ) -> dict[str, Any]:
     """One externally visible LLM stream.
 
-    Retrying this step could replay already-posted Zulip chunks.  Normal
-    channels still use ``_chat_step`` and retain DBOS's retry policy.
+    Retrying this step could replay already-delivered content. Normal channels
+    still use ``_chat_step`` and retain DBOS's retry policy.
     """
     return await _run_chat(messages, tools_json, model, temperature, max_tokens, reasoning_effort)
 
