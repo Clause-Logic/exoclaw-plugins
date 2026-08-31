@@ -289,6 +289,74 @@ class TestDurability:
             f"deterministic failure), got {provider.chat.await_count}"
         )
 
+    async def test_executor_omits_delta_kwarg_for_legacy_provider(self, dbos_instance: Any) -> None:
+        """Providers predating Exoclaw 0.31.0 must still work when their
+        channel did not request visible response streaming."""
+        from exoclaw_executor_dbos.executor import DBOSExecutor
+
+        async def legacy_chat(
+            *,
+            messages: list[dict[str, object]],
+            tools: list[dict[str, object]] | None = None,
+            model: str | None = None,
+            temperature: float = 0.7,
+            max_tokens: int = 4096,
+            reasoning_effort: str | None = None,
+        ) -> Any:
+            return _make_response("legacy answer")
+
+        provider = MagicMock()
+        provider.chat = AsyncMock(side_effect=legacy_chat)
+        executor = DBOSExecutor()
+
+        @DBOS.workflow()
+        async def run_once() -> Any:
+            return await executor.chat(provider, messages=[{"role": "user", "content": "hi"}])
+
+        with SetWorkflowID(str(uuid.uuid4())):
+            response = await run_once()
+
+        assert response.content == "legacy answer"
+        call = provider.chat.await_args
+        assert call is not None
+        assert "on_delta" not in call.kwargs
+
+    async def test_executor_forwards_requested_deltas(self, dbos_instance: Any) -> None:
+        """An opted-in channel receives provider deltas through the
+        no-retry streaming step."""
+        from exoclaw_executor_dbos.executor import DBOSExecutor
+
+        observed: list[str] = []
+
+        async def on_delta(chunk: str) -> None:
+            observed.append(chunk)
+
+        async def streaming_chat(*, on_delta: Any, **kwargs: Any) -> Any:
+            await on_delta("first")
+            await on_delta("second")
+            return _make_response("firstsecond")
+
+        provider = MagicMock()
+        provider.chat = AsyncMock(side_effect=streaming_chat)
+        executor = DBOSExecutor()
+
+        @DBOS.workflow()
+        async def run_once() -> Any:
+            return await executor.chat(
+                provider,
+                messages=[{"role": "user", "content": "hi"}],
+                on_delta=on_delta,
+            )
+
+        with SetWorkflowID(str(uuid.uuid4())):
+            response = await run_once()
+
+        assert response.content == "firstsecond"
+        assert observed == ["first", "second"]
+        call = provider.chat.await_args
+        assert call is not None
+        assert call.kwargs["on_delta"] is on_delta
+
     async def test_executor_advertises_handles_response_send(self) -> None:
         """``DBOSExecutor`` tells the core it will own the publish so
         ``_process_message`` returns None and the outer agent loop skips

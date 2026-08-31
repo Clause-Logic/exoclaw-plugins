@@ -218,19 +218,23 @@ def _sse_completion(
     content: str = "ok",
     tool_calls: list[dict[str, Any]] | None = None,
     finish_reason: str = "stop",
+    content_chunks: list[str] | None = None,
 ) -> bytes:
     """Build an SSE response that a real OpenAI-compatible server would
-    send. Content arrives in a single chunk (real servers split more, but
-    our parser is chunk-aware so this is sufficient to validate assembly)."""
+    send. ``content_chunks`` simulates the incremental content deltas real
+    servers emit; otherwise content arrives in one chunk."""
     events: list[str] = []
-    delta: dict[str, Any] = {}
-    if content:
-        delta["content"] = content
-    if tool_calls:
-        delta["tool_calls"] = tool_calls
-    events.append(
-        "data: " + json.dumps({"choices": [{"index": 0, "delta": delta, "finish_reason": None}]})
-    )
+    chunks = content_chunks if content_chunks is not None else [content]
+    for index, chunk in enumerate(chunks):
+        delta: dict[str, Any] = {}
+        if chunk:
+            delta["content"] = chunk
+        if tool_calls and index == 0:
+            delta["tool_calls"] = tool_calls
+        events.append(
+            "data: "
+            + json.dumps({"choices": [{"index": 0, "delta": delta, "finish_reason": None}]})
+        )
     events.append(
         "data: "
         + json.dumps(
@@ -304,6 +308,30 @@ class TestProviderRouting:
         req = seen[0]
         assert str(req.url) == "https://a.example/v1/chat/completions"
         assert req.headers["authorization"] == "Bearer k-a"
+
+    async def test_content_deltas_are_forwarded_before_response_finishes(self) -> None:
+        """Every content fragment reaches the callback in SSE order while
+        the normal completed response still contains their concatenation."""
+        observed: list[str] = []
+
+        async def on_delta(chunk: str) -> None:
+            observed.append(chunk)
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                content=_sse_completion(content_chunks=["hel", "lo"]),
+                headers={"content-type": "text/event-stream"},
+            )
+
+        async with _provider(httpx.MockTransport(handler)) as provider:
+            response = await provider.chat(
+                messages=[{"role": "user", "content": "hi"}],
+                on_delta=on_delta,
+            )
+
+        assert observed == ["hel", "lo"]
+        assert response.content == "hello"
 
     async def test_body_is_streamed_not_preserialized(self) -> None:
         """Sanity: the POST must carry the messages we sent, and the

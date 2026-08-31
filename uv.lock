@@ -723,14 +723,14 @@ wheels = [
 
 [[package]]
 name = "exoclaw"
-version = "0.28.0"
+version = "0.31.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "structlog" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e2/a8/046f81bb1b40bbbcdc97dd11d322d7d8d23f5958ed359eb3b64977346812/exoclaw-0.28.0.tar.gz", hash = "sha256:2847aa67f61ae2658b824a70ba35b4859f7a5da9e20b11ee81b9c7336041ac99", size = 80561, upload-time = "2026-05-09T22:43:02.377Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d9/28/30d2754975a600a904fd3adf9d80cebfa357c0fdfe943cd89de0e35efd4b/exoclaw-0.31.0.tar.gz", hash = "sha256:22d737fa32eef3d94bcd0be758267571e922ed306b60548af83163976d3c1558", size = 80378, upload-time = "2026-08-31T15:21:19.501Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9b/21/5d12460a44e1a46a2e34edfa3147ec9b45a611d53edbe2e433f25769ec19/exoclaw-0.28.0-py3-none-any.whl", hash = "sha256:041eb39fc07b314830e0a37a83ec57af20d8b24ba5c1849380bf8d4cdd944766", size = 84337, upload-time = "2026-05-09T22:43:01.157Z" },
+    { url = "https://files.pythonhosted.org/packages/29/7e/6e88bd0940f7cd8bb1d38323e00f4a09619261ae2091c0960ad19b4c6379/exoclaw-0.31.0-py3-none-any.whl", hash = "sha256:6312b7a1dea7cd601e9591608478c0eb62bf6308dde6e18516f07b7e8961dcf2", size = 90146, upload-time = "2026-08-31T15:21:18.46Z" },
 ]
 
 [package.optional-dependencies]
@@ -958,7 +958,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "dbos", specifier = ">=1.0.0" },
-    { name = "exoclaw", specifier = ">=0.26.0" },
+    { name = "exoclaw", specifier = ">=0.31.0" },
     { name = "exoclaw-subagent", editable = "packages/exoclaw-subagent" },
     { name = "structlog", specifier = ">=24.0.0" },
     { name = "uuid-utils", specifier = ">=0.9.0" },
@@ -1203,7 +1203,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "exoclaw", extras = ["http"], specifier = ">=0.26.1" },
+    { name = "exoclaw", extras = ["http"], specifier = ">=0.31.0" },
     { name = "json-repair", specifier = ">=0.1.0" },
     { name = "structlog", specifier = ">=25.0.0" },
 ]
