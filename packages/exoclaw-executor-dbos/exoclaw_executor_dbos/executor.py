@@ -883,10 +883,15 @@ class DBOSExecutor:
         if it arrives after the original turn has completed.
         """
         async with self._active_sessions_lock:
-            if self._steering_inbox is None or msg.session_key not in self._active_sessions:
+            inbox = self._steering_inbox
+            if inbox is None or msg.session_key not in self._active_sessions:
                 return False
-            await self._steering_inbox.store(msg)
-            return True
+
+        # The DBOS step performs filesystem I/O.  Keep the shared registry
+        # lock limited to its state check so an unrelated inbound event — or
+        # this turn's deactivation — never waits on a disk write.
+        await inbox.store(msg)
+        return True
 
     async def enqueue_inbound(self, msg: InboundMessage) -> None:
         """Durably persist a channel-received message and queue it for

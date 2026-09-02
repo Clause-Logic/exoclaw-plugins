@@ -18,6 +18,7 @@ same process can still see dead futures).
 
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -227,6 +228,38 @@ class TestSteeringInbox:
         assert start_workflow.call_args.kwargs["content"] == msg.content
         assert start_workflow.call_args.kwargs["session_key_override"] is None
         handle.get_result.assert_awaited_once()
+
+    async def test_deactivation_does_not_wait_for_mailbox_write(self, tmp_path: Path) -> None:
+        """The registry lock guards only state, never a slow DBOS step."""
+        from exoclaw_executor_dbos import DBOSExecutor
+
+        executor = DBOSExecutor(steering_workspace=tmp_path)
+        msg = InboundMessage(
+            channel="zulip",
+            sender_id="u",
+            chat_id="42:topic",
+            content="follow up",
+        )
+        write_started = asyncio.Event()
+        release_write = asyncio.Event()
+
+        class _BlockingInbox:
+            async def store(self, _msg: InboundMessage) -> None:
+                write_started.set()
+                await release_write.wait()
+
+        executor._steering_inbox = _BlockingInbox()
+        await executor.activate_steering(msg.session_key)
+        store_task = asyncio.create_task(executor.store_steering_if_active(msg))
+        await write_started.wait()
+
+        # A prior version held ``_active_sessions_lock`` across ``store``;
+        # this would block until ``release_write`` and delay the turn finish.
+        await asyncio.wait_for(executor.deactivate_steering(msg.session_key), timeout=0.1)
+        assert msg.session_key not in executor._active_sessions
+
+        release_write.set()
+        assert await store_task is True
 
     async def test_steering_and_later_queue_retry_share_workflow_id(self, tmp_path: Path) -> None:
         """A channel retry is deduped even if the active turn has finished.
