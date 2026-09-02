@@ -43,6 +43,7 @@ from .intents import (
     _bind_intent_buffer,
     _release_intent_buffer,
 )
+from .steering import SteeringInbox
 
 # Source for per-turn prior-history messages — phase 2b of
 # exoclaw/docs/memory-model.md. ``DBOSExecutor.load_messages``
@@ -408,7 +409,7 @@ class DBOSExecutor:
     # otherwise drop the message on OOM.
     handles_inbound_enqueue: bool = True
 
-    def __init__(self) -> None:
+    def __init__(self, *, steering_workspace: Path | None = None) -> None:
         # Per-turn buffer split into prior (read-only, seeded by
         # build_prompt or compaction) and delta (appended to mid-turn).
         # Mirrors ``DirectExecutor``'s phase 2a shape — keeps prior
@@ -437,6 +438,18 @@ class DBOSExecutor:
         self._scratch_paths_var: contextvars.ContextVar[list[Path]] = contextvars.ContextVar(
             f"dbos_executor_scratch_{id(self)}"
         )
+        # A turn that is already running must not wait behind its own inbound
+        # queue partition: subsequent user messages are candidates for core's
+        # safe-boundary steering hook instead.  The inbox itself is durable;
+        # this registry only decides whether an arriving message should be
+        # steered now or retain the normal queued-turn behavior.
+        self._steering_inbox = (
+            SteeringInbox(steering_workspace / "steering")
+            if steering_workspace is not None
+            else None
+        )
+        self._active_sessions: dict[str, int] = {}
+        self._active_sessions_lock = asyncio.Lock()
 
     def __deepcopy__(self, memo: dict) -> DBOSExecutor:
         # ContextVar objects are not deep-copyable (TypeError: cannot
@@ -819,13 +832,17 @@ class DBOSExecutor:
         """
         from .turn import run_durable_turn, set_loop_context
 
-        # Ensure the loop reference is available for DBOS recovery
+        # Ensure the loop reference is available for DBOS recovery.
         set_loop_context(loop)
 
         from . import turn
 
         turn._on_progress = on_progress
 
+        # ``run_durable_turn`` manages the active-session registry from inside
+        # the workflow body.  That is crucial on DBOS recovery: recovery
+        # re-enters the workflow directly, without passing through this
+        # caller-side wrapper, and must still steer new follow-ups.
         wfid = f"turn:{session_id}:{uuid7().hex}"
         with SetWorkflowID(wfid):
             return await run_durable_turn(
@@ -838,6 +855,38 @@ class DBOSExecutor:
                 model=model,
                 publish_response=publish_response,
             )
+
+    async def activate_steering(self, session_id: str) -> None:
+        """Mark a DBOS workflow as eligible to receive follow-ups."""
+        if self._steering_inbox is None:
+            return
+        async with self._active_sessions_lock:
+            self._active_sessions[session_id] = self._active_sessions.get(session_id, 0) + 1
+
+    async def deactivate_steering(self, session_id: str) -> None:
+        """Remove a completed DBOS workflow from the steering registry."""
+        if self._steering_inbox is None:
+            return
+        async with self._active_sessions_lock:
+            remaining = self._active_sessions.get(session_id, 0) - 1
+            if remaining > 0:
+                self._active_sessions[session_id] = remaining
+            else:
+                self._active_sessions.pop(session_id, None)
+
+    async def store_steering_if_active(self, msg: InboundMessage) -> bool:
+        """Persist ``msg`` when its session is still executing a turn.
+
+        Called by the durable inbound workflow itself, not its caller.  That
+        keeps the normal queued and active-steering paths on the *same*
+        workflow function and ID, so a channel retry can be deduplicated even
+        if it arrives after the original turn has completed.
+        """
+        async with self._active_sessions_lock:
+            if self._steering_inbox is None or msg.session_key not in self._active_sessions:
+                return False
+            await self._steering_inbox.store(msg)
+            return True
 
     async def enqueue_inbound(self, msg: InboundMessage) -> None:
         """Durably persist a channel-received message and queue it for
@@ -865,29 +914,56 @@ class DBOSExecutor:
         so a subagent posting back into chat X lands in the same
         partition as a real user message in chat X.
         """
-        from .turn import _get_inbound_queue, run_inbound_turn
-
         msg_id = msg.metadata.get("message_id") if msg.metadata else None
         if msg_id is not None:
             wfid = f"inbound:{msg.channel}:{msg.chat_id}:{msg_id}"
         else:
             wfid = f"inbound:{msg.channel}:{msg.chat_id}:{uuid7().hex}"
 
+        # The direct workflow uses the same function and ID as a normal queue
+        # entry.  The workflow re-checks whether the session is active before
+        # deciding to store the message in the steering inbox or dispatch a
+        # new turn, so a race with completion remains a valid next-turn path.
+        async with self._active_sessions_lock:
+            steering_active = (
+                self._steering_inbox is not None and msg.session_key in self._active_sessions
+            )
+
+        from .turn import _get_inbound_queue, run_inbound_turn
+
+        kwargs = {
+            "channel": msg.channel,
+            "sender_id": msg.sender_id,
+            "chat_id": msg.chat_id,
+            "content": msg.content,
+            "media": list(msg.media),
+            "metadata": dict(msg.metadata),
+            "session_key_override": msg.session_key_override,
+            "model_override": msg.model_override,
+        }
+
+        if steering_active:
+            with SetWorkflowID(wfid):
+                handle = await DBOS.start_workflow_async(run_inbound_turn, **kwargs)
+            await handle.get_result()
+            return
+
         partition_key = msg.chat_id if msg.channel == "system" else f"{msg.channel}:{msg.chat_id}"
 
         queue = _get_inbound_queue()
         with SetEnqueueOptions(queue_partition_key=partition_key), SetWorkflowID(wfid):
-            await queue.enqueue_async(
-                run_inbound_turn,
-                channel=msg.channel,
-                sender_id=msg.sender_id,
-                chat_id=msg.chat_id,
-                content=msg.content,
-                media=list(msg.media),
-                metadata=dict(msg.metadata),
-                session_key_override=msg.session_key_override,
-                model_override=msg.model_override,
-            )
+            await queue.enqueue_async(run_inbound_turn, **kwargs)
+
+    async def drain_steering(self, session_id: str) -> list[str]:
+        """Take messages received during this active turn.
+
+        The core ``AgentLoop`` invokes this callback only at its explicit
+        safe boundaries.  With no configured workspace, steering is disabled
+        and existing DBOSExecutor users retain normal queue semantics.
+        """
+        if self._steering_inbox is None:
+            return []
+        return await self._steering_inbox.drain(session_id)
 
     async def run_hook(
         self,

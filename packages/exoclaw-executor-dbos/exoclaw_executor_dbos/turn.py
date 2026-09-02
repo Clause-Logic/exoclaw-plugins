@@ -121,37 +121,53 @@ async def run_durable_turn(
     if loop is None:
         raise RuntimeError("AgentLoop not set — call set_loop_context() at startup")
 
-    on_progress = _on_progress
+    # The executor's process-local registry decides whether a newly received
+    # inbound message belongs in the steering inbox.  Activate from *inside*
+    # this workflow rather than only in ``DBOSExecutor.run_turn``: DBOS
+    # recovery re-enters this function directly and must recreate the same
+    # routing state before the core loop resumes.
+    executor = getattr(loop, "_executor", None)
+    activate_steering = getattr(executor, "activate_steering", None)
+    deactivate_steering = getattr(executor, "deactivate_steering", None)
+    steering_enabled = getattr(executor, "handles_inbound_enqueue", False) is True
+    if steering_enabled and callable(activate_steering):
+        await activate_steering(session_id)
 
-    final_content, new_msgs = await loop._process_turn_inline(
-        session_id,
-        message,
-        channel=channel or None,
-        chat_id=chat_id or None,
-        media=media,
-        plugin_context=plugin_context,
-        on_progress=on_progress,
-        model=model,
-    )
+    try:
+        on_progress = _on_progress
 
-    if publish_response and channel and chat_id:
-        # Skip publish if any tool already sent a user-facing message to
-        # this chat during the turn. Reading through a @DBOS.step keeps
-        # the answer replay-stable — tool flags are in-memory and wouldn't
-        # survive a container restart.
-        already_sent = await _check_sent_in_turn_step(chat_id)
-        if not already_sent:
-            reply = final_content
-            if reply is None:
-                reply = "I've completed processing but have no response to give."
-            await _publish_outbound_step(
-                session_id=session_id,
-                channel=channel,
-                chat_id=chat_id,
-                content=reply,
-            )
+        final_content, new_msgs = await loop._process_turn_inline(
+            session_id,
+            message,
+            channel=channel or None,
+            chat_id=chat_id or None,
+            media=media,
+            plugin_context=plugin_context,
+            on_progress=on_progress,
+            model=model,
+        )
 
-    return final_content, new_msgs
+        if publish_response and channel and chat_id:
+            # Skip publish if any tool already sent a user-facing message to
+            # this chat during the turn. Reading through a @DBOS.step keeps
+            # the answer replay-stable — tool flags are in-memory and wouldn't
+            # survive a container restart.
+            already_sent = await _check_sent_in_turn_step(chat_id)
+            if not already_sent:
+                reply = final_content
+                if reply is None:
+                    reply = "I've completed processing but have no response to give."
+                await _publish_outbound_step(
+                    session_id=session_id,
+                    channel=channel,
+                    chat_id=chat_id,
+                    content=reply,
+                )
+
+        return final_content, new_msgs
+    finally:
+        if steering_enabled and callable(deactivate_steering):
+            await deactivate_steering(session_id)
 
 
 # ── Durable inbound enqueue ─────────────────────────────────────────────────
@@ -242,4 +258,9 @@ async def run_inbound_turn(
         session_key_override=session_key_override,
         model_override=model_override,
     )
+    executor = getattr(loop, "_executor", None)
+    store_steering = getattr(executor, "store_steering_if_active", None)
+    steering_enabled = getattr(executor, "handles_inbound_enqueue", False) is True
+    if steering_enabled and callable(store_steering) and await store_steering(msg):
+        return
     await loop._dispatch(msg)

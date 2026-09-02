@@ -18,6 +18,8 @@ same process can still see dead futures).
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -164,3 +166,127 @@ class TestDBOSInboundEnqueueWiring:
         assert kwargs["metadata"]["extra"] == {"k": "v"}
         assert kwargs["session_key_override"] == "zulip:override"
         assert kwargs["model_override"] == "zai/glm-5.1"
+
+
+class TestSteeringInbox:
+    def test_interrupted_drain_keeps_older_and_newer_messages(self, tmp_path: Path) -> None:
+        """A crash after the rename must not discard messages received later.
+
+        The next drain consumes the interrupted batch first, then the new
+        live mailbox.  This is the filesystem half of the durable hand-off;
+        the DBOS step replay behavior is covered in ``test_durability.py``.
+        """
+        from exoclaw_executor_dbos.steering import (
+            _append_message,
+            _drain_messages,
+            _inbox_path,
+        )
+
+        root = tmp_path / "steering"
+        session_id = "zulip:42:topic"
+        _append_message(root, session_id, "older")
+        inbox_path = _inbox_path(root, session_id)
+        os.replace(inbox_path, inbox_path.with_suffix(".draining"))
+        _append_message(root, session_id, "newer")
+
+        assert _drain_messages(root, session_id) == ["older", "newer"]
+
+    async def test_active_turn_follow_up_bypasses_inbound_queue(self, tmp_path: Path) -> None:
+        """A same-session follow-up is persisted for steering, not queued.
+
+        This is the behavior that lets an active tool/model turn observe the
+        new user message at its next safe boundary instead of only after the
+        current inbound queue partition is released.
+        """
+        from exoclaw_executor_dbos import DBOSExecutor
+
+        executor = DBOSExecutor(steering_workspace=tmp_path)
+        msg = InboundMessage(
+            channel="zulip",
+            sender_id="u",
+            chat_id="42:topic",
+            content="actually, stop after this",
+            metadata={"message_id": "follow-up-1"},
+        )
+        handle = AsyncMock()
+        handle.get_result = AsyncMock()
+        await executor.activate_steering(msg.session_key)
+        try:
+            with patch(
+                "exoclaw_executor_dbos.executor.DBOS.start_workflow_async",
+                new=AsyncMock(return_value=handle),
+            ) as start_workflow:
+                await executor.enqueue_inbound(msg)
+        finally:
+            await executor.deactivate_steering(msg.session_key)
+
+        start_workflow.assert_awaited_once()
+        assert start_workflow.call_args is not None
+        args = start_workflow.call_args.args
+        assert args[0].__name__ == "run_inbound_turn"
+        assert start_workflow.call_args.kwargs["content"] == msg.content
+        assert start_workflow.call_args.kwargs["session_key_override"] is None
+        handle.get_result.assert_awaited_once()
+
+    async def test_steering_and_later_queue_retry_share_workflow_id(self, tmp_path: Path) -> None:
+        """A channel retry is deduped even if the active turn has finished.
+
+        DBOS treats a repeated workflow id as a duplicate only when it names
+        the same workflow function.  The active path starts
+        ``run_inbound_turn`` directly and the later normal path queues that
+        same function, so both must retain the exact inbound workflow id.
+        """
+        from exoclaw_executor_dbos import DBOSExecutor
+
+        executor = DBOSExecutor(steering_workspace=tmp_path)
+        msg = InboundMessage(
+            channel="zulip",
+            sender_id="u",
+            chat_id="42:topic",
+            content="follow up",
+            metadata={"message_id": "event-42"},
+        )
+        workflow_ids: list[str] = []
+
+        class _CaptureWorkflowID:
+            def __init__(self, workflow_id: str) -> None:
+                workflow_ids.append(workflow_id)
+
+            def __enter__(self) -> None:
+                return None
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+        handle = AsyncMock()
+        handle.get_result = AsyncMock()
+        queue_enqueue = AsyncMock()
+        await executor.activate_steering(msg.session_key)
+        try:
+            with (
+                patch(
+                    "exoclaw_executor_dbos.executor.SetWorkflowID",
+                    _CaptureWorkflowID,
+                ),
+                patch(
+                    "exoclaw_executor_dbos.executor.DBOS.start_workflow_async",
+                    new=AsyncMock(return_value=handle),
+                ),
+            ):
+                await executor.enqueue_inbound(msg)
+        finally:
+            await executor.deactivate_steering(msg.session_key)
+
+        with (
+            patch("exoclaw_executor_dbos.turn._get_inbound_queue") as get_queue,
+            patch(
+                "exoclaw_executor_dbos.executor.SetWorkflowID",
+                _CaptureWorkflowID,
+            ),
+        ):
+            get_queue.return_value.enqueue_async = queue_enqueue
+            await executor.enqueue_inbound(msg)
+
+        assert workflow_ids == ["inbound:zulip:42:topic:event-42"] * 2
+        queue_enqueue.assert_awaited_once()
+        assert msg.session_key not in executor._active_sessions

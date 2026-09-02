@@ -31,6 +31,11 @@ asyncio.run(main())
 
 `create()` accepts an optional pre-built `Config` or `config_path`. It returns an `ExoclawNanobot` whose `run()` method starts the cron service, heartbeat, agent loop, and CLI REPL, and tears everything down cleanly on exit.
 
+Nanobot wires a persistent DBOS steering inbox by default. If a user sends a
+follow-up while their session is waiting on a model or tool, the current turn
+receives it at the next safe boundary instead of processing it only after the
+turn completes.
+
 ## Adding channels (Slack, Telegram, Discord, Email, Matrix, WhatsApp)
 
 Each channel lives in its own package — install only what you need:

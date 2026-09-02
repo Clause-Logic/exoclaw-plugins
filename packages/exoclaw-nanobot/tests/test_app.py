@@ -342,6 +342,67 @@ class TestCreate:
             for p in patches:
                 p.stop()
 
+    async def test_create_wires_durable_steering(self, tmp_path: Path) -> None:
+        """Nanobot must give the released core loop the DBOS inbox callback."""
+        config = Config()
+        config.agents.defaults.workspace = str(tmp_path)
+        fake_executor = MagicMock()
+
+        async def _drain(session_id: str) -> list[str]:
+            return [session_id]
+
+        fake_executor.drain_steering = _drain
+        agent_loop_ctor = MagicMock(
+            return_value=MagicMock(run=AsyncMock(), process_direct=AsyncMock())
+        )
+        patches = [
+            patch(
+                "exoclaw_nanobot.app.LiteLLMProvider",
+                MagicMock(return_value=MagicMock(get_default_model=MagicMock(return_value="x"))),
+            ),
+            patch(
+                "exoclaw_nanobot.app.MessageBus",
+                MagicMock(return_value=MagicMock(publish_outbound=AsyncMock())),
+            ),
+            patch("exoclaw_nanobot.app.DefaultConversation"),
+            patch("exoclaw_nanobot.app.AgentLoop", agent_loop_ctor),
+            patch("exoclaw_nanobot.app.DBOSExecutor", MagicMock(return_value=fake_executor)),
+            patch(
+                "exoclaw_nanobot.app.CLIChannel",
+                MagicMock(return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())),
+            ),
+            patch(
+                "exoclaw_nanobot.app.CronService",
+                MagicMock(return_value=MagicMock(start=AsyncMock())),
+            ),
+            patch("exoclaw_nanobot.app.CronTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.MessageTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.SpawnTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.SubagentManager", MagicMock(return_value=MagicMock())),
+            patch(
+                "exoclaw_nanobot.app.HeartbeatService",
+                MagicMock(return_value=MagicMock(start=AsyncMock())),
+            ),
+            patch("exoclaw_nanobot.app.ReadFileTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.WriteFileTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.EditFileTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.ListDirTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.ExecTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.WebSearchTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.WebFetchTool", MagicMock(return_value=MagicMock())),
+            patch("exoclaw_nanobot.app.connect_mcp_servers", AsyncMock()),
+        ]
+        for p in patches:
+            p.start()
+        try:
+            await create(config)
+        finally:
+            for p in patches:
+                p.stop()
+
+        assert agent_loop_ctor.call_args is not None
+        assert agent_loop_ctor.call_args.kwargs["on_steer"] is _drain
+
     async def test_create_with_caller_supplied_provider(self, tmp_path: Path) -> None:
         """When a host passes ``provider=``, nanobot must use it and
         skip building ``LiteLLMProvider`` entirely — otherwise the
