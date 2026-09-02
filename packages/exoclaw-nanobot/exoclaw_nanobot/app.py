@@ -612,7 +612,10 @@ async def create(
     # path keeps the policy's sidecar in sync with what the LLM sees.
 
     # Durable executor — every LLM call and tool execution is checkpointed
-    executor = DBOSExecutor()
+    # Persist follow-up messages that arrive while a turn is using tools or
+    # waiting on the model.  ``AgentLoop`` drains this inbox at its released
+    # safe boundaries through ``DBOSExecutor.drain_steering``.
+    executor = DBOSExecutor(steering_workspace=workspace)
 
     # Agent loop
     agent_loop = AgentLoop(
@@ -637,6 +640,7 @@ async def create(
         on_post_turn=on_post_turn,
         on_max_iterations=on_max_iterations,
         on_tool_calls=on_tool_calls,
+        on_steer=executor.drain_steering,
     )
 
     # Wire cron jobs to run silently via process_direct.

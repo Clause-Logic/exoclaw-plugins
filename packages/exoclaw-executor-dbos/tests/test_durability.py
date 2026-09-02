@@ -7,6 +7,7 @@ was NOT called again — DBOS replayed the step result from its journal.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 from typing import Any
@@ -51,6 +52,106 @@ def _make_response(content: str = "hello") -> Any:
 
 @pytest.mark.asyncio(loop_scope="session")
 class TestDurability:
+    async def test_durable_turn_marks_session_active_for_steering(
+        self, dbos_instance: Any, tmp_path: Any
+    ) -> None:
+        """The workflow itself enables steering while its core turn is live.
+
+        This placement is intentional: DBOS recovery re-enters
+        ``run_durable_turn`` directly, so marking only the caller-side
+        ``DBOSExecutor.run_turn`` wrapper would leave recovered turns unable
+        to accept new follow-ups.
+        """
+        from exoclaw.bus.events import InboundMessage
+        from exoclaw_executor_dbos import DBOSExecutor
+        from exoclaw_executor_dbos import turn as turn_mod
+        from exoclaw_executor_dbos.steering import _drain_messages
+        from exoclaw_executor_dbos.turn import run_durable_turn
+
+        executor = DBOSExecutor(steering_workspace=tmp_path)
+        started = asyncio.Event()
+        release = asyncio.Event()
+        fake_loop = MagicMock()
+        fake_loop._executor = executor
+
+        async def _process_turn_inline(*args: object, **kwargs: object) -> tuple[str, list[object]]:
+            started.set()
+            await release.wait()
+            return "done", []
+
+        fake_loop._process_turn_inline = _process_turn_inline
+        previous_loop = turn_mod._loop
+        turn_mod._loop = fake_loop
+        session_id = "zulip:42:topic"
+        try:
+
+            async def _run() -> tuple[str | None, list[dict[str, Any]]]:
+                with SetWorkflowID(str(uuid.uuid4())):
+                    return await run_durable_turn(session_id, "first")
+
+            task = asyncio.create_task(_run())
+            await started.wait()
+            await executor.enqueue_inbound(
+                InboundMessage(
+                    channel="zulip",
+                    sender_id="u",
+                    chat_id="42:topic",
+                    content="follow up",
+                )
+            )
+            release.set()
+            assert await task == ("done", [])
+        finally:
+            turn_mod._loop = previous_loop
+
+        assert _drain_messages(tmp_path / "steering", session_id) == ["follow up"]
+        assert session_id not in executor._active_sessions
+
+    async def test_steering_drain_replayed_on_recovery(
+        self, dbos_instance: Any, tmp_path: Any
+    ) -> None:
+        """A crash after draining still injects the same follow-up on replay.
+
+        The inbox file is consumed by a DBOS step.  Replaying the active turn
+        returns that step's journaled messages even though the file is empty,
+        so the core's own journaled conversation appends can finish.
+        """
+        from dbos._schemas.system_database import SystemSchema
+        from exoclaw.bus.events import InboundMessage
+        from exoclaw_executor_dbos import DBOSExecutor
+        from exoclaw_executor_dbos.steering import _append_message, _drain_messages
+
+        executor = DBOSExecutor(steering_workspace=tmp_path)
+        msg = InboundMessage(
+            channel="zulip",
+            sender_id="u",
+            chat_id="42:topic",
+            content="follow up",
+        )
+        _append_message(tmp_path / "steering", msg.session_key, msg.content)
+
+        @DBOS.workflow()
+        async def drain_steering_workflow() -> list[str]:
+            return await executor.drain_steering(msg.session_key)
+
+        wfid = str(uuid.uuid4())
+        with SetWorkflowID(wfid):
+            original = await drain_steering_workflow()
+
+        assert original == ["follow up"]
+        assert _drain_messages(tmp_path / "steering", msg.session_key) == []
+
+        with dbos_instance._sys_db.engine.begin() as conn:
+            conn.execute(
+                sa.update(SystemSchema.workflow_status)
+                .values({"status": "PENDING"})
+                .where(SystemSchema.workflow_status.c.workflow_uuid == wfid)
+            )
+
+        handles = DBOS._recover_pending_workflows()
+        assert len(handles) == 1
+        assert handles[0].get_result() == ["follow up"]
+
     async def test_chat_step_replayed_on_recovery(self, dbos_instance: Any) -> None:
         """On recovery, _chat_step returns the journaled result without calling provider.chat again."""
         from dbos._schemas.system_database import SystemSchema
