@@ -15,6 +15,7 @@ from exoclaw.bus.events import InboundMessage, OutboundMessage
 
 logger = structlog.get_logger()
 
+
 if TYPE_CHECKING:
     from exoclaw.bus.protocol import Bus
 
