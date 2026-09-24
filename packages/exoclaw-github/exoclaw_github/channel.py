@@ -67,14 +67,10 @@ class GitHubChannel:
         self._trigger = trigger
         self._respond_to_issues_opened = respond_to_issues_opened
         self._respond_to_prs_opened = respond_to_prs_opened
-        self._allowed_events = (
-            frozenset(allowed_events) if allowed_events is not None else None
-        )
+        self._allowed_events = frozenset(allowed_events) if allowed_events is not None else None
         self._issue_label = issue_label
         self._issue_author_associations = (
-            frozenset(issue_author_associations)
-            if issue_author_associations is not None
-            else None
+            frozenset(issue_author_associations) if issue_author_associations is not None else None
         )
         self._pending_event: GitHubEvent | None = None
         self._response_event: asyncio.Event | None = None
