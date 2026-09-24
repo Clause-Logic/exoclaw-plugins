@@ -10,18 +10,9 @@ from typing import Any, cast
 from exoclaw.agent.loop import AgentLoop
 from exoclaw.bus.queue import MessageBus
 from exoclaw.utils import create_isolated_task
-from exoclaw_conversation.conversation import DefaultConversation
 from exoclaw_conversation.context import ContextBuilder
+from exoclaw_conversation.conversation import DefaultConversation
 from exoclaw_conversation.load_skill_tool import LoadSkillTool
-from exoclaw_provider_litellm.provider import LiteLLMProvider
-from exoclaw_tools_workspace.filesystem import (
-    EditFileTool,
-    ListDirTool,
-    ReadFileTool,
-    WriteFileTool,
-)
-from exoclaw_tools_workspace.shell import ExecTool
-
 from exoclaw_github.channel import GitHubChannel
 from exoclaw_github.tools import (
     GitHubChecksTool,
@@ -33,6 +24,14 @@ from exoclaw_github.tools import (
     GitHubReviewTool,
     GitHubSearchTool,
 )
+from exoclaw_provider_litellm.provider import LiteLLMProvider
+from exoclaw_tools_workspace.filesystem import (
+    EditFileTool,
+    ListDirTool,
+    ReadFileTool,
+    WriteFileTool,
+)
+from exoclaw_tools_workspace.shell import ExecTool
 
 
 def _env(key: str, default: str = "") -> str:
