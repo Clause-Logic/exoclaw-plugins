@@ -15,6 +15,7 @@ from exoclaw.bus.events import InboundMessage, OutboundMessage
 
 logger = structlog.get_logger()
 
+
 if TYPE_CHECKING:
     from exoclaw.bus.protocol import Bus
 
@@ -58,11 +59,19 @@ class GitHubChannel:
         trigger: str | None = "@exoclaw",
         respond_to_issues_opened: bool = True,
         respond_to_prs_opened: bool = False,
+        allowed_events: tuple[str, ...] | None = None,
+        issue_label: str | None = None,
+        issue_author_associations: tuple[str, ...] | None = None,
     ):
         self._token = token or os.environ.get("GITHUB_TOKEN", "")
         self._trigger = trigger
         self._respond_to_issues_opened = respond_to_issues_opened
         self._respond_to_prs_opened = respond_to_prs_opened
+        self._allowed_events = frozenset(allowed_events) if allowed_events is not None else None
+        self._issue_label = issue_label
+        self._issue_author_associations = (
+            frozenset(issue_author_associations) if issue_author_associations is not None else None
+        )
         self._pending_event: GitHubEvent | None = None
         self._response_event: asyncio.Event | None = None
 
@@ -81,6 +90,10 @@ class GitHubChannel:
 
         with open(event_path) as f:
             data: dict[str, Any] = json.load(f)
+
+        if self._allowed_events is not None and event_name not in self._allowed_events:
+            logger.info("github_event_filtered", **{"event.name": event_name})
+            return None
 
         if event_name == "issues":
             return self._parse_issues_event(data, repo)
@@ -102,6 +115,9 @@ class GitHubChannel:
         if not self._respond_to_issues_opened:
             return None
         issue = data["issue"]
+        if not self._is_permitted_issue(issue):
+            logger.info("github_issue_filtered")
+            return None
         body = issue.get("body") or issue.get("title", "")
         return GitHubEvent(
             kind="issue",
@@ -111,6 +127,19 @@ class GitHubChannel:
             repo=repo,
             title=issue.get("title", ""),
         )
+
+    def _is_permitted_issue(self, issue: dict[str, Any]) -> bool:
+        """Apply optional, exact-match filters to an opened issue."""
+        if self._issue_label is not None:
+            labels = issue.get("labels", [])
+            if not any(
+                isinstance(label, dict) and label.get("name") == self._issue_label
+                for label in labels
+            ):
+                return False
+        if self._issue_author_associations is not None:
+            return issue.get("author_association") in self._issue_author_associations
+        return True
 
     def _parse_issue_comment_event(self, data: dict[str, Any], repo: str) -> GitHubEvent | None:
         if data.get("action") != "created":

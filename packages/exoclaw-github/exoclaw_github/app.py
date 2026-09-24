@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from exoclaw.agent.loop import AgentLoop
 from exoclaw.bus.queue import MessageBus
 from exoclaw.utils import create_isolated_task
+from exoclaw_conversation.context import ContextBuilder
 from exoclaw_conversation.conversation import DefaultConversation
+from exoclaw_conversation.load_skill_tool import LoadSkillTool
 from exoclaw_provider_litellm.provider import LiteLLMProvider
 from exoclaw_tools_workspace.filesystem import (
     EditFileTool,
@@ -37,6 +39,13 @@ def _env(key: str, default: str = "") -> str:
     return os.environ.get(key, default)
 
 
+def _env_csv(key: str) -> tuple[str, ...] | None:
+    value = os.environ.get(key)
+    if value is None:
+        return None
+    return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
 async def create(
     model: str | None = None,
     state_dir: Path | None = None,
@@ -46,6 +55,12 @@ async def create(
     respond_to_prs_opened: bool = False,
     max_tokens: int = 8192,
     max_iterations: int = 40,
+    allowed_events: tuple[str, ...] | None = None,
+    issue_label: str | None = None,
+    issue_author_associations: tuple[str, ...] | None = None,
+    skills_dir: Path | None = None,
+    allowed_skills: tuple[str, ...] | None = None,
+    allowed_tools: tuple[str, ...] | None = None,
 ) -> tuple[AgentLoop, GitHubChannel, MessageBus]:
     """
     Create a fully wired exoclaw stack for GitHub Actions.
@@ -64,6 +79,13 @@ async def create(
         respond_to_prs_opened: Whether to respond when a PR is opened.
         max_tokens: Maximum tokens per LLM response.
         max_iterations: Maximum tool-call iterations per turn.
+        allowed_events: GitHub event names accepted by the channel.
+        issue_label: Exact label required on opened issues.
+        issue_author_associations: Author associations accepted for opened issues.
+        skills_dir: Optional directory of deployment skills, relative to repo_dir.
+        allowed_skills: Skill names visible to the agent.
+        allowed_tools: Tool names registered with the agent.
+        Unset filters preserve the existing behavior. Empty allowlists deny all.
     """
     model = model or _env("EXOCLAW_MODEL", "claude-sonnet-4-5")
 
@@ -77,6 +99,21 @@ async def create(
         env_val = _env("EXOCLAW_TRIGGER", "@exoclaw")
         trigger = env_val if env_val else None
 
+    if allowed_events is None:
+        allowed_events = _env_csv("EXOCLAW_ALLOWED_EVENTS")
+    if issue_label is None:
+        issue_label = os.environ.get("EXOCLAW_ISSUE_LABEL")
+    if issue_author_associations is None:
+        issue_author_associations = _env_csv("EXOCLAW_ISSUE_AUTHOR_ASSOCIATIONS")
+    if skills_dir is None and (configured_dir := os.environ.get("EXOCLAW_SKILLS_DIR")):
+        skills_dir = Path(configured_dir).expanduser()
+    if skills_dir is not None and not skills_dir.is_absolute():
+        skills_dir = repo_dir / skills_dir
+    if allowed_skills is None:
+        allowed_skills = _env_csv("EXOCLAW_ALLOWED_SKILLS")
+    if allowed_tools is None:
+        allowed_tools = _env_csv("EXOCLAW_ALLOWED_TOOLS")
+
     provider = LiteLLMProvider(default_model=model)
 
     bus = MessageBus()
@@ -85,7 +122,22 @@ async def create(
         workspace=state_dir,
         provider=provider,
         model=model,
+        builtin_skills_dir=skills_dir,
+        allowed_skills=list(allowed_skills) if allowed_skills is not None else None,
     )
+    prompt = cast(ContextBuilder, conversation.prompt)
+    if allowed_skills is not None:
+        discovered = {skill["name"]: skill for skill in prompt.skills.list_skills()}
+        missing = set(allowed_skills) - discovered.keys()
+        if missing:
+            raise ValueError(f"Allowed skills not found: {', '.join(sorted(missing))}")
+        if skills_dir is not None:
+            shadowed = {name for name in allowed_skills if discovered[name]["source"] != "builtin"}
+            if shadowed:
+                raise ValueError(
+                    "Allowed skills are not loaded from the configured skills directory: "
+                    + ", ".join(sorted(shadowed))
+                )
 
     tools: list[Any] = [
         ReadFileTool(workspace=repo_dir),
@@ -102,6 +154,23 @@ async def create(
         GitHubChecksTool(),
         GitHubSearchTool(),
     ]
+    if skills_dir is not None or allowed_skills is not None:
+        tools.insert(
+            0,
+            LoadSkillTool(
+                skills=prompt.skills,
+                active_tools=prompt._active_optional_tools,
+            ),
+        )
+    if allowed_tools is not None:
+        available = {tool.name for tool in tools}
+        unknown = set(allowed_tools) - available
+        if unknown:
+            raise ValueError(f"Unknown GitHub agent tools: {', '.join(sorted(unknown))}")
+        if allowed_skills and "load_skill" not in allowed_tools:
+            raise ValueError("load_skill is required when allowed skills are configured")
+        permitted = set(allowed_tools)
+        tools = [tool for tool in tools if tool.name in permitted]
 
     agent_loop = AgentLoop(
         bus=bus,
@@ -117,6 +186,9 @@ async def create(
         trigger=trigger,
         respond_to_issues_opened=respond_to_issues_opened,
         respond_to_prs_opened=respond_to_prs_opened,
+        allowed_events=allowed_events,
+        issue_label=issue_label,
+        issue_author_associations=issue_author_associations,
     )
 
     return agent_loop, channel, bus
