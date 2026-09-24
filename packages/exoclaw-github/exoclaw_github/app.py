@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from typing import Any, cast
 
+import structlog
 from exoclaw.agent.loop import AgentLoop
 from exoclaw.bus.queue import MessageBus
 from exoclaw.utils import create_isolated_task
@@ -194,12 +195,50 @@ async def create(
     return agent_loop, channel, bus
 
 
+async def _relay_outbound(bus: MessageBus, channel: GitHubChannel) -> None:
+    """Deliver the agent's response to the one-shot GitHub channel."""
+    while True:
+        message = await bus.consume_outbound()
+        if message.channel != channel.name:
+            continue
+        if message.metadata and message.metadata.get("_tool_hint"):
+            continue
+        await channel.send(message)
+
+
 async def run() -> None:
     """Create the stack and run one GitHub Actions turn."""
+    # Rich tracebacks expose prompts and tool arguments in public Actions logs.
+    structlog.configure(
+        processors=[
+            structlog.contextvars.merge_contextvars,
+            structlog.processors.add_log_level,
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.set_exc_info,
+            structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S", utc=False),
+            structlog.dev.ConsoleRenderer(
+                exception_formatter=structlog.dev.plain_traceback,
+            ),
+        ],
+    )
     agent_loop, channel, bus = await create()
     loop_task = create_isolated_task(agent_loop.run())
+    relay_task = create_isolated_task(_relay_outbound(bus, channel))
+    channel_task = create_isolated_task(channel.start(bus))
     try:
-        await channel.start(bus)
+        done, _ = await asyncio.wait(
+            {loop_task, relay_task, channel_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in done:
+            if task.cancelled():
+                raise RuntimeError("GitHub agent task was cancelled before a response")
+            if error := task.exception():
+                raise error
+        if channel_task not in done:
+            raise RuntimeError("GitHub agent stopped before the channel received a response")
     finally:
-        loop_task.cancel()
-        await asyncio.gather(loop_task, return_exceptions=True)
+        await channel.stop()
+        for task in (channel_task, relay_task, loop_task):
+            task.cancel()
+        await asyncio.gather(channel_task, relay_task, loop_task, return_exceptions=True)
