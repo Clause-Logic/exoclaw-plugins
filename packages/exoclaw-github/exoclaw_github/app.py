@@ -37,29 +37,11 @@ def _env(key: str, default: str = "") -> str:
     return os.environ.get(key, default)
 
 
-def _env_bool(key: str, default: bool = False) -> bool:
-    """Read an explicit boolean environment setting without string truthiness."""
+def _env_csv(key: str) -> tuple[str, ...] | None:
     value = os.environ.get(key)
     if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _env_csv(key: str, default: tuple[str, ...]) -> tuple[str, ...]:
-    value = os.environ.get(key)
-    if value is None:
-        return default
-    values = tuple(item.strip() for item in value.split(",") if item.strip())
-    return values or default
-
-
-_MODEL_ISSUE_AUTHOR_ASSOCIATIONS = (
-    "CONTRIBUTOR",
-    "MEMBER",
-    "OWNER",
-    "COLLABORATOR",
-)
-_MODEL_ISSUE_SKILLS = ("decisionbench-add-model",)
+        return None
+    return tuple(item.strip() for item in value.split(",") if item.strip())
 
 
 async def create(
@@ -71,9 +53,12 @@ async def create(
     respond_to_prs_opened: bool = False,
     max_tokens: int = 8192,
     max_iterations: int = 40,
-    model_issue_gate: bool | None = None,
-    model_issue_label: str | None = None,
-    model_issue_author_associations: tuple[str, ...] | None = None,
+    allowed_events: tuple[str, ...] | None = None,
+    issue_label: str | None = None,
+    issue_author_associations: tuple[str, ...] | None = None,
+    skills_dir: Path | None = None,
+    allowed_skills: tuple[str, ...] | None = None,
+    allowed_tools: tuple[str, ...] | None = None,
 ) -> tuple[AgentLoop, GitHubChannel, MessageBus]:
     """
     Create a fully wired exoclaw stack for GitHub Actions.
@@ -92,12 +77,13 @@ async def create(
         respond_to_prs_opened: Whether to respond when a PR is opened.
         max_tokens: Maximum tokens per LLM response.
         max_iterations: Maximum tool-call iterations per turn.
-        model_issue_gate: Opt into accepting only opened issues with the
-            configured label and trusted author association. Defaults to
-            EXOCLAW_MODEL_ISSUE_GATE (off when unset).
-        model_issue_label: Exact issue label required by the model gate.
-        model_issue_author_associations: Exact author associations accepted by
-            the model gate.
+        allowed_events: GitHub event names accepted by the channel.
+        issue_label: Exact label required on opened issues.
+        issue_author_associations: Author associations accepted for opened issues.
+        skills_dir: Optional directory of deployment skills, relative to repo_dir.
+        allowed_skills: Skill names visible to the agent.
+        allowed_tools: Tool names registered with the agent.
+        Unset filters preserve the existing behavior. Empty allowlists deny all.
     """
     model = model or _env("EXOCLAW_MODEL", "claude-sonnet-4-5")
 
@@ -111,12 +97,20 @@ async def create(
         env_val = _env("EXOCLAW_TRIGGER", "@exoclaw")
         trigger = env_val if env_val else None
 
-    if model_issue_gate is None:
-        model_issue_gate = _env_bool("EXOCLAW_MODEL_ISSUE_GATE")
-    model_issue_label = model_issue_label or _env("EXOCLAW_MODEL_ISSUE_LABEL", "model")
-    model_issue_author_associations = model_issue_author_associations or _env_csv(
-        "EXOCLAW_MODEL_ISSUE_AUTHOR_ASSOCIATIONS", _MODEL_ISSUE_AUTHOR_ASSOCIATIONS
-    )
+    if allowed_events is None:
+        allowed_events = _env_csv("EXOCLAW_ALLOWED_EVENTS")
+    if issue_label is None:
+        issue_label = os.environ.get("EXOCLAW_ISSUE_LABEL")
+    if issue_author_associations is None:
+        issue_author_associations = _env_csv("EXOCLAW_ISSUE_AUTHOR_ASSOCIATIONS")
+    if skills_dir is None and (configured_dir := os.environ.get("EXOCLAW_SKILLS_DIR")):
+        skills_dir = Path(configured_dir).expanduser()
+    if skills_dir is not None and not skills_dir.is_absolute():
+        skills_dir = repo_dir / skills_dir
+    if allowed_skills is None:
+        allowed_skills = _env_csv("EXOCLAW_ALLOWED_SKILLS")
+    if allowed_tools is None:
+        allowed_tools = _env_csv("EXOCLAW_ALLOWED_TOOLS")
 
     provider = LiteLLMProvider(default_model=model)
 
@@ -126,13 +120,8 @@ async def create(
         workspace=state_dir,
         provider=provider,
         model=model,
-        # The agent's durable state is separate from the checked-out repo.
-        # Project skills belong to the latter so they are versioned with the
-        # workflow target and cannot be supplied through agent state.
-        builtin_skills_dir=repo_dir / ".agents" / "skills",
-        # The gated profile exposes its single reviewed workflow skill. Other
-        # GitHub-channel deployments retain the full discovered skill surface.
-        allowed_skills=list(_MODEL_ISSUE_SKILLS) if model_issue_gate else None,
+        builtin_skills_dir=skills_dir,
+        allowed_skills=list(allowed_skills) if allowed_skills is not None else None,
     )
 
     tools: list[Any] = [
@@ -140,21 +129,23 @@ async def create(
         WriteFileTool(workspace=repo_dir),
         EditFileTool(workspace=repo_dir),
         ListDirTool(workspace=repo_dir),
+        ExecTool(working_dir=str(repo_dir)),
+        GitHubReviewTool(),
+        GitHubLabelTool(),
+        GitHubPRDiffTool(),
+        GitHubIssueTool(),
+        GitHubReactionTool(),
+        GitHubFileTool(),
+        GitHubChecksTool(),
+        GitHubSearchTool(),
     ]
-    if not model_issue_gate:
-        tools.extend(
-            [
-                ExecTool(working_dir=str(repo_dir)),
-                GitHubReviewTool(),
-                GitHubLabelTool(),
-                GitHubPRDiffTool(),
-                GitHubIssueTool(),
-                GitHubReactionTool(),
-                GitHubFileTool(),
-                GitHubChecksTool(),
-                GitHubSearchTool(),
-            ]
-        )
+    if allowed_tools is not None:
+        available = {tool.name for tool in tools}
+        unknown = set(allowed_tools) - available
+        if unknown:
+            raise ValueError(f"Unknown GitHub agent tools: {', '.join(sorted(unknown))}")
+        permitted = set(allowed_tools)
+        tools = [tool for tool in tools if tool.name in permitted]
 
     agent_loop = AgentLoop(
         bus=bus,
@@ -170,9 +161,9 @@ async def create(
         trigger=trigger,
         respond_to_issues_opened=respond_to_issues_opened,
         respond_to_prs_opened=respond_to_prs_opened,
-        model_issue_gate=model_issue_gate,
-        model_issue_label=model_issue_label,
-        model_issue_author_associations=model_issue_author_associations,
+        allowed_events=allowed_events,
+        issue_label=issue_label,
+        issue_author_associations=issue_author_associations,
     )
 
     return agent_loop, channel, bus

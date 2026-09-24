@@ -2,7 +2,7 @@
 
 GitHub Actions channel for [exoclaw](https://github.com/stephensolka/exoclaw).
 
-Runs the exoclaw agent stack inside a GitHub Actions workflow, using issues, PR comments, and `workflow_dispatch` as the inbound channel and GitHub comments as the outbound channel.
+Runs the exoclaw agent stack inside a GitHub Actions workflow, using issues, PR comments, and `workflow_dispatch` as the inbound channel and GitHub comments as the outbound channel. Session history is persisted to a dedicated `bot-state` branch by the supplied workflow template.
 
 ## Usage
 
@@ -17,27 +17,32 @@ channel = GitHubChannel(
 )
 ```
 
-## Model-issue intake
+## Configuring an agent's surface
 
-The ordinary GitHub channel behavior stays unchanged unless the model-issue
-gate is enabled. Set `EXOCLAW_MODEL_ISSUE_GATE=true` (or pass
-`model_issue_gate=True` to `create()` / `GitHubChannel`) to accept only an
-`issues.opened` event whose issue has the exact `model` label and whose
-`author_association` is one of `CONTRIBUTOR`, `MEMBER`, `OWNER`, or
-`COLLABORATOR`. Comments, pull requests, workflow dispatches, other labels,
-and other associations do not start a turn in that profile.
+The following settings are optional. Unset settings keep the existing event,
+skill, and tool behavior. Comma-separated allowlists are exact matches; an
+explicitly empty list denies everything in that category.
 
-The gate can be configured with `EXOCLAW_MODEL_ISSUE_LABEL` and
-`EXOCLAW_MODEL_ISSUE_AUTHOR_ASSOCIATIONS` (a comma-separated list), or the
-corresponding constructor arguments. For a gated turn, the agent registry has
-only read, write, edit, and directory file tools. It has no shell tool and no
-GitHub API tools; the channel alone posts the final response to the triggering
-issue.
+| Environment variable | Effect |
+|---|---|
+| `EXOCLAW_ALLOWED_EVENTS` | GitHub event names accepted by the channel, such as `issues` or `issue_comment`. |
+| `EXOCLAW_ISSUE_LABEL` | Exact label required for an `issues.opened` event. |
+| `EXOCLAW_ISSUE_AUTHOR_ASSOCIATIONS` | Accepted `author_association` values for an `issues.opened` event. |
+| `EXOCLAW_SKILLS_DIR` | Deployment skill directory; relative paths resolve inside the checked-out repository. |
+| `EXOCLAW_ALLOWED_SKILLS` | Names of skills visible to the agent. |
+| `EXOCLAW_ALLOWED_TOOLS` | Names of tools registered with the agent. Unknown names fail startup. |
 
-`create()` discovers checked-out repository skills at
-`<repo>/.agents/skills`. Gated model issues expose the reviewed
-`decisionbench-add-model` skill, which is loaded on every turn when its
-frontmatter has `metadata: {"exoclaw": {"always": true}}`.
+The same settings can be passed to `create()` as `allowed_events`,
+`issue_label`, `issue_author_associations`, `skills_dir`, `allowed_skills`,
+and `allowed_tools`. Event and issue filters can also be passed directly to
+`GitHubChannel`. Available tool names are `read_file`, `write_file`,
+`edit_file`, `list_dir`, `exec`, `github_review`, `github_label`,
+`github_pr_diff`, `github_issue`, `github_reaction`, `github_file`,
+`github_checks`, and `github_search`.
+
+The channel uses `GITHUB_TOKEN` to post its response. Excluding `exec` and
+GitHub API tools from `EXOCLAW_ALLOWED_TOOLS` keeps those capabilities out of
+the agent's tool registry while preserving the channel response.
 
 ## Supported events
 
@@ -48,12 +53,6 @@ frontmatter has `metadata: {"exoclaw": {"always": true}}`.
 | `pull_request` (opened) | Off by default |
 | `workflow_dispatch` | Always respond |
 
-When the model-issue gate is enabled, only the accepted `issues` event above
-is eligible.
-
 ## Session state
 
-Sessions are keyed as `github:issue:{number}` or `github:pr:{number}`. When
-used with `exoclaw-conversation`, history is stored in
-`~/.nanobot/workspace/sessions/`. A model-issue workflow can leave that state
-ephemeral and keep repository contents read-only until its separate PR step.
+Sessions are keyed as `github:issue:{number}` or `github:pr:{number}`. When used with `exoclaw-conversation`, history is stored in `~/.nanobot/workspace/sessions/`. Check out the `bot-state` branch there before running and commit it back afterwards to persist state across workflow runs.

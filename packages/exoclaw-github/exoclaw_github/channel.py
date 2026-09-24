@@ -15,14 +15,6 @@ from exoclaw.bus.events import InboundMessage, OutboundMessage
 
 logger = structlog.get_logger()
 
-
-_MODEL_ISSUE_AUTHOR_ASSOCIATIONS = (
-    "CONTRIBUTOR",
-    "MEMBER",
-    "OWNER",
-    "COLLABORATOR",
-)
-
 if TYPE_CHECKING:
     from exoclaw.bus.protocol import Bus
 
@@ -66,19 +58,23 @@ class GitHubChannel:
         trigger: str | None = "@exoclaw",
         respond_to_issues_opened: bool = True,
         respond_to_prs_opened: bool = False,
-        model_issue_gate: bool = False,
-        model_issue_label: str = "model",
-        model_issue_author_associations: tuple[str, ...] = (
-            _MODEL_ISSUE_AUTHOR_ASSOCIATIONS
-        ),
+        allowed_events: tuple[str, ...] | None = None,
+        issue_label: str | None = None,
+        issue_author_associations: tuple[str, ...] | None = None,
     ):
         self._token = token or os.environ.get("GITHUB_TOKEN", "")
         self._trigger = trigger
         self._respond_to_issues_opened = respond_to_issues_opened
         self._respond_to_prs_opened = respond_to_prs_opened
-        self._model_issue_gate = model_issue_gate
-        self._model_issue_label = model_issue_label
-        self._model_issue_author_associations = frozenset(model_issue_author_associations)
+        self._allowed_events = (
+            frozenset(allowed_events) if allowed_events is not None else None
+        )
+        self._issue_label = issue_label
+        self._issue_author_associations = (
+            frozenset(issue_author_associations)
+            if issue_author_associations is not None
+            else None
+        )
         self._pending_event: GitHubEvent | None = None
         self._response_event: asyncio.Event | None = None
 
@@ -98,11 +94,8 @@ class GitHubChannel:
         with open(event_path) as f:
             data: dict[str, Any] = json.load(f)
 
-        # This opt-in profile intentionally accepts only one narrowly scoped
-        # event shape. Keep the check before the ordinary event routing so a
-        # future handler cannot accidentally widen the model-issue surface.
-        if self._model_issue_gate and event_name != "issues":
-            logger.info("github_model_issue_gate_event_rejected", **{"event.name": event_name})
+        if self._allowed_events is not None and event_name not in self._allowed_events:
+            logger.info("github_event_filtered", **{"event.name": event_name})
             return None
 
         if event_name == "issues":
@@ -125,8 +118,8 @@ class GitHubChannel:
         if not self._respond_to_issues_opened:
             return None
         issue = data["issue"]
-        if self._model_issue_gate and not self._is_permitted_model_issue(issue):
-            logger.info("github_model_issue_gate_rejected")
+        if not self._is_permitted_issue(issue):
+            logger.info("github_issue_filtered")
             return None
         body = issue.get("body") or issue.get("title", "")
         return GitHubEvent(
@@ -138,16 +131,18 @@ class GitHubChannel:
             title=issue.get("title", ""),
         )
 
-    def _is_permitted_model_issue(self, issue: dict[str, Any]) -> bool:
-        """Return whether an opened issue meets the configured model gate."""
-        labels = issue.get("labels", [])
-        has_model_label = any(
-            isinstance(label, dict) and label.get("name") == self._model_issue_label
-            for label in labels
-        )
-        return has_model_label and (
-            issue.get("author_association") in self._model_issue_author_associations
-        )
+    def _is_permitted_issue(self, issue: dict[str, Any]) -> bool:
+        """Apply optional, exact-match filters to an opened issue."""
+        if self._issue_label is not None:
+            labels = issue.get("labels", [])
+            if not any(
+                isinstance(label, dict) and label.get("name") == self._issue_label
+                for label in labels
+            ):
+                return False
+        if self._issue_author_associations is not None:
+            return issue.get("author_association") in self._issue_author_associations
+        return True
 
     def _parse_issue_comment_event(self, data: dict[str, Any], repo: str) -> GitHubEvent | None:
         if data.get("action") != "created":
