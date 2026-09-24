@@ -15,6 +15,7 @@ from exoclaw_conversation.context import ContextBuilder
 from exoclaw_conversation.conversation import DefaultConversation
 from exoclaw_conversation.load_skill_tool import LoadSkillTool
 from exoclaw_provider_litellm.provider import LiteLLMProvider
+from exoclaw_tools_web.fetch import WebFetchTool
 from exoclaw_tools_workspace.filesystem import (
     EditFileTool,
     ListDirTool,
@@ -55,7 +56,7 @@ async def create(
     respond_to_issues_opened: bool = True,
     respond_to_prs_opened: bool = False,
     max_tokens: int = 8192,
-    max_iterations: int = 40,
+    max_iterations: int | None = None,
     allowed_events: tuple[str, ...] | None = None,
     issue_label: str | None = None,
     issue_author_associations: tuple[str, ...] | None = None,
@@ -79,7 +80,8 @@ async def create(
         respond_to_issues_opened: Whether to respond when an issue is opened.
         respond_to_prs_opened: Whether to respond when a PR is opened.
         max_tokens: Maximum tokens per LLM response.
-        max_iterations: Maximum tool-call iterations per turn.
+        max_iterations: Maximum tool-call iterations per turn (default:
+            EXOCLAW_MAX_ITERATIONS env var or 40).
         allowed_events: GitHub event names accepted by the channel.
         issue_label: Exact label required on opened issues.
         issue_author_associations: Author associations accepted for opened issues.
@@ -89,6 +91,10 @@ async def create(
         Unset filters preserve the existing behavior. Empty allowlists deny all.
     """
     model = model or _env("EXOCLAW_MODEL", "claude-sonnet-4-5")
+    if max_iterations is None:
+        max_iterations = int(_env("EXOCLAW_MAX_ITERATIONS", "40"))
+    if max_iterations < 1:
+        raise ValueError("max_iterations must be positive")
 
     state_dir = state_dir or Path(_env("EXOCLAW_STATE_DIR", "~/.nanobot/workspace")).expanduser()
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -163,6 +169,8 @@ async def create(
                 active_tools=prompt._active_optional_tools,
             ),
         )
+    if allowed_tools is not None and "web_fetch" in allowed_tools:
+        tools.append(WebFetchTool(workspace=repo_dir))
     if allowed_tools is not None:
         available = {tool.name for tool in tools}
         unknown = set(allowed_tools) - available

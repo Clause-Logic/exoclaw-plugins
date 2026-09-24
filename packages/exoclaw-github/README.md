@@ -31,6 +31,7 @@ explicitly empty list denies everything in that category.
 | `EXOCLAW_SKILLS_DIR` | Deployment skill directory; relative paths resolve inside the checked-out repository. |
 | `EXOCLAW_ALLOWED_SKILLS` | Names of skills visible to the agent. Missing or unavailable names fail startup. When `EXOCLAW_SKILLS_DIR` is set, each name must resolve there. |
 | `EXOCLAW_ALLOWED_TOOLS` | Names of tools registered with the agent. Unknown names fail startup. |
+| `EXOCLAW_MAX_ITERATIONS` | Maximum agent tool-call iterations per turn (default: 40). |
 
 The same settings can be passed to `create()` as `allowed_events`,
 `issue_label`, `issue_author_associations`, `skills_dir`, `allowed_skills`,
@@ -39,7 +40,9 @@ and `allowed_tools`. Event and issue filters can also be passed directly to
 `edit_file`, `list_dir`, `exec`, `github_review`, `github_label`,
 `github_pr_diff`, `github_issue`, `github_reaction`, `github_file`,
 `github_checks`, `github_search`, and `load_skill` when skill configuration is
-provided.
+provided. `web_fetch` is available only when explicitly included in
+`EXOCLAW_ALLOWED_TOOLS`; it fetches bounded HTTP(S) content without granting
+shell access. Its optional downloads are confined to the checked-out workspace.
 
 When `EXOCLAW_ALLOWED_SKILLS` is nonempty, include `load_skill` in
 `EXOCLAW_ALLOWED_TOOLS`. A same-named skill in agent state cannot silently
