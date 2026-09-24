@@ -284,7 +284,7 @@ class LiteLLMProvider:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         model: str | None = None,
-        max_tokens: int = 4096,
+        max_tokens: int | None = 4096,
         temperature: float = 0.7,
         reasoning_effort: str | None = None,
         response_format: ResponseFormat | None = None,
@@ -294,16 +294,16 @@ class LiteLLMProvider:
         is_anthropic = _is_anthropic(resolved_model)
         extra_keys = _ANTHROPIC_EXTRA_KEYS if is_anthropic else frozenset()
 
-        max_tokens = max(1, max_tokens)
-
         kwargs: dict[str, Any] = {
             "model": resolved_model,
             "messages": self._sanitize_messages(
                 _sanitize_empty_content(messages), extra_keys=extra_keys
             ),
-            "max_tokens": max_tokens,
             "temperature": temperature,
         }
+
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max(1, max_tokens)
 
         if self.api_key:
             kwargs["api_key"] = self.api_key

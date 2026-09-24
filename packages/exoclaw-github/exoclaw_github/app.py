@@ -55,7 +55,8 @@ async def create(
     trigger: str | None = ...,  # type: ignore[assignment]
     respond_to_issues_opened: bool = True,
     respond_to_prs_opened: bool = False,
-    max_tokens: int = 8192,
+    max_tokens: int | None = 8192,
+    reasoning_effort: str | None = None,
     max_iterations: int | None = None,
     allowed_events: tuple[str, ...] | None = None,
     issue_label: str | None = None,
@@ -79,7 +80,8 @@ async def create(
             to all comments.
         respond_to_issues_opened: Whether to respond when an issue is opened.
         respond_to_prs_opened: Whether to respond when a PR is opened.
-        max_tokens: Maximum tokens per LLM response.
+        max_tokens: Maximum tokens per LLM response; None omits the request cap.
+        reasoning_effort: Provider reasoning level for each LLM call.
         max_iterations: Maximum tool-call iterations per turn (default:
             EXOCLAW_MAX_ITERATIONS env var or 40).
         allowed_events: GitHub event names accepted by the channel.
@@ -187,7 +189,8 @@ async def create(
         conversation=conversation,
         model=model,
         max_iterations=max_iterations,
-        max_tokens=max_tokens,
+        max_tokens=cast(Any, max_tokens),  # core forwards None to providers that support it
+        reasoning_effort=reasoning_effort,
         tools=tools,
     )
 
