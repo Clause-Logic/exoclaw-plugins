@@ -29,7 +29,7 @@ explicitly empty list denies everything in that category.
 | `EXOCLAW_ISSUE_LABEL` | Exact label required for an `issues.opened` event. |
 | `EXOCLAW_ISSUE_AUTHOR_ASSOCIATIONS` | Accepted `author_association` values for an `issues.opened` event. |
 | `EXOCLAW_SKILLS_DIR` | Deployment skill directory; relative paths resolve inside the checked-out repository. |
-| `EXOCLAW_ALLOWED_SKILLS` | Names of skills visible to the agent. |
+| `EXOCLAW_ALLOWED_SKILLS` | Names of skills visible to the agent. Missing or unavailable names fail startup. When `EXOCLAW_SKILLS_DIR` is set, each name must resolve there. |
 | `EXOCLAW_ALLOWED_TOOLS` | Names of tools registered with the agent. Unknown names fail startup. |
 
 The same settings can be passed to `create()` as `allowed_events`,
@@ -38,7 +38,12 @@ and `allowed_tools`. Event and issue filters can also be passed directly to
 `GitHubChannel`. Available tool names are `read_file`, `write_file`,
 `edit_file`, `list_dir`, `exec`, `github_review`, `github_label`,
 `github_pr_diff`, `github_issue`, `github_reaction`, `github_file`,
-`github_checks`, and `github_search`.
+`github_checks`, `github_search`, and `load_skill` when skill configuration is
+provided.
+
+When `EXOCLAW_ALLOWED_SKILLS` is nonempty, include `load_skill` in
+`EXOCLAW_ALLOWED_TOOLS`. A same-named skill in agent state cannot silently
+shadow a skill selected from `EXOCLAW_SKILLS_DIR`; startup fails instead.
 
 The channel uses `GITHUB_TOKEN` to post its response. Excluding `exec` and
 GitHub API tools from `EXOCLAW_ALLOWED_TOOLS` keeps those capabilities out of

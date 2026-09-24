@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from exoclaw.agent.loop import AgentLoop
 from exoclaw.bus.queue import MessageBus
 from exoclaw.utils import create_isolated_task
 from exoclaw_conversation.conversation import DefaultConversation
+from exoclaw_conversation.context import ContextBuilder
+from exoclaw_conversation.load_skill_tool import LoadSkillTool
 from exoclaw_provider_litellm.provider import LiteLLMProvider
 from exoclaw_tools_workspace.filesystem import (
     EditFileTool,
@@ -123,6 +125,19 @@ async def create(
         builtin_skills_dir=skills_dir,
         allowed_skills=list(allowed_skills) if allowed_skills is not None else None,
     )
+    prompt = cast(ContextBuilder, conversation.prompt)
+    if allowed_skills is not None:
+        discovered = {skill["name"]: skill for skill in prompt.skills.list_skills()}
+        missing = set(allowed_skills) - discovered.keys()
+        if missing:
+            raise ValueError(f"Allowed skills not found: {', '.join(sorted(missing))}")
+        if skills_dir is not None:
+            shadowed = {name for name in allowed_skills if discovered[name]["source"] != "builtin"}
+            if shadowed:
+                raise ValueError(
+                    "Allowed skills are not loaded from the configured skills directory: "
+                    + ", ".join(sorted(shadowed))
+                )
 
     tools: list[Any] = [
         ReadFileTool(workspace=repo_dir),
@@ -139,11 +154,21 @@ async def create(
         GitHubChecksTool(),
         GitHubSearchTool(),
     ]
+    if skills_dir is not None or allowed_skills is not None:
+        tools.insert(
+            0,
+            LoadSkillTool(
+                skills=prompt.skills,
+                active_tools=prompt._active_optional_tools,
+            ),
+        )
     if allowed_tools is not None:
         available = {tool.name for tool in tools}
         unknown = set(allowed_tools) - available
         if unknown:
             raise ValueError(f"Unknown GitHub agent tools: {', '.join(sorted(unknown))}")
+        if allowed_skills and "load_skill" not in allowed_tools:
+            raise ValueError("load_skill is required when allowed skills are configured")
         permitted = set(allowed_tools)
         tools = [tool for tool in tools if tool.name in permitted]
 
