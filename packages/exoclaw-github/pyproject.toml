@@ -8,6 +8,7 @@ dependencies = [
     "exoclaw>=0.22.0",
     "exoclaw-conversation>=0.21.0",
     "exoclaw-provider-litellm>=0.1.0",
+    "exoclaw-tools-web>=0.2.0",
     "exoclaw-tools-workspace>=0.1.0",
     "httpx>=0.28.0,<1.0.0",
     "structlog>=25.0.0",
