@@ -214,7 +214,7 @@ async def run() -> None:
             structlog.contextvars.merge_contextvars,
             structlog.processors.add_log_level,
             structlog.processors.StackInfoRenderer(),
-            structlog.processors.set_exc_info,
+            structlog.dev.set_exc_info,
             structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S", utc=False),
             structlog.dev.ConsoleRenderer(
                 exception_formatter=structlog.dev.plain_traceback,
