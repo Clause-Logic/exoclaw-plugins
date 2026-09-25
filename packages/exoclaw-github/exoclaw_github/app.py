@@ -56,7 +56,6 @@ async def create(
     respond_to_issues_opened: bool = True,
     respond_to_prs_opened: bool = False,
     max_tokens: int | None = 8192,
-    reasoning_effort: str | None = None,
     max_iterations: int | None = None,
     allowed_events: tuple[str, ...] | None = None,
     issue_label: str | None = None,
@@ -64,6 +63,7 @@ async def create(
     skills_dir: Path | None = None,
     allowed_skills: tuple[str, ...] | None = None,
     allowed_tools: tuple[str, ...] | None = None,
+    reasoning_effort: str | None = None,
 ) -> tuple[AgentLoop, GitHubChannel, MessageBus]:
     """
     Create a fully wired exoclaw stack for GitHub Actions.
@@ -81,7 +81,6 @@ async def create(
         respond_to_issues_opened: Whether to respond when an issue is opened.
         respond_to_prs_opened: Whether to respond when a PR is opened.
         max_tokens: Maximum tokens per LLM response; None omits the request cap.
-        reasoning_effort: Provider reasoning level for each LLM call.
         max_iterations: Maximum tool-call iterations per turn (default:
             EXOCLAW_MAX_ITERATIONS env var or 40).
         allowed_events: GitHub event names accepted by the channel.
@@ -90,6 +89,7 @@ async def create(
         skills_dir: Optional directory of deployment skills, relative to repo_dir.
         allowed_skills: Skill names visible to the agent.
         allowed_tools: Tool names registered with the agent.
+        reasoning_effort: Provider reasoning level for each LLM call.
         Unset filters preserve the existing behavior. Empty allowlists deny all.
     """
     model = model or _env("EXOCLAW_MODEL", "claude-sonnet-4-5")
