@@ -310,6 +310,7 @@ class TestLiteLLMProvider:
         assert isinstance(result, LLMResponse)
         assert result.content == "hello world"
         assert result.finish_reason == "stop"
+        assert mock.call_args[1]["max_tokens"] == 4096
 
     async def test_chat_with_tools(self) -> None:
         tc = MagicMock()
@@ -364,6 +365,13 @@ class TestLiteLLMProvider:
             await p.chat([{"role": "user", "content": "hi"}], max_tokens=0)
         kwargs = mock.call_args[1]
         assert kwargs["max_tokens"] >= 1
+
+    async def test_chat_uncapped_omits_max_tokens(self) -> None:
+        p = LiteLLMProvider()
+        with patch("exoclaw_provider_litellm.provider.acompletion", new_callable=AsyncMock) as mock:
+            mock.return_value = _make_litellm_response()
+            await p.chat([{"role": "user", "content": "hi"}], max_tokens=None)
+        assert "max_tokens" not in mock.call_args[1]
 
     async def test_chat_logging_enabled(self, capsys: Any) -> None:
 
